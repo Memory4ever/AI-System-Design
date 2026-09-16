@@ -288,7 +288,11 @@ playback、P95/P99 与错误恢复。2025 年 Google 的 S2ST 部署是该演进
 主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-20537:start -->
-Execution-State Capsule 在 graph-boundary 捕获可恢复的静态 buffer/执行状态，使 on-device small-batch serving 可 checkpoint/restore，而非重建整个 runtime；FlashRT 拥有 capsule schema 与兼容性，失配时冷启动。代价是图绑定、静态内存和 backend 特化。
+#### Graph-bound Execution State 需要独立的 Restore Contract
+
+端侧 small-batch runtime 过去可以在进程启动时重建 graph、buffer 与 backend state；模型固定、启动不在关键路径时，这条路径最简单。物理 AI 的低延迟切换和故障恢复把启动成本带进 SLO 后，可以在经过声明的 graph boundary 捕获静态 buffer、执行位置与 backend metadata，形成可恢复的 execution-state capsule。Runtime 拥有 capsule schema、graph/artifact binding 与兼容性检查；scheduler 只能请求 restore，不能把旧 capsule 解释为当前图的有效状态。
+
+这条路径用静态内存、图绑定和 backend 特化换更低恢复延迟，也新增 stale buffer、设备状态不完整和版本错配风险。恢复前必须验证 model/graph/kernel/device identity，失败时冷启动并重建状态；capsule 通过也不证明任务语义或物理动作安全。`arXiv:2606.20537v1` 只支持作者在其 on-device runtime、small-batch workload 与 graph contract 下的机制和实验，不能外推为任意 backend 的通用 checkpoint 格式。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-20537:end -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-25838:start -->
@@ -315,11 +319,42 @@ Part IV validated model artifact
 
 第41章交付模型资产，本章把它接入在线 capability-delivery path。第43～45章会拆开 Stage 与状态；第46章以后再逐步回答如何调度、管理和扩展。这个 delivery path 只能执行已发布的 capability contract，不能通过更快的 runtime 修复训练数据、目标或 artifact conversion 的错误。
 
+### 并行扩展必须先移出不可扩展的 Host Critical Path
+
+增加 Tensor Parallel degree 在矩阵计算占主导时可以缩短单步执行；当 scheduler、输入输出搬运、sampling 与
+post-processing 仍由一个串行 host path 承担，设备越多，Amdahl 串行项占比反而越高。此时问题不再是继续切分
+matmul，而是把一次 iteration 拆成可重叠但仍有提交边界的阶段：scheduler 只发布本轮 work，异步 I/O 搬运
+必要状态，device-side 或 sequence-parallel sampling 产生候选，request state owner 最后原子提交 token 与完成状态。
+
+这种分解以更多 stream、buffer、event 与取消协议换取 overlap；任一异步阶段若读取旧 batch epoch、覆盖仍在使用的
+buffer，或在 cancellation 后继续提交，都会把性能优化变成正确性错误。并行度选择因此必须绑定 model、batch、
+sequence shape、sampling path 与硬件拓扑，以端到端 goodput 而不是 kernel speedup 验收。工作量很小、host overhead
+不显著或 backend 缺少可靠异步状态机时，较低并行度和同步路径仍是更稳健的基线。exact-v1 的作者实验只支持其
+系统与配置中的瓶颈迁移，不证明某个 TP degree 对其他 workload 普遍最优。
+
+<!-- source-family:SF-ASYNC-INFERENCE-OVERHEADS -->
+
 ## 从机制演进到系统设计
 
-请求生命周期最初以一次 prompt→response 为边界；会话、Agent 和交互式多模态 workload 出现后，request 之外还存在 idle、tool wait、state mutation 和下一 decision point。runtime 因而可以在空闲期准备 speculative state，或按 confidence 选择后端，但所有准备结果必须绑定 base-state identity，并在用户输入或环境变化时失效。
+请求生命周期最初以一次 prompt→response 为边界；会话、Agent 和交互式多模态 workload 出现后，request 之外还存在 idle、tool wait、state mutation 和下一 decision point。Runtime 可以利用空闲期把 session 推演到下一个 decision point，但结果只能作为 speculative state 保存，并绑定 base-state identity、模型与采样配置、confidence gate 和失效条件。下一次真实输入到达后，acceptance gate 重新核对这些身份；只有命中路径才原子提交预推进结果，任何用户输入、环境变化或 state drift 都使其失效并回到普通 Prefill/Decode。
 
-提前计算和 confidence routing 可以降低命中路径延迟，却会消耗闲时资源并引入 false accept、stale state 和路由偏差。只有 acceptance gate 能原子提交新状态；任何 identity mismatch 都回到普通 Prefill/Decode。单次无状态请求仍是最简单、最容易隔离的分支。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-29565 -->
+
+跨请求预推进把一部分 Prefill 和入口 Decode 移出 critical path，却会消耗闲时算力并引入 false accept、stale state、隐私保留和资源公平问题。它与 draft-model speculative decoding 不同：这里推测的是“下一次会话状态”，而不是同一请求中的 token；命中率、错误接纳率、能耗和取消成本必须一起进入 SLO。现有结果只覆盖作者披露的单机、量化模型和 capability-gated fast path，不能外推为任意 session 的收益；单次无状态请求、低重复会话或状态频繁变化时，按需执行仍是更简单且更容易隔离的分支。
+
+### Session-local Surrogate 必须携带切换与回退身份
+
+所有 turns 都使用同一个大模型，在会话短、主题漂移大或质量边界严格时最稳健；长会话逐渐收敛到较窄的局部
+响应分布后，继续为每轮支付完整 target-model 成本可能没有必要。一个条件分支利用早期 turns 估计 session-local
+response manifold，以 target 产生的数据适配较小 surrogate，并在后续 turns 切换。request lifecycle 因而需要保存
+base model、surrogate、soft prompt、适配数据、切换条件与 rollback policy，而不能只记录“当前模型名”。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11317:start -->
+surrogate 只拥有低成本 response proposal，质量 gate 仍应比较 target/reference 并保留回退权。局部 manifold 估计错误、
+主题漂移、长尾请求或适配延迟无法摊销时，应回到 target model；频繁切换还会引入 session consistency、缓存失效、
+额外显存和 tail-latency 风险。现有证据只支持 exact-v1 披露的 dialogue distribution、target/surrogate 组合、适配
+与 rollback 实验，不能外推为跨模型、跨部署或生产尾部的普遍收益。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11317:end -->
 
 ## 自检问题
 
@@ -379,23 +414,7 @@ Review note：`SF-2026-ARXIV-2606-29565`；Method `https://arxiv.org/html/2606.2
 
 ### Source-family integration record
 
-<!-- daily-20260627:INFER-REQUEST-LIFECYCLE:start -->
-### Owner-merged minimal durable delta
 
-Inference capacity 是 phase-coupled closed loop，不是单个 kernel 数字。request record 必须区分 vision encoding、prefill、decode、queue/host work 与 device placement；kernel-level simulation 可以预测候选配置，但 promotion 必须回到目标硬件上的 task completion time 与 success。改变 control cadence 或移动瓶颈的局部加速，不自动等于更快完成成功任务。
-
-### Trade-off、failure、fallback 与 coexistence
-
-Simulation 与 component latency 不证明生产 SLO 或 embodied success；mismatch、thermal drift 或 deadline miss 时回退已实测的保守 placement/control。
-
-<!-- daily-20260627:INFER-REQUEST-LIFECYCLE:end -->
-
-<!-- recovered-daily-20260625:INFER-REQUEST-LIFECYCLE:start -->
-### 2026-06-25 evidence integration — INFER-REQUEST-LIFECYCLE
-
-- **SF-2026-ARXIV-2606-25838**：`III Method; IV Confidence-Aware Routing` 所定义的源特定机制用于让路由器基于请求置信度持有后端选择与回退权；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `VII-C Limitations and future work` 是 `Edges Before Embeddings: A Confidence-Aware Blur Gate for Vision-Language Pipelines` 的 source-specific 反例/局限边界；若运行条件离开 `V Experiments; V-A Evaluation protocol; VI Deployment Patterns` 的验证域，`INFER-REQUEST-LIFECYCLE` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-<!-- recovered-daily-20260625:INFER-REQUEST-LIFECYCLE:end -->
 
 <!-- june29-owner:INFER-REQUEST-LIFECYCLE:start -->
 ### 2026-06-29 约束变化与机制增量

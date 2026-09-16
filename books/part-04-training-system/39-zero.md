@@ -66,6 +66,19 @@ Parameters 仍在每 rank replicated。Optimizer update 完成后，需要同步
 
 Gradient bucket、accumulation boundary 和 reduce-scatter timing 会影响 peak memory 与 overlap。不能只看 steady-state shard size。
 
+<!-- semantic-body-binding:SF-2026-BYTEDANCE-VEOMNI-PR-781:start -->
+HSDP 还把 collective 拆成 shard dimension 与 replicated dimension。每个 accumulation micro-step 的 local gradient
+仍需 reduce-scatter 到 shard owner；replica 间 all-reduce 则只需在 optimizer commit 前的最后一个 micro-step 完成。
+因此 runtime 必须把 accumulation index、replica group 和 sum/mean convention 作为 final-boundary identity，不能把
+“延后 replica 同步”误实现成两类 collective 一并跳过。
+
+这条路径减少 replicated communication 的执行次数，却不减少 model-state memory，并新增 boundary/group state 与数值
+等价验收。final micro-step、membership 或 reduction convention 错误会造成 silent gradient/update divergence；不能
+证明等价时，应回退每个 micro-step 的完整 reduce-scatter + replica all-reduce。现有 evidence 只覆盖 VeOmni 披露的
+Qwen3.5-35B-A3B、FSDP2/offload、EP=8、MBS=1、GBS=128 日志；硬件、节点数、重复方差和收敛质量未披露，不能把
+局部 timing 当作通用加速数字。
+<!-- semantic-body-binding:SF-2026-BYTEDANCE-VEOMNI-PR-781:end -->
+
 ## Stage 3：连 Parameters 也分片
 
 Stage 3 的长期驻留状态：

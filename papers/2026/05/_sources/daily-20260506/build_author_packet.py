@@ -6,6 +6,11 @@ the shared writeback is serialized by the root reconciler after independent audi
 """
 from __future__ import annotations
 
+raise SystemExit(
+    "Superseded by finalize_author_repair.py and v3-canonical-screening-ledger.json; "
+    "do not regenerate the withdrawn 2605.03562 positive chain."
+)
+
 import csv
 import hashlib
 import importlib.util

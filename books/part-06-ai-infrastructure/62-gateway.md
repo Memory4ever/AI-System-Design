@@ -117,6 +117,14 @@ Gateway 日志与 trace 需要记录解析后的 immutable model/service revisio
 
 一旦流式输出已开始，透明 retry 通常无法保持同一 token trajectory。Agent tool call 更可能产生外部副作用，第 78～81 章还会扩展这一边界。
 
+### Response Trace Watermark 是受限序列化通道
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21865:start -->
+传统水印往往改写字段值或侵入业务 handler；如果某类 JSON/XML response 的 member order 在 client contract 中明确不承载语义，而且整个序列化链保序，Gateway 可以把 grouped-key permutation 用作受限 trace channel。此时 watermark artifact 必须联合绑定 schema、grouping 与排序规则、key material、serializer path 和 extraction receipt；Gateway 只拥有编码与提取，client compatibility、signature/cache canonicalization 和 authorization 仍由各自 owner 验收。
+
+“字段顺序在规范中无语义”不等于真实 client、签名、缓存或 canonicalizer 不观察字节顺序。该分支还增加重序列化、容量阈值、密钥管理和删除/规范化后的恢复损失，容量不足时插入 fake key 甚至会改变可见结构。只要 compatibility、完整性或 key secrecy Gate 失败，就应禁用 permutation embedding，回退显式 signed provenance、sidecar audit receipt 或应用层水印；可提取 watermark 不能被解释为内容完整性或授权证明。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21865:end -->
+
 ## 观测与容量反馈
 
 Gateway 是 client-perceived latency 的最佳观测点之一，应分解：
@@ -170,12 +178,28 @@ streaming latency 或 agentic routing 已成立。
 主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-13968:start -->
-跨local/HPC/cloud推理要分离auth/job-dispatch control channel与encrypted token-stream data channel，并让tier routing/context summarization成为显式policy。
+#### 跨域推理必须分离 Control Channel 与 Token Stream
+
+跨 local、HPC 与 cloud 的推理最初可以沿同一代理通道传递认证、作业控制和 token stream；当管理域、网络成本和数据驻留不同，这会让控制面拥有不必要的明文，也让慢控制操作阻塞长连接数据流。Gateway 应把 auth/job-dispatch control channel 与加密 token-stream data channel 分离，并把 tier selection、Context 摘要、会话归属和 fallback 写成版本化 policy。Router 选择合资格路径，传输层持有流式连接，模型 runtime 仍持有 token/KV state。
+
+通道分离降低信任与故障耦合，却增加密钥、会话一致性、跨通道 trace 和 partial-failure 处理；摘要还可能丢失任务关键语义。身份、路由 receipt 或 state handoff 不完整时，应回退同域直连或显式重建 Context，不能从 token 已到达反推控制决策正确。作者结果仅覆盖其 tier、网络与 workload，不构成通用跨域 SLO。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-13968:end -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-16358:start -->
-LLM API router 的 plaintext authority 应收缩到 client-attested enclave；auth/scheduling/accounting 可留在 untrusted host，但目的地必须绑定 measured image。
+#### TEE Router 只收缩 Plaintext Authority，不提供端到端正确性
+
+普通 API router 在单一可信运营域中同时读取 prompt、鉴权和目标 endpoint 最直接；跨组织或第三方 gateway 出现后，同一组件同时持有 plaintext 与转发 authority 会形成集中泄露面。可将解密和目的地绑定收缩到 client-attested enclave：untrusted host 继续执行可公开的认证前置、排队、scheduling 与 accounting，enclave 只接受绑定 measured image、policy revision 和目标身份的请求，再释放最小必要明文。
+
+TEE 把信任边界缩小，却没有消除 side channel、rollback、证明新鲜度和运营可用性问题；attestation 也不证明上游 policy 或下游模型正确。测量身份不可验证、enclave 容量不足或 streaming 恢复无法保持会话语义时，应 fail closed 或回退到用户明确授权的直连路径，而不是把“运行在 TEE”当作端到端隐私证明。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-16358:end -->
+
+### Stateful Failover 的验收对象是会话连续性，不是 Endpoint 可达
+
+无状态路由只要新 provider 返回 200 即可判定 failover 成功；多轮 LLM 会话还携带 system policy、tool state、prefix/KV 与 provider-specific serialization，目标端可达却可能语义断裂。Gateway 因而需要在切换前识别可迁移状态、兼容转换和不可转移字段，切换后用会话级 invariants 验证连续性，并在不兼容时拒绝透明切换、显式重建 Context 或要求用户确认。
+
+多 provider 提高可用性，也增加状态映射、隐私边界和语义漂移。短、无工具、无持久状态的请求仍适合普通重试；复杂 Agent session 不能用单一 uptime 或一次回答相似度证明连续。公开 benchmark 只支持其 provider/harness/failure matrix，不给出生产通用 failover 成功率。
+
+<!-- source-family:SF-2026-ARXIV-2607-15899 -->
 
 ## 本章在知识树中的位置
 

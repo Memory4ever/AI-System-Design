@@ -309,6 +309,18 @@ PP 也不会自动提高模型质量。它只改变同一 forward/backward graph
 
 手工枚举 1F1B/interleaving 在拓扑固定时清楚；stage、micro-batch 与资源约束组合增多后，可用统一 schedule representation 生成候选，并以依赖公式、表格或 simulator 检查合法性，再比较 bubble、memory 和 communication。收益是扩大设计空间，代价是 abstraction/simulator fidelity；生产发布仍须真实 workload 验证，简单拓扑保留手写 schedule。<!-- source-family:SF-2026-ARXIV-2605-24006 --> exact-v1 §III–IV 支持 schedule abstraction，§V simulator 结果不证明真实集群收益。
 
+Diffusion backbone 的 skip connection 会让“按连续层平均切分”产生跨 stage 回传：计算量看似均匀，通信和 activation lifetime 却被隐藏依赖放大。Planner 应先把 skip-connected layers 的 colocate constraint 纳入依赖图，再联合求解 partition 与 schedule，最后用真实 profile 校准 tuner。依赖合法性由 graph owner 判断，性能模型只负责排序候选，不能为了降低 bubble 改写计算图语义。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-25451:start -->
+多模态训练还会同时包含 encoder、LLM 与 generator；若把三者简单串行，非 LLM 组件的 activation lifetime 随 micro-batch 数增长。一个 nested pipeline 分支把 encoder/generator 工作嵌入 LLM stage flow，用全局 operator table 保留 micro-batch dependency 和参数版本，使两类 activation memory 保持有界。Scheduler 可以生成计划，executor 仍必须拒绝违反数据依赖的重叠。
+
+它以 readiness tracking、stage balance、边界通信和更复杂恢复换取显存；估时或依赖错误会覆盖 activation、制造新 bubble，甚至让 micro-batch 看到不一致权重。验证失败时应回退顺序 encoder→LLM→generator 或已经证明合法的 GPipe/1F1B。当前 artifact 未披露完整硬件、精度、拓扑和 tail SLO，不能把作者加速比写成通用结论。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-25451:end -->
+
+强制 colocate 可能反过来造成 compute imbalance，ILP/DP 求解成本也会随模型和拓扑增长。作者结果只绑定受测 diffusion transformer 与集群配置；普通 transformer 或高速互联下，连续切分与手工 schedule 仍可能更便宜、更易验证。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606.19163 -->
+
 至少测量：
 
 - Per-stage forward/backward time 与 idle fraction。

@@ -249,6 +249,24 @@ RoPE 在任意整数位置都能计算旋转，因此比固定 learned table 更
 
 更复杂的位置机制可以改善长度泛化，却增加数值精度、频率别名和训练—推理不一致。消融或长序列行为不稳定时，应回到已训练窗口、分段 Context 或显式检索；绝对、相对、RoPE 与 ALiBi 仍是不同 workload 下的条件分支。
 
+### 隐藏坐标的相似不能替代输出分布的几何
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2609-11063:start -->
+在固定模型、固定基底内，用 cosine 或 Euclidean distance 比较带位置信息的 hidden state，是便宜而有用的实现诊断；但它隐含了“隐藏坐标本身可比较”的旧约束。只要对隐藏空间做一个由下游权重抵消的可逆重参数化，hidden-state 距离就可能显著改变，而 next-token 分布完全不变。因此，跨层、跨 checkpoint 或跨实现比较位置表征时，隐藏空间对齐只能回答“坐标是否相似”，不能独立回答“行为是否等价”。
+
+行为层的比较应转向模型实际提交的 categorical next-token law：在词表、tokenization、上下文和输出粗粒化方式一致时，可用 Hellinger distance 或其局部 Fisher–Rao metric 衡量小扰动造成的输出变化。这个接口把位置条件化后的内部状态投影到可观察行为，但并不反向证明某个唯一位置坐标，也不取代 hidden probe 对具体实现的诊断；两类测量回答的是不同问题。
+
+Fisher geometry 还可以把“以最小输出扰动完成一次局部编辑”写成自然梯度式控制问题，但代价是估计度量、阻尼与矩阵自由求解，有限幅度编辑还必须重新线性化。理论下界可能在真实模型上很松，输出一致也可能掩盖任务层面的长程失败。因此 fallback 仍是：在固定基底内保留 hidden probe，同时执行直接的输出分布、长度外推与下游任务测试；没有这些交叉证据时，不把几何对齐提升为位置机制已被因果使用的结论。该边界来自一组受控路由编辑和数学构造，不能外推为任意模型、任意尺度的全局保证。
+<!-- semantic-body-binding:SF-2026-ARXIV-2609-11063:end -->
+
+### 连续二维位置编码需要显式坐标身份
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23719:start -->
+固定二维表或二维 RoPE 在规则 lattice 和有限分辨率下容易实现；连续二维分支把坐标映射为可计算函数，并从代数结构派生 relative relation，使不规则采样或分辨率变化不必重新查表。Position identity 因而要包含坐标系、lattice、函数 revision 与数值精度，而不能只记录最大长度。
+
+连续函数改善几何外推，却增加数值敏感性、坐标规范和任务失配风险。exact-v1 只支持作者理论假设与实验设置，不保证任意视觉网格或尺度都优于既有方案；稳定性、aliasing 或下游质量 Gate 失败时，应回退二维 RoPE、learned table 或目标分辨率内的离散位置。arXiv:2605.23719v1
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23719:end -->
+
 ## 自检问题
 
 1. 为什么没有位置机制的 Self Attention 对输入排列具有对称性？

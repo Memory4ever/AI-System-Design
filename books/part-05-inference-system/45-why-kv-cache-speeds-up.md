@@ -125,6 +125,12 @@ forward 可读不等于历史状态可被修改。短序列或远程梯度至关
 
 若多个请求拥有完全一致且 identity-compatible 的 prefix，runtime 可以复用已计算 KV blocks，减少 Prefill。匹配条件不仅是文本相同，还包括 token ids、model revision、adapter、position 与 execution identity。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24914:start -->
+Answer cache 把 reuse 从“内部状态完全相同”推进到“语义上可能等价”，但也把错误命中的后果从重复计算变成错误答案复用。一个受限分支先把 prompt 切成可学习的语义片段，为每段生成向量，再用 MaxSim 判断细粒度意图是否与缓存项匹配；训练目标直接优化 correctness gate 通过时的命中率，而不是只追求 embedding 相似度。这里的 segmenter 和检索器只能提出 hit，cache owner 仍须绑定模型、知识版本、授权域和失效策略后才能提交结果。
+
+这种多向量路径可能提高措辞变化下的命中，却新增分段训练、索引、MaxSim 和失效传播成本；prompt 分布漂移还会把表面相似请求错误合并。置信不足、版本不兼容或高风险请求应回退 exact key/prefix match，或完整执行模型并重新验证缓存项。现有证据只覆盖作者的 semantic-cache workload 与 encoder，不证明跨模型和生产 SLO 的普遍收益。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24914:end -->
+
 共享 block 若随后需要被某个分支修改，应使用不可变 prefix 或 Copy-on-Write 语义，避免请求间污染。
 
 相同 token context 也不授权跨模型直接复用 KV：内部 state space、layer mapping 与 tokenizer/position semantics
@@ -317,6 +323,12 @@ speedup 当作生产常数。FullKV、静态 Top-k 和规则窗口在 correctnes
 开销不可摊销时仍然成立。
 
 ### 从统一保留到 workload-aware eviction
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-25475:start -->
+Learned importance 可以把固定窗口或手写分数改为逐 token 保留提议，但 eviction 仍然是不可逆状态删除。一个更保守的分层方案让 indexer 只决定 KV residency，同时把被逐出 token 压入在线更新的 latent memory，后续以 residual readout 提供有损召回。这样把“有限显存中的精确 KV”与“较小的派生远程记忆”分开，不能把 latent state 冒充原 KV。
+
+代价是 indexer 训练、latent update、额外 readout 和更复杂的 cache identity；importance miss 或 latent collision 仍会造成不可逆退化。高风险或低置信请求应回退 FullKV、静态窗口、offload 或逐出后重算。作者模型与压缩预算只证明这一分层在所测范围内可行，不证明任意长上下文都能无损压缩。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-25475:end -->
 
 ### 跨 Turn Eviction 必须保留 Surviving-row Identity
 
@@ -894,6 +906,22 @@ construction、RoPE consistency 与 scaling 结果；§5 不证明线性 prefill
 
 <!-- source-family:SF-2026-ARXIV-2605-31598 -->
 
+同一视频的 follow-up 与新视频的 first pass 还必须分开计量。前者可以复用已经完成的 vision tower state 与兼容的
+persistent KV，省掉的阶段较长；后者尚无历史状态，只能在 vision tower 内做 frame pruning 或 skip，端到端收益
+受该阶段原始占比限制。把两者合并成一个“anti-recomputation speedup”会同时混淆 cache hit 与新输入剪枝：
+
+```text
+same-video follow-up → validate video/model/position identity → reuse persistent state
+fresh-video first pass → prune frames before vision compute → rebuild generation state
+```
+
+两条路径都要分别报告 vision、prefill、decode 与端到端延迟，并以 paired quality/drift gate 验收。收益不能跨阶段
+相乘，aggregate accuracy 也可能漏掉稀有时序事件。若视频 identity、frame transform、position policy 或 model
+revision 不匹配，follow-up 必须重新摄取；若 pruning selector 不稳定，则回退完整 vision processing。现有证据只
+支持受测 Qwen/Gemma、VideoMME/MVBench/TOMATO 与披露预处理条件，不构成生产并发或 tail-SLO 保证。
+
+<!-- source-family:SF-2026-ARXIV-2605-03351 -->
+
 ### Quantization Objective 应对齐 Attention Distortion
 
 逐元素重建 K/V tensor 最直接，也便于统一低精度 layout；但相同 reconstruction error 对最终 attention output
@@ -1100,7 +1128,11 @@ request-local tensor
 主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-17034:start -->
-localized context erasing 应在 KV state 上学习受控 steering，并以旁观 token drift 与下游行为验证删除范围。
+#### KV Steering 是可回滚的派生状态变换
+
+删除局部 Context 若只改 prompt 文本，会迫使系统重算后续 KV；直接对缓存做任意覆盖又可能把删除请求扩散到无关 token。一个条件化分支是在明确的 token span、layer/head 范围和 base-cache revision 上学习受控 KV steering，把“待擦除影响”当作派生状态变换，并同时检查目标行为是否消失、旁观 token 的表示漂移以及下游任务是否保持。Cache manager 只提交通过这些检查的新 revision，失败时回退原缓存重算或重新 Prefill，而不是原地修改唯一副本。
+
+这获得低重算成本，却新增定位误差、不可逆污染和验证成本；局部行为消失也不证明参数记忆或外部存储已删除。作者结果只覆盖其模型、定位方法与任务，因此合规删除、跨租户隔离或高风险记忆修改仍应采用原始数据/参数/派生缓存分层审计，无法证明影响边界时保留 full recompute 基线。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-17034:end -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2608-04074:start -->
@@ -1109,15 +1141,11 @@ KV 压缩可由 attention-preserving transform 与 vector quantization 共同决
 
 ### KV 的误差坐标与 Admission 必须同时可见
 
-KV 量化若只最小化存储张量 MSE，可能优化了模型几乎不敏感的方向，却破坏 attention score 或 value readout 真正可见的方向；K 与 V 因此需要不同的误差算子和校准目标。收益是压缩预算与模型输出更一致，代价是必须保留层/头敏感度、校准 workload 与 kernel 支持，超出校准分布时仍需提升精度或回退未压缩 KV。
-
 更进一步，固定 bit-width 只规定总预算，没有回答预算应落在哪个 token、channel、layer 或 K/V 路径。Transform-coding 分支先选择降低相关性的 basis，再按 attention-aware distortion 分配 bits；它把目标从“重构 cache tensor”推进到“限制实际 query 读取后的误差”。codec basis、校准 query 分布、bit map、RoPE 处理与 packed kernel layout 必须共同进入 cache identity，否则同样的平均 MSE 可能对应完全不同的下游风险。收益是把稀缺 bits 留给高敏感方向，代价是校准漂移、不规则位宽、metadata 与专用 kernel；分布未知或 runtime 不支持时，均匀量化或原精度 KV 仍是正确回退。`arXiv:2608.14191v1` 的推导依赖 white-noise quantization 假设，作者实验只覆盖 Llama-3.1-8B、Qwen2.5-7B 与披露任务，不能把约 5.8× operating point 外推为通用压缩率或生产吞吐。
 
 <!-- source-family:SF-2026-ARXIV-2608-14191 -->
 
-<!-- source-family:SF-2026-ARXIV-2605-03562 -->
-
-Many-shot ICL 又把问题从“缓存什么”推进到“哪些示例值得进入可复用前缀”。示例选择、prefix identity、cache reuse 和质量增益必须作为一个 admission 决策：增加示例可能提升覆盖，也可能挤占 KV、降低复用率并拉长 TTFT。固定 shot count 在示例稳定、请求少时仍最简单；动态路径只有在语义选择收益能够覆盖检索和缓存碎片成本时才成立。[受限证据：arXiv:2605.03562v1、2605.03644v1]
+Many-shot ICL 又把问题从“缓存什么”推进到“哪些示例值得进入可复用前缀”。示例选择、prefix identity、cache reuse 和质量增益必须作为一个 admission 决策：增加示例可能提升覆盖，也可能挤占 KV、降低复用率并拉长 TTFT。固定 shot count 在示例稳定、请求少时仍最简单；动态路径只有在语义选择收益能够覆盖检索和缓存碎片成本时才成立。[受限证据：arXiv:2605.03644v1]
 
 <!-- source-family:SF-2026-ARXIV-2605-03644 -->
 
@@ -1163,6 +1191,58 @@ Base version、log prefix、merge generation 与读快照必须共同标识 auth
 
 跨模型 KV reuse 更严格。模型家族名称不等于 cache compatibility；source/target layer map、head shape、RoPE convention、precision 与 calibration revision 都必须成为 cache identity。映射只是一种近似 warm start，需通过 paired acceptance test；失败时必须让 receiver 重新 prefill，不能把近似状态冒充 exact cache。
 <!-- source-family: arxiv:2608.03893v1; daily: 2026-08-05; semantic-body-binding: cross-model-kv-compatibility-identity -->
+
+### 压缩、漂移与驱逐都需要可检验的误差预算
+
+统一比例压缩实现最简单，却忽略不同层、位置与迭代阶段对误差的敏感度。低秩 KV 可把预算联合分给主子空间与 rotated residual；looped/diffusion runtime 还要在多次迭代间校准 cache drift，只在误差界内提交旧状态。收益是更高压缩或更多复用，代价是在线估计、额外 metadata、特殊 kernel 与校准漂移；预算或 estimator 失效时必须回退 FullCache/重算。
+
+Eviction policy 同样不能只返回一个启发式重要度。随机化设计可为保留集合生成误差 certificate，使 admission owner 在质量预算内决定驱逐；certificate 只覆盖假设下的估计误差，不证明下游任务正确。query visibility、结构角色、模型 revision、precision 与 cache layout 都属于 identity，跨任一边界时证书和 calibration 一并失效。
+
+这些方法不是线性替代：短 Context、低并发或 correctness 优先时完整 KV 最可靠；长 Context 且带宽/容量成为瓶颈时，joint rank-residual、cross-loop reuse 与 certified eviction 才值得付出控制成本。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20868:start -->
+量化 KV 还可以采用 tiered certified path：GPU 常驻 INT8 key / INT4 value 负责 fast path，system RAM 保留 FP16
+原件；运行时根据误差证书决定接受近似 attention，或确定性回读高精度状态。这把“压缩后永远使用”改成可逐次
+回退的 proposal / commit，但付出双份存储、PCIe 传输、证书计算和更复杂的 tail latency。作者系统结果不覆盖
+所有模型、长度与并发；证书假设、RAM residency 或 SLO 不成立时，应直接使用更高精度 GPU KV 或重算。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20868:end -->
+
+<!-- source-family:SF-2026-ARXIV-2607-12550 -->
+<!-- source-family:SF-2026-ARXIV-2607-14107 -->
+<!-- source-family:SF-2026-ARXIV-2607-15456 -->
+<!-- source-family:SF-2026-ARXIV-2607-21475 -->
+
+### Multimodal KV 选择必须区分 Prefill key 统计与 Decode query 需求
+
+只按 prefill attention 或视觉 token salience 选择要保留的 KV，隐含假设历史 key 的重要性能够代表未来 decode query；多模态生成中，两阶段统计可能系统性偏移。更可靠的 eviction/prefetch policy 应用 decode-side probe 或 matched query distribution 校准，并把 prefill score 仅作为 proposal。
+
+额外 probe 会增加计算和延迟，未来 query 也不可完全预知。校准失效或模态/任务漂移时，应扩大保留集或回退 full KV；有限模型实验不能提供通用稀疏比例。
+
+<!-- source-family:SF-2026-ARXIV-2607-22586 -->
+
+### 分布式 Prefix KV 是带复制与新鲜度的 materialized state
+
+prefix KV 从单机 cache 扩为共享服务后，命中率不再是唯一目标。每个 replica 必须绑定 model/adapter/token/position/execution identity、materialization revision 与 freshness；placement controller 才能依据热点和负载复制，失效时撤销或重建，而不是把任意同前缀对象直接复用。
+
+复制改善热点吞吐，却增加一致性、网络、容量和故障域成本。短前缀或低复用 workload 仍适合本地重算；跨租户复用还必须先满足隔离与授权。
+
+<!-- source-family:SF-2026-ARXIV-2607-22648 -->
+
+### Sparse Event-KV 是可重建的派生状态，而不是被抽样的原始 token
+
+事件化 KV 通过变换、聚合或选择把 dense history materialize 为稀疏状态。它应保存 derivation identity、source span、生成 revision 与重建路径，读取者只能在对应 query/模型合同下消费。把它当普通 token 子集会丢失变换语义，也无法在误差超界时定位回退。
+
+稀疏状态降低 resident memory，却增加构造、metadata 和 query mismatch 风险。证据不足或 derivation 过期时回退 dense KV/full recompute。
+
+<!-- source-family:SF-2026-ARXIV-2607-23693 -->
+
+### Eviction 还要选择何时提交，而不只是选择删谁
+
+立即按当前 score eviction 反应快，但未来 query 尚未显现；无限延迟则失去内存收益。fixed-lag 或估计式策略把 eviction 写成时间轴上的 commit：先观察一段后续证据，再决定是否永久丢弃，并显式计算等待期间的 resident cost。
+
+负面结果同样重要：当相关性弱、lag 成本高或 workload 快速变化时，估计并不优于简单 recency。系统必须按 query distribution 和 SLO 校准 lag，超界时回退 LRU/保守保留，而不能把复杂 estimator 当普遍改进。
+
+<!-- source-family:SF-2026-ARXIV-2607-24667 -->
 
 ## 本章在知识树中的位置
 
@@ -1247,7 +1327,24 @@ Lossy KV 策略若只测最终答案，可能把猜对、数据集先验或其�
 ### Eviction 不能只看 Attention Mass
 
 小 attention weight 并不等于对应状态无关紧要：它仍可能与大幅 value 相乘，形成不可忽略的输出贡献。KV 淘汰因此要估计删除后的实际贡献或误差上界，而不是把归一化权重直接当作重要性。阈值必须随模型、层、上下文和质量目标校准；没有跨负载验证时，所谓“低权重安全删除”只是启发式假设。
+
+表示中还能解码出像素或文本，也不等于该状态被当前任务因果使用。Decodability 只能证明信息仍存在，只有 matched intervention 才更接近 causal utility；即使如此，冗余表示也会隐藏单点消融的影响。Eviction owner 因而应把 attention、decodability 和 intervention 都当作 sensors，以任务质量和实际释放 bytes 验收，不能让任何一个 proxy 独自拥有删除权限。
+
+<!-- source-family:SF-2026-ARXIV-2609-13012 -->
 <!-- source-family: arxiv:2608.21541v1; semantic-body-binding: attention-mass-is-not-eviction-safety -->
+
+多模态重复请求还会出现另一种 staleness：视觉内容相同，但前置文本、问题或 image ordering 改变，导致 exact-prefix
+cache 不能直接命中。全量重算最稳健；预算受限时，可以把旧 visual KV 当候选状态，只对当前 query 下预计残差变化大的
+token 做选择性 refresh。重要性至少同时考虑 cached-key 对新 query 的相关性、value contribution proxy 与 image-level
+relevance，避免 raw attention 把预算浪费在高权重但低贡献 token，或忽略真正相关的另一张图。
+
+这不是跨 prompt 的无条件 KV 复用：refresh mask、old/new prefix identity、image boundary 与 query revision 必须进入
+cache contract，未刷新的 token 仍是有偏近似。`arXiv:2609.05821v1` 在静态图像/文档、三个 VLM backbone、batch=1
+的 compact runtime 中报告 10% refresh budget 保留 full-prefill 五数据集平均质量的 97.0%～99.5%，并在一个
+MMLongBench-Doc latency subset 上得到 2.99× TTFT；论文未测试 video、streaming、长程 Agent 或 continuous batching，
+也保留完整 cached visual KV 的存储成本。动态输入、selector 漂移或质量证据不足时应回退 full prefill。
+
+<!-- source-family:SF-2026-ARXIV-2609-05821 -->
 
 ### Attention Normalization 与 Eviction Policy 是联合设计
 
@@ -1269,11 +1366,67 @@ softmax 的相对归一化使某个 token 的分数依赖同组其他 token；�
 heuristic importance score 不是 token 真实未来价值，而是基于有限观测的有偏估计器。把淘汰写成 probabilistic decision，可以显式表示不确定性、decode correction state 与采样成本；但概率计算本身可能昂贵，且逻辑删除只有在物理 page 真正回收后才兑现内存。系统要共同报告质量、估计开销、纠错频率和实际 bytes，不因形式更“概率化”就假定更准确。
 <!-- source-family: arxiv:2608.28293v1; semantic-body-binding: probabilistic-kv-eviction-estimator -->
 
+## KV 控制从“保留什么”继续演进到“读到哪里、放在哪里、怎样复用”
+
+### Value-aware Termination 只能提前结束读取，不能接管正确性
+
+完整 attention traversal 在任何 value 分布下都容易解释，是高风险请求和未知 workload 的正确基线；KV 变长后，
+即使 residency 已经解决，逐 block 读取仍会消耗带宽。运行时可以跟踪 accumulated output 的幅值与方向稳定性，只有
+当剩余 blocks 的可能贡献落入经过校准的误差预算时才提前停止。selector 仍决定哪些 KV 可见，kernel termination
+只决定本次读取何时结束，不能把“目前看起来稳定”冒充完整 attention 的证明。
+
+它以额外 accumulator、上界估计与分支发散换取较少 memory traffic；head、position、precision 或 batch 变化都会使
+threshold 漂移。无法证明剩余贡献边界、线上 probe 超界或结构关键 token 未被覆盖时，必须回退 full traversal。
+exact-v1 只支持作者模型、context、cache policy 与 kernel 路径，不能外推 production tail SLO。
+
+<!-- source-family:SF-2026-ARXIV-2606-00024 -->
+
+### Agent Idle Window 要按 Program Horizon 决定 Tier，而不是二元搬空
+
+单轮请求结束即释放 KV 在无会话 workload 中合理；Agent 的 tool wait 只是程序暂时空闲，之后可能很快复用同一状态。
+因此 cache manager 应以 session revision、predicted/observed idle gap、KV bytes、tier capacity 与 transfer epoch 形成
+program-level residency contract：先按相对空闲度划分 GPU/CPU tier，再在每层独立 admission，并以 transfer fence
+防止尚未完成的搬运被 Decode 消费。scheduler 只读取 residency 与代价，不拥有 page 真值。
+
+这种分层减少长期等待占用 HBM，却新增 tool-time 预测误差、PCIe contention、过早迁移与多租户公平问题。预测不可用、
+会话很短或 transfer 会进入 critical path 时，no-move、LRU 或固定阈值仍是合理回退；远端 tier 与故障恢复还需另行验收。
+
+<!-- source-family:SF-2026-ARXIV-2606-00866 -->
+
+### 非 Prefix 复用必须绑定 Position-aligned Segment 与 Correction State
+
+exact prefix sharing 只要模型、tokenizer、position 与前缀字节一致，就能安全复用；交错对话或共享片段位于不同位置时，
+直接复用会混入错误 positional/context condition。受控分支把 cache key 扩展为 segment identity、source/target position、
+surrounding-context revision 与 correction policy：只共享可对齐片段，对受上下文影响的边界执行选择性修正，并记录哪些
+pages 仍是 approximate state。
+
+片段级共享扩大命中范围，却增加匹配、校正计算、碎片和错误复用风险；修正器不可用、位置/conditioning seam 不可证明，
+或高风险请求要求 exact state 时，应回退 exact prefix reuse、dense recompute 或 full attention。作者结果仅证明所测
+runtime 与 interleaved workload 下的受限收益，不构成任意 segment 的语义等价性。
+
+<!-- source-family:SF-SPARSEX-SEGMENT-KV -->
+
+### KV intervention 必须冻结 Layer Scope、Position 与 Conditioning
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2609-11020:start -->
+普通 KV cache 复用依赖的是精确身份约束：同一模型版本、相同前缀 token、相同 position 与兼容的 attention 语义。可是一旦系统开始移植、插值、打乱或延迟某一段 K/V，cache 就不再只是性能副产物，而成为能够改变后续生成轨迹的 behavior-bearing state。此时只记录“换了 KV”无法区分是表示内容、层级位置还是已改变的 token history 在起作用。
+
+一个可复现的 intervention contract 至少要固定 source/target 模型与 prompt、共享到哪一步的 token history、layer/head/position 范围、K 与 V 是否同时修改、修改发生在读前还是写后、位置校正方式，以及干预持续多久。same-token target-forward 可以控制部分 token-history 差异，但共享序列本身已经受早期干预影响，属于 post-treatment conditioning，不能被当作完全独立的因果对照。
+
+分层移植可能比全层替换更能保留目标行为与语言多样性；反过来，全层表示更接近也可能伴随重复或退化。这说明 representation alignment 不是 behavior preservation 的充分条件。相关证据目前只来自一个模型、一个高分离 persona pair、一个 prompt 和很小的采样集，且没有公开代码，所以它支持的是“控制合同必须完整”，而不是某个中层范围具有普适因果所有权。生产 fallback 仍应是 exact-prefix cache reuse 或从可信边界重新 dense recompute；在缺少 layer/position/conditioning 审计时，不允许把任意 KV transplant 当作安全的缓存共享或状态迁移。
+<!-- semantic-body-binding:SF-2026-ARXIV-2609-11020:end -->
+
 ## 小结
 
 KV Cache 是 LLM Serving 的核心状态契约：它以显存换取历史 computation reuse，让 Decode 只推进新位置。容量不足时先保护 prompt/modality 等结构边界，再在剩余预算中选择；换成 linear attention 后，状态形态与 IO pipeline 也必须重新定义，不能继续沿用 token-KV 的身份假设。
 
 每个 active request 都拥有随进度演化的 state，runtime 必须管理 allocation、sharing、transfer、protection 和 release。下一章讨论 Continuous Batching：请求长度和结束时间不同，scheduler 怎样在每一轮重新组合这些携带状态的请求。
+
+### Head-aware Cache 让保留策略服从时间责任
+
+统一 KV 长度易实现，但视频生成中的不同 head 可能分别承担近邻纹理、跨帧运动或长程身份。离线识别 head type 后，可为不同责任分配异构保留长度，并用 ragged-cache attention 执行；cache identity 因而要包含 head policy、时间层级和 layout，而不只是 token range。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13111 -->
+
+分类错误或场景漂移会删除关键历史，ragged layout 也增加 kernel 与调度复杂度。现有视频模型结果不能外推文本或所有生成器；画质、动作一致性或内核效率回归时，应回退统一 cache、提高保留预算或重新校准 head policy。
 
 ## Review notes
 
@@ -1380,39 +1533,6 @@ Primary-source entry points：
 
 - **SF-2026-ARXIV-2606-26472**：Primary `arXiv:2606.26472v1`；Method `https://arxiv.org/html/2606.26472v1 — §Epiphany score from forward-pass representation change; attention-matrix-free eviction`；Evaluation `https://arxiv.org/html/2606.26472v1 — §Long-reasoning cache/quality evaluation and 16x feasible-context claim`；未证明边界 `https://arxiv.org/html/2606.26472v1 — §Model/task transfer and representation-score drift are unproved; quality regression requires full-KV fallback`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
 
-### Source-family integration record
-
-<!-- recovered-daily-20260623:INFER-KV-CACHE:start -->
-### 2026-06-23 evidence integration — INFER-KV-CACHE
-
-相邻章 `books/part-05-inference-system/46-continuous-batching.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-23581**：Kamera: Unified Position-Invariant Multimodal KV Cache for Training-Free Reuse 的 exact-v1 机制为：We show this recompute is avoidable, and identify exactly what naive KV reuse loses: the cross-chunk conditioning a chunk absorbs from its neighbours. 因此 把 cache position、eviction/quantization policy、跨模态 identity 与 dense recompute fallback 绑定。 该 family 的 failure pressure 是：Blind reuse therefore leaves single-hop recall intact while halving multi-hop accuracy; this is the failure mode prior position-independent caches, designed for single-context or single-image reuse, do not address. 披露的 evaluation signal 是：We show this recompute is avoidable, and identify exactly what naive KV reuse loses: the cross-chunk conditioning a chunk absorbs from its neighbours. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；cache identity 或误差预算失配时清空该路径并回到未压缩/重算 KV。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-23961**：Forget Without Compromise: Nexus Sampling for Streaming KV-Cache Eviction Under Fixed Budgets 的 exact-v1 机制为：To address this challenge, we propose Nexus Sampling, a training-free eviction method that pairs Nexus scoring, an iterative walk over direct attention that surfaces bridge tokens, with weighted reservoir sampling, which retains tokens with inclusion probability in place of deterministic top-$K$. 因此 把 cache position、eviction/quantization policy、跨模态 identity 与 dense recompute fallback 绑定。 该 family 的 failure pressure 是：To address this challenge, we propose Nexus Sampling, a training-free eviction method that pairs Nexus scoring, an iterative walk over direct attention that surfaces bridge tokens, with weighted reservoir sampling, which retains tokens with inclusion probability in place of deterministic top-$K$. 披露的 evaluation signal 是：Theoretically, we show that Nexus Sampling dominates deterministic top-$K$ in long-run survival of subtly important tokens. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；cache identity 或误差预算失配时清空该路径并回到未压缩/重算 KV。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-24033**：RoPE-Aware Bit Allocation for KV-Cache Quantization 的 exact-v1 机制为：We introduce Block-GTQ, a RoPE-aware bit allocator for key-cache quantization built on TurboQuant-MSE(TQ-MSE). 因此 把 cache position、eviction/quantization policy、跨模态 identity 与 dense recompute fallback 绑定。 该 family 的 failure pressure 是：Under RoPE, however, a key's contribution to a future attention logit decomposes into a position-dependent sum over two-dimensional frequency blocks. 披露的 evaluation signal 是：On a single H800 GPU with Qwen2.5-3B-Instruct, packed K3V3 achieves 3.24x KV-cache compression with fp16-comparable quality, runs 1.34x faster than fp16 FlashAttention2 at 128K context, reduces peak memory from 56.31 GB to 19.85 GB, and remains feasible at 256K and 512K where fp16 OOMs. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；cache identity 或误差预算失配时清空该路径并回到未压缩/重算 KV。旧路径在其原约束成立时继续共存。
-
-<!-- recovered-daily-20260623:INFER-KV-CACHE:end -->
-
-<!-- recovered-daily-20260624:INFER-KV-CACHE:start -->
-### 2026-06-24 evidence integration — INFER-KV-CACHE
-
-相邻章 `books/part-05-inference-system/47-pagedattention.md` 只接收 handoff，不重复拥有机制。
-
-### Owner-merged minimal text
-
-- **SF-2026-ARXIV-2606-24467**：KV eviction 从统一 token score 改为 semantic-retrieval heads 选 token、error-aware controller 按层分配 cache budget；压缩决定属于 cache manager，不修改模型语义 owner。 LongBench/NIAH 与选定模型不证明所有 head 都稳定承载语义检索；head drift、低命中或质量回退时恢复更大 cache/全 KV，与 quantization/prefill acceleration 仅证明可组合。
-
-<!-- recovered-daily-20260624:INFER-KV-CACHE:end -->
-
-<!-- recovered-daily-20260625:INFER-KV-CACHE:start -->
-### 2026-06-25 evidence integration — INFER-KV-CACHE
-
-- **SF-2026-ARXIV-2606-26472**：`Epiphany score from forward-pass representation change; attention-matrix-free eviction` 所定义的源特定机制用于以表征变化分数驱动逐 token KV 驱逐，并保留完整 KV 回退；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Model/task transfer and representation-score drift are unproved; quality regression requires full-KV fallback` 是 `Epiphany-Aware KV Cache Eviction Without the Attention Matrix` 的 source-specific 反例/局限边界；若运行条件离开 `Long-reasoning cache/quality evaluation and 16x feasible-context claim` 的验证域，`INFER-KV-CACHE` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-<!-- recovered-daily-20260625:INFER-KV-CACHE:end -->
-
 ### Daily Books delta trace（2026-06—08）
 
 <!-- daily-books-trace:SF-KV-QUANT-ALIGNMENT-COLLAPSE:start -->
@@ -1518,13 +1638,13 @@ Primary-source entry points：
 <!-- daily-books-trace:SF-2026-ARXIV-2607-00760:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-01299:start -->
-- `SF-2026-ARXIV-2607-01299` — Daily `2026-07-02`；primary `arXiv:2607.01299v1`；Books review `books-review:SF-2026-ARXIV-2607-01299`。
+- `SF-2026-ARXIV-2607-01299` — Daily `2026-07-03`；primary `arXiv:2607.01299v1`；Books review `books-review:SF-2026-ARXIV-2607-01299`。
 
   **已吸收的语义增量：** 新增证据边界：For hybrid attention, reusable state is not always a list of per-token KV. A linear-attention segment may need both zero-state result and cumulative transition operator so segments compose in order; sparse full-attention layers then need bounded seam repair. This enables position-independent reuse but adds operator identity, numerical drift, seam policy, composition order and fallback semantics. 该 delta 已进入 `books/part-05-inference-system/45-why-kv-cache-speeds-up.md#L584`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-01299:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-01520:start -->
-- `SF-2026-ARXIV-2607-01520` — Daily `2026-07-02`；primary `arXiv:2607.01520v1`；Books review `books-review:SF-2026-ARXIV-2607-01520`。
+- `SF-2026-ARXIV-2607-01520` — Daily `2026-07-03`；primary `arXiv:2607.01520v1`；Books review `books-review:SF-2026-ARXIV-2607-01520`。
 
   **已吸收的语义增量：** 新增证据边界：KV compressibility is context- and query-family-dependent rather than a fixed ratio. Response covariance gives a graded spectral risk boundary: fast decay permits sparse summaries, while lookup-like or flat-tail contexts impose a near-full-cache lower bound. The theorem does not predict final semantics or remove runtime validation, but it explains when compression should abstain and why FullKV remains necessary. 该 delta 已进入 `books/part-05-inference-system/45-why-kv-cache-speeds-up.md#L650`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-01520:end -->
@@ -1566,19 +1686,19 @@ Primary-source entry points：
 <!-- daily-books-trace:SF-2026-ARXIV-2607-07144:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-09153:start -->
-- `SF-2026-ARXIV-2607-09153` — Daily `2026-07-11`；primary `arXiv:2607.09153v1`；Books review `books-review:SF-2026-ARXIV-2607-09153`。
+- `SF-2026-ARXIV-2607-09153` — Daily `2026-07-13`；primary `arXiv:2607.09153v1`；Books review `books-review:SF-2026-ARXIV-2607-09153`。
 
   **已吸收的语义增量：** 新增证据边界：Keep the generator's exact KV cache alive at the scoring boundary, switch to a compatible LoRA verifier adapter, append one verify token, attend that query over the existing K/V, and map the next-token logits for '+' and '-' to a process score. The readout advances only a query token rather than re-running a length-L prefill. The paper also explores differentiating through KV for steering, but that branch is preliminary and must not be merged with the verified read-only scoring mechanism. 该 delta 已进入 `books/part-05-inference-system/45-why-kv-cache-speeds-up.md#L116`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-09153:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-10582:start -->
-- `SF-2026-ARXIV-2607-10582` — Daily `2026-07-13`；primary `arXiv:2607.10582v1`；Books review `books-review:SF-2026-ARXIV-2607-10582`。
+- `SF-2026-ARXIV-2607-10582` — Daily `2026-07-14`；primary `arXiv:2607.10582v1`；Books review `books-review:SF-2026-ARXIV-2607-10582`。
 
   **已吸收的语义增量：** 新增证据边界：An Agent orchestrator supplies typed semantic region labels and explicit pinning policy; the inference runtime combines those priors with calibrated decay and observed attention to make page-level KV eviction decisions. 该 delta 已进入 `books/part-05-inference-system/45-why-kv-cache-speeds-up.md#L307`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-10582:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-13205:start -->
-- `SF-2026-ARXIV-2607-13205` — Daily `2026-07-15`；primary `arXiv:2607.13205v1`；Books review `books-review:SF-2026-ARXIV-2607-13205`。
+- `SF-2026-ARXIV-2607-13205` — Daily `2026-07-16`；primary `arXiv:2607.13205v1`；Books review `books-review:SF-2026-ARXIV-2607-13205`。
 
   **已吸收的语义增量：** 新增证据边界：The method labels structural roles, diagnoses attention allocation by role and applies adaptive role-aware correction before selection, retaining semantic leaves rather than structural scaffolding under tight budgets. 该 delta 已进入 `books/part-05-inference-system/45-why-kv-cache-speeds-up.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-13205:end -->
@@ -1596,7 +1716,7 @@ Primary-source entry points：
 <!-- daily-books-trace:SF-2026-ARXIV-2607-17019:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-23693:start -->
-- `SF-2026-ARXIV-2607-23693` — Daily `2026-07-27`；primary `arXiv:2607.23693v1`；Books review `books-review:SF-2026-ARXIV-2607-23693`。
+- `SF-2026-ARXIV-2607-23693` — Daily `2026-07-28`；primary `arXiv:2607.23693v1`；Books review `books-review:SF-2026-ARXIV-2607-23693`。
 
   **已吸收的语义增量：** 新增证据边界：A retained downstream contextualized KV row can carry semantics of an omitted upstream observation, so sparse event-KV materializes derived state rather than merely sampling tokens. 该 delta 已进入 `books/part-05-inference-system/45-why-kv-cache-speeds-up.md#L144`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-23693:end -->

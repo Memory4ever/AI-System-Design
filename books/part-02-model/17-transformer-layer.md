@@ -117,6 +117,14 @@ dx_(l+1)/dx_l = I + J_F_l
 抵消 identity path，某些方向仍会衰减。Residual scaling、gate 和初始化的作用，是让 transform branch 在训练早期
 保持可控，而不是取消梯度数学。
 
+Residual 与非线性还承担两种不同的几何责任。Residual identity path 让相邻层的表示和梯度方向更容易保持相干；非线性则必须真正打破仅由坐标旋转造成的等价方向，网络才能沿深度形成新的可区分变换。因而“存在激活函数”并不充分：若非线性仍保持 rotation equivariance，它可以保留梯度传播，却未必打破所需对称性。
+
+这条解释把 stability 与 expressivity 分开，而不是把跨层方向连续性直接当成能力来源。现有因果干预主要来自 toy MLP 与 34M Transformer，大模型快照只展示相关几何；它们不证明任意架构都遵循同一训练动力学。若对称性假设不成立或经验信号与任务质量无关，应回到 Jacobian、loss 与端到端回归，而不是据此选择 activation。<!-- source-family:SF-2026-ARXIV-2605-04971 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07271:start -->
+Layer pruning 不能只比较平均 activation/CKA 相似度：深层表示仍看似保留时，模型也可能因前置层被删而无法跨过 decision-margin transition。压缩验收应沿层深记录 Silent phase 到 Decisive phase 的任务相关 transition，并把 pruning mask、模型、task 与 margin probe 绑定；它能解释突发 accuracy cliff，却依赖多选 logit 和作者定义，不能当通用因果证明。开放生成或 probe 不适用时，回退任务级回归、保守剪枝与完整模型。`arXiv:2605.07271v1` 的证据只覆盖作者模型、任务与 iterative pruning 分析设置。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07271:end -->
+
 Normalization placement 又改变了 identity path 是否必须经过 Norm Jacobian。抽象地看：
 
 ```text
@@ -184,6 +192,14 @@ y     = gamma elementwise_mul x_hat + beta
 Normalization 让子层面对更稳定的输入尺度，降低参数更新导致 activation distribution 剧烈漂移的风险。但它不是把所有信息变成相同，也不能替代学习率、初始化和数值监控。
 
 RMSNorm 等变体省略均值中心化，使用 root-mean-square 缩放。具体模型采用哪种 normalization 属于 checkpoint 架构，不应把二者混成同一个公式。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20289:start -->
+当 Transformer 被映射到脉冲执行时，Layer contract 不能只保留矩阵乘：Softmax、SiLU 与 RMSNorm 还要被
+分解为可执行的 division、exponential 和 norm primitives，并显式记录有限 timestep、population 与分段近似
+误差。这样获得 spike-native operator coverage，代价是新的数值范围、累积误差和硬件支持边界。论文在披露的
+转换框架与模型上给出的精度、延迟结果不证明所有 neuromorphic target 的能耗或兼容性；误差预算或 operator
+coverage 不满足时，应回退原精度算子或常规 Transformer backend。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20289:end -->
 
 ## Post-Norm：原始 Transformer 的顺序
 
@@ -270,6 +286,12 @@ prefill/decode 的历史状态和 online reduction。更强的 depth routing 换
 
 保留多个状态不自动保留多个独立方向。跨流 mixer 若只限制最大奇异值不超过一，只保证这一步不放大；最小奇异值仍可接近零，反复混合会抹去流间差异。正交约束同时限制上下界，却只保存所作用子空间的欧氏范数，不保证每个语义方向或流间差异不变，均值与差异仍可交换。它以更受限的混合几何、额外状态和数值实现约束换取传输稳定性；仍须将 mixer 与 write-back、初始化和训练配方共同评估，不能把局部等距当作全网络稳定或质量保证。
 
+若 mixer 还要求每一步都保持 row/column 质量守恒，有限轮 Sinkhorn normalization 是成熟且易并行的旧方案；stream 数量少、近似误差可控时，它通常已经足够。约束变化发生在深层反复混合必须同时满足 exact doubly-stochastic feasibility 与完整 mixing expressivity 时：可以用 transportation-polytope chart 的 `(n-1)^2` 个自由度逐项消耗 row/column budget，覆盖 Birkhoff polytope interior；recursive 分解则用层级状态换部分并行。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21724:start -->
+Checkpoint 必须联合版本化 stream count、chart/recursion、边界处理与 optimizer，runtime 只执行冻结 mixer，不能把“减少归一化迭代”静默改成另一个算子。Exact chart 消除 finite Sinkhorn error 与 factorial permutation mixture，却引入顺序依赖、非线性耦合、kernel 成本与 optimizer sensitivity；矩阵可行性也不证明端到端质量或硬件效率。若 chart saturation、gradient stability、吞吐或 held-out quality 失败，应保留单 residual stream，或回退经过验证的 Sinkhorn、permutation mixture 与结构化 mixer。现有证据只覆盖作者的小规模语言模型和多数 single-seed 设置，不能外推 frontier-scale 稳定性。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21724:end -->
+
 ### Parallel Tracks 用周期融合换更少的跨设备依赖
 
 标准 Transformer stack 让每层读取上一层唯一 residual state；配合 Tensor Parallel 时，每个子层内部通常还要
@@ -333,6 +355,30 @@ initialization 与 batching divergence变成训练和 runtime contract。PrefixL
 data 可能与 recurrence 共同贡献结果，不能把联合配方的收益全部归因于结构。HRM-Text 的作者实验只支持其
 1B、固定 context 与任务格式中的机制分支；固定层深、单 clock recurrence 和显式 CoT 在可预测 latency、
 通用 raw-text 或可验证中间过程更重要时继续成立。
+
+### Recurrence 可以只占据 Decoder 的局部层段
+
+复用完整 block 或完整 decoder 进行 silent recurrence，状态边界最清楚，却会让每个额外 reasoning step 重跑所有层；显式 CoT 则把步骤暴露成 token，便于监督和验证，但增加输出长度并把内部计算承诺给语言表面。若额外计算只在某类结构化变换中有价值，可以把执行深度局部化：lower decoder prefix 只运行一次并产生 boundary memory，选定的中间层段维护 recurrent state、按内部时钟迭代，达到声明预算后再交回普通上层 decoder 生成答案。
+
+```text
+lower decoder prefix once
+→ versioned boundary memory
+→ localized recurrent state for T internal steps
+→ fixed upper decoder and answer generation
+```
+
+这里 checkpoint 拥有 recurrence span、time modulation、memory readout 与最大预算；runtime 只执行已发布的预算策略，不能把 latent step 数当作可随意增加的“免费思考”。局部化可少重跑无关层，并在受限结构化任务上形成 latency—accuracy 分支，但新增循环稳定性、boundary-memory 陈旧、不同 `T` 的 batching divergence 和隐藏推理不可解释性。validation-selected budget 也只是在给定分布上选 operating point，不是逐请求正确性证据。
+
+当任务需要可审查的中间结论、增益不随 recurrence 深度稳定增长、循环状态失稳或 SLO 不能容忍额外串行步时，应回退固定 decoder 或显式 CoT。现有 exact-v1 结果只支持作者披露的 structured-reasoning 设置；Deep ListOps 的非单调结果尤其阻止把更多 latent steps 写成普遍收益。
+
+<!-- source-family:SF-2026-ARXIV-2607-25915 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24330:start -->
+标准 softmax Attention 为每个 query 直接寻址 token-level KV memory，精确 recall 强，但状态和计算随序列增长；固定大小的 recurrent/SSM state 把历史压进有限状态，长度成本更稳定，却可能丢失 query 之后才显得重要的细节。两者之间可以加入 query-conditioned basis projection：历史先形成受控数量的 basis state，query 再决定如何读取这些基，而不是预先把全部历史压成与 query 无关的单一摘要。
+
+这条分支以有限 basis、投影计算和训练复杂度换取比完整 KV 更小的状态，同时保留一定 query-specific addressing；basis 预算不足或查询落在未保留方向时，精确 recall 会失效。状态 owner 必须绑定 basis 构造、预算和更新规则，runtime 不能把不同版本的 basis cache 混用。长程 recall gate、复杂度或稳定性不过关时，应回退 softmax Attention 或经过验证的 hybrid Attention；现有证据只覆盖论文的结构、FineWeb-Edu 与附录 scaling 实验，不证明它在任意模型和检索任务上替代 KV memory。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24330:end -->
+<!-- source-family:SF-2026-ARXIV-2605-24330 -->
 
 ## Causal 不是 Mask 属性，而是 Block 不变量
 
@@ -481,6 +527,12 @@ activation readout 或单点 ablation 也不够。更完整的验证顺序是：
 
 章节公式描述逻辑语义，不代表每个算子都以相同 dtype 独立执行。Fused kernels 可以合并 Norm、projection、bias、activation 或 residual add，但需要保持 checkpoint 与数值容差内的模型语义。
 
+### 层堆叠可以被解释成迭代优化，但不是 Hidden-state 真理
+
+普通 residual layer 最稳妥的解释是对 representation 做逐层可学习更新；在受限函数类与分布假设下，也可以把 context-carried state 的层间变化构造成 normalized-gradient iteration。这个视角解释为何深度可能对应算法步数，但只要参数共享、归一化、目标构造或分布条件改变，就不能把 hidden state 直接命名为某个真实 optimizer state。
+
+算法解释带来可分析的归纳偏置，却可能把存在性构造误当成实际机制。无法通过干预和跨设置验证时，应回退 representation-update 解释；现有 exact-v1 只证明作者定理与实验条件，不证明生产 LLM 在执行该优化器。<!-- semantic-body-binding:SF-2026-ARXIV-2605-06609 -->
+
 ## 本章没有解决什么
 
 Transformer Layer 本身没有规定：
@@ -532,6 +584,28 @@ Transformer Layer 通过 residual stream 把复杂计算组织成 shape 稳定�
 
 Pre-Norm 与 Post-Norm 的差异不只是代码顺序，而是梯度路径设计。理解完整 shape 流后，模型深度、activation、KV Cache 与分布式切层之间的联系也变得可见。
 
+### Fixed-point Refinement 是 Recurrence 的条件分支
+
+固定次数的 looped Transformer 用共享权重反复修正状态，参数经济但训练不稳，推理成本也固定。另一条分支把 refinement 写成 fixed-point solve：backbone 产生初始 proposal，solver 持有迭代状态，convergence rule 只提出停止，任务与数值 gate 决定是否接纳；implicit differentiation 使反向内存不随有效深度线性增长。它以自适应深度换来收敛失败、求解开销和隐式梯度数值风险。未收敛时应限制迭代并回退固定深度或显式 loop，持续记录 residual 与 per-sample convergence。exact-v1 只支持作者规模、任务和容差，不证明任意输入收敛、无限深度免费或普遍硬件收益。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12466 -->
+
+### Layer Pruning 需要在删除边界显式修复表示坐标系
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-15491:start -->
+直接删除冗余层在校准分布稳定、相邻 hidden state 已近似对齐时成本最低；层数减少后，删除点前后的 activation 坐标系仍可能错位，使下游层接收到从未训练过的表示。一个低成本分支在 pruning boundary 收集成对 activation，并求一个无约束闭式线性 alignment operator 插回网络。pruner 只决定候选结构，alignment operator 拥有局部坐标转换，完整模型回归才决定 artifact 能否发布。
+
+闭式修复避免全量 fine-tuning，却新增 calibration set、operator 参数与版本身份；线性映射只能补局部一阶错位，可能在 OOD、长上下文或安全 slice 上放大误差。exact-v1 的 §3.2.1–3.2.3、§5.1–5.3、Appendix G 与 §6 只支持作者模型、剪枝率和 latency 条件。校准分布不可信、operator ill-conditioned 或关键 slice 回归时，应保留未剪枝模型，或回退带训练的 pruning/fine-tuning 路径。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-15491:end -->
+
+### 多流 Residual 把 Layer Identity 从单一向量扩展为受控状态组
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23259:start -->
+单一 residual stream 让层间接口稳定、实现简单，是默认可堆叠结构；当不同更新需要保留各自轨迹时，可以维护多条 residual state，再由 gate 与 attention pooling 决定哪些增量进入下一层。Layer identity 因而不仅是参数与 Norm，还包含 stream 数量、gate、pooling 与合并顺序。
+
+多流结构增加表示容量，也增加显存、通信、gate collapse 和训练不稳定风险。exact-v1 只支持作者架构与实验，不证明 stream 越多越好；gate 饥饿、数值漂移或收益不足以覆盖状态成本时，应回退普通 residual 或较简单的 Attention Residual。arXiv:2605.23259v1
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23259:end -->
+
 ## Review notes
 
 - [Layer dropout v1](https://arxiv.org/html/2609.05275v1)：采用§3–11的结构mask、实际跳过、schedule/optimizer共同校准及推理分支边界。实验基于Celerity/CS3，不外推GPU加速；部分正文与表格对优劣的概述不一致，8.2B缺dense对照，不采用普遍质量提升、最优dropout率或无损early exit主张。
@@ -576,3 +650,8 @@ Primary-source 校验入口：
   matched random ablation、双向 activation patching 与 adaptive re-attack 共同支持受限 circuit-edit evidence
   chain；六个 4B--8B instruction models 的链路强度和 utility/over-refusal 代价不一致，不构成生产安全保证）:
   https://arxiv.org/html/2609.00051v1
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25915:start -->
+- `SF-2026-ARXIV-2607-25915` — Daily `2026-07-29`；primary `arXiv:2607.25915v1`；正文锚点“Recurrence 可以只占据 Decoder 的局部层段”。
+  证据限作者的局部 recurrent decoder 与 structured-reasoning evaluation，不证明 latent steps 等价于正确推理或收益随深度单调。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25915:end -->

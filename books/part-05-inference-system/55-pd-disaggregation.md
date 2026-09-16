@@ -126,6 +126,20 @@ handoff 同时占用同一关键链路，软件调度只能改变等待顺序，
 比较，没有制造芯片或生产服务证据。正文因此只吸收一个条件判断：**当两类 critical traffic 的共享争用已成为
 主瓶颈，物理隔离可以成为软件调度之外的分支；它仍不能省略 KV ownership、queue、completion 与 failure contract。**
 
+<!-- semantic-body-binding:SF-2026-ZAI-ZCUBE-INFERENCE-NETWORK:start -->
+物理隔离也不一定要求为每类流量新增专用封装链路。传统 Clos/ROFT 借助多层交换与 ECMP 吸收静态、近似对称的流量波动，在通用集群中仍有最成熟的冗余和恢复路径；P/D 解耦后，跨节点 KV 与请求流量可能呈非对称、时变形态，多条“等价”路径反而会集中成热点。此时 topology 与 route 应成为版本化部署 artifact：flat topology 可以结合 single-rail/multi-rail hybrid，为关键 traffic class 建立受验证的最优路径；network controller 拥有 topology/route revision，request scheduler 只能在已批准路径上分配请求。
+
+减少交换层级和光模块能够降低成本与排队，但唯一最优路径也减少冗余，放大 rail mapping、链路健康和故障恢复压力。traffic mix、NIC locality 或 topology epoch 偏离验收域时，应回退 Clos/ROFT 多路径、ECMP、保守共置或带宽隔离。ZCube 官方案例只支持同 GPU、软件与应用条件下的 GLM-5.1 coding workload、千卡迁移和作者报告的两周运行及性能/成本数字；缺少逐请求原始 telemetry 与独立复现，不能外推到任意模型、网络规模和故障率。
+<!-- semantic-body-binding:SF-2026-ZAI-ZCUBE-INFERENCE-NETWORK:end -->
+
+### Remote-memory 依赖链可以下沉，但只能执行受限程序
+
+把 page-table walk、lock、KV block gather 或 MoE expert gather 拆成多次 host RPC，在依赖短、远端内存访问少时清楚且易调试；当一次 PD handoff 或 remote PagedAttention 需要串行追随多级指针时，网络 RTT 会被依赖深度放大。一个可选分支是在 memory-side NIC 上预注册静态可验证的 compact program，把受限的 load、compare、branch 与 gather 链压缩为一次 request，由 compiler 证明 ISA、地址范围与终止条件，再由 NIC 执行。
+
+减少 RTT 的代价是缩小表达能力、扩大 NIC trusted computing base，并把 program/version、buffer bounds、completion 与 replay 语义加入 handoff identity。复杂动态逻辑、验证失败或 NIC 状态不可恢复时必须回退 CPU/RPC；该分支也不能替代 KV generation、destination ownership 和 end-to-end SLO 验证。`arXiv:2606.13708v1` 只支持作者 FPGA prototype、所列 graph/page-table/lock/MoE/PagedAttention workload，不证明任意 SmartNIC 或生产网络都能获得相同收益。
+
+<!-- source-family:SF-2026-ARXIV-2606-13708 -->
+
 ### 从完整到达再执行到 Progressive Verified Handoff
 
 传统 handoff 以完整、精确的 KV 为 commit unit：destination 只有收到全部 bytes 并验证 metadata 后才开始 Decode。
@@ -179,6 +193,10 @@ device order 排列冲突调用；不冲突的计算仍可重叠，不必等待�
 完成更快仍可能让 TTFT 变差。无并存 P 工作、缺少合法切换边界或尾延迟更重要时，串行执行或物理分池仍合理。
 
 ## 从 P/D 到 P/D/A/F：分离是条件化切分，不是单向演进
+
+阶段边界还会随 attention algorithm 改变。Dense attention 的 quadratic compute 与大 KV footprint 可能适合 HBM-rich GPU；subquadratic attention 与 FFN 的 arithmetic intensity、state footprint 和 SRAM reuse 不同，最优 A/F placement 不再等于传统 P/D 切分。重新分片可提高异构资源利用，却增加跨设备 activation、graph 与故障域；模型小、链路慢或 co-location 已满足尾延迟时，原有 P/D 或单池仍更合理。
+
+<!-- source-family:SF-2026-ARXIV-2609-13134 -->
 
 P/D 按请求阶段切开 worker，但每个池内部仍同时执行 Attention 与 FFN。随着 model、batch、
 KV width、MoE sparsity、precision 或 hardware 改变，这两个算子的资源画像也可能继续分化：
@@ -283,6 +301,15 @@ decode_active_work    < decode_capacity(y)
 
 Input/output length distribution 或 prefix hit 改变后，最优 `x:y` 也会变化。静态 1:1 只是 topology，不是 capacity proof；Dynamo Planner 等控制层正是试图根据观测调整这一比例。
 
+### 从静态 Pool Ratio 到耦合的 SLO Control State
+
+只按单池 queue length 调整 `x:y`，在 cache locality 弱、网络余量足且 P/D 两阶段近似独立时成本最低；hierarchical KV cache、routing affinity 与共享 fabric 同时存在后，一个请求在局部选择最短队列，可能把 handoff、cache miss 和另一池拥塞的 externality 留给全局。控制器需要在同一 epoch 中观察 P/D capacity、per-request SLO slack、KV affinity、handoff queue 与 routing congestion，再联合决定 admission、placement、multiplexing 以及何时从 cache-affinity 切换到 load-balance。
+
+这不是要求每次波动都重排 pools。联合状态能在接近 saturation knee 时保护 tail budget，却增加服务时间预测、遥测新鲜度、控制振荡和跨租户公平风险；所需信号缺失或突发超出校准域时，应退回隔离队列、保守 admission 与固定 role ratio。`arXiv:2606.16264v1` 和 `arXiv:2606.17081v1` 分别为 SLO-aware multiplexing 与拥塞 externality 提供受限证据；它们的特定请求混合、三节点 B200 拓扑和吞吐/尾延迟结果不能外推为通用阈值。
+
+<!-- source-family:SF-2026-ARXIV-2606-16264 -->
+<!-- source-family:SF-2026-ARXIV-2606-17081 -->
+
 ### 从固定角色边界到 SLO-bounded Prefill Deflection
 
 固定 Prefill/Decode pools 让 capacity、故障域和 ownership 简单，却可能出现一侧排队、另一侧保留短时 headroom。
@@ -336,6 +363,27 @@ Power plane 可以约束节点总预算，但 request/KV ownership 仍由 servin
 ### Diffusion Serving 的角色切分不是 LLM P/D 的直接复制
 
 把 diffusion 请求放在同构实例同步执行，负载小且 step 数稳定时合理；生产内容管线的异步 stage、不同 model component 和弹性实例使单队列出现阻塞。Serving owner 可把去噪、条件编码与后处理的状态显式化，用异步 pipeline 和 hybrid instance scheduler 分配资源。收益是提高利用率和弹性，代价是跨 stage handoff、队列抖动与质量/版本一致性风险；流量低或拓扑简单时同构部署仍更可靠。exact-v1 只支持论文披露的 diffusion topology、硬件和质量/时延实验，不能外推到任意生成模型或 SLO。<!-- source-family:SF-2026-ARXIV-2605-25550 -->
+
+### P/D 分离以后，功率旋钮也应按阶段拆开
+
+统一 GPU power profile 在同构 workload 中最容易部署，但 P/D 已把 compute-bound Prefill 与 memory-bound Decode 固定到不同 lane，
+继续给两者使用同一 actuator 会丢掉这项结构信息。Prefill 的 SM clock floor 可以直接约束计算时长；Decode 的功耗曲线在带宽饱和点
+以上较平，适合用经实测校准的 power cap 让设备自身调频，并把 operating point 放在吞吐/延迟 cliff 之上。
+
+```text
+fingerprint(model, quantization, engine, topology)
+-> calibrate Prefill clock window and Decode power cliff separately
+-> select an SLO-bounded operating mode
+-> guard ITL-p99 and prompt latency
+-> invalidate calibration when fingerprint changes
+```
+
+控制器拥有 calibration artifact、lane actuator 与 SLO guard，不拥有 request/KV state。收益是把未使用的 latency headroom 转成能效，
+代价是校准成本、telemetry delay、cliff 漂移和 profile invalidation。公开结果只覆盖单节点 8×B200、两种 Qwen3 MoE、指定 FP8/NVFP4、
+Dynamo/SGLang runtime 与 closed-loop concurrency；dense model 的收益显著更小，跨节点 power shifting 也未验证。因此无法校准、模型/引擎变更
+或 tail SLO 失守时，应退回 vendor profile 或未限功率基线。
+
+<!-- source-family:SF-2026-ARXIV-2609-11133 -->
 
 ## Handoff 状态机
 
@@ -515,7 +563,7 @@ Primary-source 校验入口：
 
 ### Daily Books delta trace（2026-06—08）
 
-- `2026-05-04 / SF-2026-ARXIV-2605-01708` — exact-v1 `arXiv:2605.01708v1`；正文只吸收 bit-exact codec 与完整 handoff critical-path 结算，未外推压缩率为服务 goodput。
+- `2026-05-05 / SF-2026-ARXIV-2605-01708` — exact-v1 `arXiv:2605.01708v1`；正文只吸收 bit-exact codec 与完整 handoff critical-path 结算，未外推压缩率为服务 goodput。
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-08635:start -->
 - `SF-2026-ARXIV-2606-08635` — Daily `2026-06-08`；primary `arXiv:2606.08635v1`；Books review `books-review:SF-2026-ARXIV-2606-08635`。

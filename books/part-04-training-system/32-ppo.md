@@ -186,6 +186,17 @@ rho_t(theta)
 
 当 `rho_t=1`，新旧策略对已采样 token 概率相同；`rho_t>1` 表示概率增大，`rho_t<1` 表示概率减小。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07331:start -->
+逐 token ratio 只比较当前 action probability，不能直接表达更早 token 已改变当前 prefix state；把截至位置 `t` 的 ratios 累乘可更贴近 prefix-level policy shift，却让 log-ratio variance 随位置增长。PPO branch 因而要把 ratio granularity 与 position-adaptive clipping 一起版本化：后部 token 使用按校准长度增长的 log-space bound，并分别报告位置 clip rate。它以较低 state mismatch 换更高方差和长度敏感性；policy lag 过大、长序列比率爆炸或校准不足时，回退 token ratio、sequence ratio 或更频繁 rollout 同步。`arXiv:2605.07331v1` 只支持论文披露的任务、长度与训练设置，不证明任意长文本或异步 rollout 稳定。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07331:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20865:start -->
+N-step ratio 在单 token 与完整 prefix 累乘之间选择一个有限 horizon，把更早 action 对当前 state 的影响纳入估计，
+同时避免全序列 ratio variance 无界增长。horizon 因而是 bias / variance 控制量，并与 rollout policy、重同步频率
+和 clip rule 一起版本化。长 trace、policy lag 或 ratio 爆炸时，应缩短 horizon 或重新采样；论文理论与任务实验
+不证明一个固定 `N` 能跨模型和长度成立。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20865:end -->
+
 朴素 surrogate objective：
 
 ```text
@@ -332,6 +343,22 @@ Autoregressive rollout 往往是重要成本。更快的 training backward 不�
 
 Clip fraction 持续过高可能表示 update 太大；value loss 很低也不一定好，可能是 return 构造或 mask 错误。指标必须和 sampled outputs 联合审查。
 
+### 稳定算法之前，先验证三条更新链路
+
+PPO 公式正确并不意味着实现真的在优化预期目标。小模型或参数高效训练中，至少有三类故障会产生相似的“不收敛”外观，却属于不同控制面：adapter 参数可能在装载、合并或重新初始化后没有进入 optimizer；低精度计算的 old/new log-prob 差可能让 importance ratio 溢出或失去解释；reward model 可能没有足够判别力，使 policy 在看似稳定的 ratio 下仍向单一行为塌缩。
+
+因此一次 rollout→update 应分别建立三个 gate：先确认目标参数存在非零、有限且持续的梯度；再以稳定精度计算并监控 ratio、KL 与 clip fraction；最后检查 reward 分布、对照样本和行为多样性。任一 gate 失败都应停止本轮更新，保存失败回执并回退最近可信 checkpoint，而不是同时调 learning rate、clip range 和 reward scale 后把原因混在一起。adapter 生命周期不可信时重新建立可训练参数身份，ratio 不可信时以 FP32 路径复算，reward 退化时则先恢复 evaluator，而非继续让 PPO 放大错误信号。
+
+这套诊断增加数值复算、canary rollout、reward whitening 校准与 rollback 存储；whitening 还可能隐藏绝对 reward 漂移，过严 gate 会降低训练吞吐。规模小、全精度路径稳定、reward 已独立验证时，标准 PPO loop 仍是更简单的基线。现有 exact-v1 证据只来自 70M–500M 模型和 250-step PPO，证明这些故障可以被分离并修复，不证明相同阈值适用于更大模型或更长训练。
+
+<!-- source-family:SF-2026-ARXIV-2607-25091 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23565:start -->
+最终 reward 相同的两条 sequential-RL 训练路径，可能因为任务顺序和早期显著特征不同而形成完全不同的 OOD goal generalization。因而 checkpoint 不能只保存最终参数与回报；训练历史还应记录 task order、feature exposure，并以 latent-policy-gradient probe 检查当前策略对哪些特征方向敏感。这里 probe 只拥有诊断 proposal，真实 OOD rollout 与反事实重训才拥有泛化判定权。
+
+这种历史审计增加 feature basis、probe 训练和重放成本，并可能把低维相关性误当成策略因果机制。作者在百余条训练流水线和二百五十余个合成 OOD 环境上的结果只支持其特征化环境；latent policy gradient 不是实际 policy 的因果证书。probe 与真实行为不一致，或任务无法定义稳定特征基时，应回退直接 OOD rollout、counterfactual retraining 与人工 goal audit，而不是据 probe 单独调整 PPO 超参数。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23565:end -->
+
 ## PPO 没有解决 Reward correctness
 
 PPO 只控制怎样优化给定 reward。若 Reward Model 偏好错误，PPO 可以更稳定地把错误偏好放大。
@@ -424,3 +451,8 @@ Primary-source 校验入口：
 
   **已吸收的语义增量：** 新增证据边界：Given a structural causal environment and baseline policy, matched-noise counterfactual coalitions estimate per-action Shapley contributions, redistribute delayed return into per-step rewards and feed PPO with an explicit causal-credit branch. 该 delta 已进入 `books/part-04-training-system/32-ppo.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-16999:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25091:start -->
+- `SF-2026-ARXIV-2607-25091` — Daily `2026-07-29`；primary `arXiv:2607.25091v1`；正文锚点“稳定算法之前，先验证三条更新链路”。
+  证据限 70M–500M 模型与 250-step PPO，支持区分 adapter 可训练性、ratio 数值与 reward 判别三类故障，不给出大规模训练的通用阈值。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25091:end -->

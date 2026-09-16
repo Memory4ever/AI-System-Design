@@ -1,5 +1,10 @@
 # 2026-05-10 Independent Fresh-Context Audit
 
+> [!WARNING]
+> V3 owner reconciliation（2026-09-14）：本文件基于投稿、DataCite 或后来索引日期形成的 436/57 cohort，
+> 已被撤销为 2026-05-10 的 owner-day、Evidence 与 Books 依据。不得继承其完成声明；逐 family 恢复须回到
+> 真实首次公开日。详见 [V3_OWNER_RECONCILIATION.md](./V3_OWNER_RECONCILIATION.md)。
+
 ## Independence and scope
 
 - Auditor role: `fresh-context:non-author`。
@@ -68,4 +73,3 @@
 - Books: `Open`
 - Root-serial Books queue: `29`
 - Remaining finding: root 写回后需由另一位非写作者逐项执行 post-write semantic audit。
-

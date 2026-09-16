@@ -311,7 +311,7 @@ Orca 论文中的 iteration-level scheduling / selective batching 是机制来�
 ### Daily Books delta trace（2026-06—08）
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-08930:start -->
-- `SF-2026-ARXIV-2607-08930` — Daily `2026-07-10`；primary `arXiv:2607.08930v1`；Books review `books-review:SF-2026-ARXIV-2607-08930`。
+- `SF-2026-ARXIV-2607-08930` — Daily `2026-07-13`；primary `arXiv:2607.08930v1`；Books review `books-review:SF-2026-ARXIV-2607-08930`。
 
   **已吸收的语义增量：** 新增证据边界：Change the continuous-batching quantum from an autoregressive token iteration to a diffusion block-denoise cycle. Reclaim completed block slots immediately, align requests at heterogeneous denoising states in one dense layout, and admit work under a token/memory bounding box. 该 delta 已进入 `books/part-05-inference-system/46-continuous-batching.md#L88`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-08930:end -->

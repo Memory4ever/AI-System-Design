@@ -1,5 +1,10 @@
 # 2026-05-10 Books Writeback Queue
 
+> [!WARNING]
+> V3 owner reconciliation（2026-09-14）：本文件的 29 项不再构成 2026-05-10 Books queue。它们来自错误的
+> owner-day cohort，必须先迁回真实首次公开日并重新通过 Evidence 与 Books compare。详见
+> [V3_OWNER_RECONCILIATION.md](./V3_OWNER_RECONCILIATION.md)。
+
 本文件是 date-local queue；本 author lane **未修改共享 Books**。root 必须按日期串行写回，并由非写作者做 post-write semantic audit。
 
 - Queue count: 29

@@ -28,6 +28,10 @@ register / SRAM / shared memory / L2 cache
 
 这解释了为什么很多优化并不是减少数学运算，而是减少 HBM 读写，或者把数据尽可能留在片上 memory 中。FlashAttention 的核心价值就在这里。
 
+因此单一的 “SM utilization” 也不能证明模型已经把 GPU 用满。Decode 的小行 GEMM 可能触发了 Hopper 的矩阵指令，却只填充固定 64-row fragment 的少量有效行；同一个高利用率数字还会混合 fragment fill、occupancy、stall、wave quantization 与 kernel selection。诊断必须从原始 counter 和明确公式分别重建这些机制，并按 Prefill/Decode、batch、sequence、kernel role 与精度分片，否则容量不足、带宽受限和形状浪费会被误写成同一种“算力饱和”。
+
+更细的计数器提高归因能力，却增加 profiler replay、采样扰动与硬件代际耦合；业务 SLO 仍须由端到端 trace 验收。H100 NVL、FlashAttention-3、cuBLASLt 和受测四类模型只支持该测量分解，不提供跨 GPU 或跨 runtime 的通用阈值。<!-- source-family:SF-2026-ARXIV-2609-12923 -->
+
 ## 显存里到底有什么
 
 训练时，显存至少包括：
@@ -324,6 +328,14 @@ announcement 只能证明版本化产品事实和设计方向，不能把未披�
 
 ### Weights 与 KV 的联合 HBM 预算：可提交的运行时精度页
 
+### 多类 Cache 共享 HBM 时，Allocator 与 Router 必须共用一个 Contract
+
+把 embedding hot cache 与 KV cache 固定切成两个显存池，在访问分布稳定、迁移代价高时最容易预测，也便于分别调优。但生成式推荐同时具有大规模 embedding lookup 和自回归 KV state；当 steady、trend 与 burst workload 改变两类 cache 的边际收益时，固定比例会让一侧空闲、另一侧 miss，并把 H2D refill 推入 P99 关键路径。此时 memory allocator 不能只按局部 hit rate 改分区，request router 也不能只按 node load 分发：二者必须读同一个 committed residency map、迁移进度、KV/embedding locality 与 tail-SLO budget。
+
+在线策略可以提出新的分区比例和路由目标，但只有页面迁移完成后，memory manager 才能提交新容量视图；burst recovery 还应限制动作幅度或回退最后稳定分区，避免控制器追逐短时流量而产生 cache thrash。联合控制换来对 workload drift 的适应性，却增加 policy drift、跨节点路由、迁移流量和失败恢复。单一 cache、分布稳定、链路拥塞或严格确定性优先时，静态分区仍更可靠。`arXiv:2605.04450v1` 只在作者的生成式推荐系统、32-node A100、8K–15K sequences 与三类 workload regime 下验证该设计，不证明普通 LLM serving 拥有相同最优比例或延迟收益。
+
+<!-- source-family:SF-WHEN-KV-MEETS-EMBEDDINGS-DYNAMIC-GPU-MEMORY-ALLOCATION-FOR-ACCELERATING- -->
+
 <!-- daily-20260621:infer-gpu-memory:start -->
 ### 逆向硬件证据必须声明 claim provenance
 
@@ -351,6 +363,10 @@ announcement 只能证明版本化产品事实和设计方向，不能把未披�
 ### 混合序列模型需要 Typed Memory Pages
 
 统一 page size、统一 eviction 在状态同构、访问路径相近时能降低 allocator 与 scheduler 复杂度；混合 Mamba–Transformer runtime 同时拥有 recurrent state、attention KV、weights 与临时 workspace，它们的更新频率、可重建性和 fault cost 不同。因而 page identity 应携带 state type、model/request revision、placement owner 与 recoverability，allocator 只能提供容量，执行计划才决定何种状态可迁移或驱逐。
+
+Beam search 的 recurrent state 还可拆为共享 immutable root、分支 transition log 与按需 materialized state。这样不必为每条 beam 复制完整状态，却把 ancestry、replay 和版本一致性变成 memory contract；分支长、状态不可重建或普通 sampling 宽度很小时，直接复制仍更简单。该分支适用于可重放的线性/recurrent transition，不应外推到任意 hidden state。
+
+<!-- source-family:SF-2026-ARXIV-2609-12399 -->
 
 Typed pages 能减少错误 eviction 并改善分层放置，但会增加页表、碎片、迁移路径和 kernel dispatch 复杂度；工作负载单一或状态规模很小时，统一页仍更合适。arXiv:2605.22416v1 的系统与实验只支持其混合架构和披露环境，不证明同一分页策略在所有 Mamba、Transformer、硬件与 SLO 下都占优。
 
@@ -431,14 +447,6 @@ request isolation 与 fallback bandwidth 写进同一合同。
 communication buffers，得到真正可供动态 state 使用的 usable HBM，再比较 KV、batch 和 offload policy。标称容量
 或单个优化名称不能直接推出可接纳并发；具体硬件只用于校验这条推导，不能成为长期假设。
 
-### Embedding Hot Cache 与 KV Cache 竞争同一块 HBM
-
-传统规划常把 embedding lookup 与 KV cache 分给两个独立 owner，但二者最终争用同一 HBM capacity 与 bandwidth。请求分布变化时，扩大 hot embedding cache 可能减少 lookup，却挤压 KV、增加 eviction 与 recompute；反向扩大 KV 又可能放大 embedding miss。更完整的 controller 要以请求 mix、sequence length 和 tail-latency SLO 联合分配，并让 allocation decision 带版本与观测窗口。
-
-联合控制提高整体利用率，却增加预测误差和跨组件抖动。命中率或长度分布失真时，应回退到静态 reservation 或硬水位，避免两个 cache 相互驱逐。独立配额在 workload 稳定、隔离优先时仍然合理。
-
-<!-- source-family:SF-WHEN-KV-MEETS-EMBEDDINGS-DYNAMIC-GPU-MEMORY-ALLOCATION-FOR-ACCELERATING- -->
-
 ## Physical Layout 与 Accessor View 可以分离
 
 同一 tensor 在 prefill、decode 或 MoE routing 阶段可能由不同设备访问。重复维护多份布局会增加同步和容量，单一布局又可能不适合所有 accessor。一个折中是保存一份 physical object，通过 address translation 为 NPU、PIM 或不同 kernel 提供 logical view；translation 只改变访问视图，不拥有 tensor truth。
@@ -462,6 +470,22 @@ communication buffers，得到真正可供动态 state 使用的 usable HBM，�
 传统 offload 在每层搬运完整 tensor；动态稀疏模型只激活少量 neuron，且相邻 token 的 active set 常有重叠。若 GPU 保留当前 resident rows，预测器只需从 storage 预取下一 token 新增的差集，从 whole-tensor streaming 演进为 sparse-row delta movement。
 
 预测器只拥有 prefetch hint，真实 activation 决定 correctness；miss 会重新暴露随机 I/O stall，低 locality 还会让细粒度读取比顺序搬运更差。dense model、短序列或 host bandwidth 充足时，传统 offload 仍更简单。收益必须绑定稀疏度、storage path、缓存命中与预测开销。
+
+### Memory hierarchy 设计必须寻找 phase-specific working-set knee
+
+简单增加片上 SRAM/cache 只在 working set 尚能提高命中率时持续节省能量；prefill 与 decode、context 长度、operator fusion 和 mapping 会把拐点推到不同位置。容量规划因此不能只比较 memory technology 的峰值 PPA，而要把 operator trace、层级流量、映射、cycle 与技术模型放进同一 evaluator，分别寻找各 phase 的 capacity knee。
+
+设计期模拟能缩小搜索空间，却不能证明新 memory technology 已满足制造、频率、热和真实 workload 约束。模型假设不稳时，应保留现有 HBM/DRAM hierarchy 和实机 profile 作为基线，而不是把模拟节能数字写成部署保证。
+
+<!-- source-family:SF-2026-ARXIV-2607-26491 -->
+
+### 跨主机共享 KV 需要同时拥有寻址、顺序与故障语义
+
+CXL memory pool 从交换层级演进到光学 full-crossbar，可以减少中间交换和 eviction cliff，但“所有 host 都能看到大地址空间”还不等于可用的 KV tier。shared allocator、offset identity、registration、producer-consumer rendezvous、coherence/failure domain 与 revoke 必须一起定义，scheduler 才能安全地把 KV 放入池中。
+
+硬件 emulation 加 serving simulation 只能证明参数化模型下的潜力，不能冒充真实 appliance、connector 与多主机推理已完成。光学器件和共享故障域也是新增成本。物理端到端验证缺失时，这类 tier 只能作为 Experimental 选择，并保留本地重算或既有 CXL/HBM 路径。
+
+<!-- source-family:SF-2026-ARXIV-2607-27187 -->
 
 ## 本章在知识树中的位置
 
@@ -493,6 +517,10 @@ HBM 不足时，KV 与其他可预测状态不只在 GPU/host 间二选一，还
 
 Expert 完全常驻 HBM 最稳健但容量昂贵；按 router 结果再加载不会误取，却可能让权重 I/O 落在 critical path。一个中间分支利用相邻 token 和相邻层的 expert activation correlation，在 router 最终决定前预取高概率 expert，同时不改变 router 本身的选择权。Memory manager 只管理 residency proposal，模型路由仍决定实际执行。
 
+单步预测进一步演进为 sequence prediction、deadline-aware prefetch 与 future-aware replacement：预测器提出未来 expert path，cache owner 依据到期时间和 miss cost 决定 residency，并保持 graph-compatible placement。它能利用长程相关性，却新增 predictor drift、miss burst 和 topology 依赖；命中率必须与端到端 wait、额外 metadata 和不同 PCIe/fabric 条件联合报告，预测失准时回退 router-confirmed load。
+
+<!-- source-family:SF-2026-ARXIV-2609-12978 -->
+
 Prefetch 以额外带宽、staging capacity 和错误加载换取潜在 stall reduction；相关性随模型、层和 workload 漂移，错误预测还会挤出真正需要的 expert。带宽紧张、命中率不稳定或模型较小时，on-demand loading 或更高常驻比例仍更可预测。
 
 ### Lossless Weight Compression 需要与 GEMM Tiling 联合调度
@@ -506,6 +534,32 @@ Bit-exact entropy coding 可以降低权重存储，却会在执行时引入 dec
 
 <!-- body-source:SF-2026-ARXIV-2606-21023 -->
 **Demystifying Numerical Instability in LLM Inference: Achieving Reproducible Inference for Mission-Critical Tasks with HEAL 所揭示的约束变化。** 异构 GPU 上 greedy decode 仍会因 kernel-boundary downcast 累积而翻转；HEAL 用 INT16 Q/K/V 与双 16-bit GEMM 误差补偿换取接近 FP32 的功能复现性。这条路径只在 exact-v1 披露的任务与系统边界内成立；`arXiv:2606.21023v1 §6 Conclusion; Appendix B error, flip-rate and truncation studies` 记录了未证明范围。硬件、精度或 kernel identity 不匹配时回退到已验证精度路径并重新测量 memory/latency；原有简单路径在其假设成立时继续共存。
+
+## 从“可见的 CXL 容量”到可调度的跨节点共享 KV
+
+把 CXL memory 接到主机只解决了物理可见性；Kubernetes 若不知道 region 的生命周期、参与节点和撤销条件，
+调度器仍不能安全地把它当作共享 KV tier。可组合内存需要由资源控制面先分配 region，再在各参与 host 上物化为 DAX device，
+通过 DRA/CDI 把同一物理 region 注入对应 Pods；serving connector 才能在共享介质内维护 slot directory 和 KV payload。
+
+这条路径把 cache ownership 从单 worker 扩展为 `resource claim + shared region + slot key`。它能让请求跨节点调度后复用 prefix，
+却新增 model/revision/layout discriminator、region revoke、eviction、copy 前后 key revalidation 和多租户容量记账。
+公开可行性实验只有两节点、单 GPU、单 session、Qwen2.5-7B-Instruct 与 512 GiB appliance；作者明确没有验证 pooled-RDMA、
+并发 tail latency 或 P/D handoff。因此本地 VRAM 命中仍是低延迟基线，身份不全或共享控制面失效时必须回到本地重算。
+
+<!-- source-family:SF-2026-ARXIV-2609-10790 -->
+
+## HBM 可靠性：把长跨度纠错移出常见路径
+
+直接用长 codeword 保护每个 32 B HBM request，可以增强纠错，却会让所有读取承担 span 聚合、syndrome 与搜索成本，
+难以匹配 LLM Decode 的 TB/s 流量。分层 ECC 的演进是：短 inner code 处理常见错误并显式 reject；只有无法局部解决的 chunk
+才携带 address-derived erasure 进入长 outer code。写入侧用 span lock、data-before-parity commit、differential parity 和 poison state
+保持同一代数据与 parity 配对。
+
+收益来自把昂贵恢复变成 exception path，而不是“更强 ECC 没有代价”。新增状态包括 repair buffer、erasure mask、dirty/commit/poison
+epoch 与 span ordering；错误率、稀疏写比例或队列压力超出设计域时，异常路径会反过来成为瓶颈。REACH 的证据来自公开模型流量、
+Ramulator2 与 ASAP7 synthesized kernels，不是真实 HBM silicon；面积、功耗和带宽数字只能作为所述设计点的 feasibility evidence。
+
+<!-- source-family:SF-2026-ARXIV-2609-10861 -->
 
 ## 从机制演进到系统设计
 
@@ -566,7 +620,6 @@ GPU、CPU 和 hybrid execution 仍与之共存；dynamic shape、超长上下文
 - CXL-Hybrid long-context memory（arXiv:2606.12556v1；Status: Experimental）：多级 byte-addressable tier 与 ITME prefetch 只在测试拓扑和可预测访问下成立，不证明所有 KV access 都可隐藏。https://arxiv.org/html/2606.12556v1
 - Pooled DRAM/SSD KV offload（arXiv:2606.14779v1；Status: Experimental）：bandwidth-weighted pool 与 SPDK passthrough 降低串行 I/O；不消除 allocator、failure recovery 和运维成本。https://arxiv.org/html/2606.14779v1
 
-- End-to-end NPU RAG（arXiv:2606.11257v1；Status: Experimental）：把 embedding/reranking/generation 全链驻留与整机 energy/memory 作为独立分支；结论限定 Snapdragon X Elite 单机与 120-query corpus。https://arxiv.org/html/2606.11257v1
 
 ### 低比特收益还取决于同一 SM 内的 Compute Balance
 
@@ -613,31 +666,8 @@ Primary-source 校验入口：
 
 #### 2026-06-25 source-specific Review notes
 
-- **SF-2026-ARXIV-2606-25285**：Primary `arXiv:2606.25285v1`；Method `https://arxiv.org/html/2606.25285v1 — §3 EPTS: Elastic Post-Training Sparsity`；Evaluation `https://arxiv.org/html/2606.25285v1 — §4 Experiments; Experimental Setup; Main Results`；未证明边界 `https://arxiv.org/html/2606.25285v1 — §Limitations and Discussion`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
 - **SF-2026-ARXIV-2606-25519**：Primary `arXiv:2606.25519v1`；Method `https://arxiv.org/html/2606.25519v1 — §3 Experimental Setup; 5 Quantization Inflates Reasoning Tokens; 6 Anatomy`；Evaluation `https://arxiv.org/html/2606.25519v1 — §D Additional evaluation details; D.1 Benchmarks and evaluation protocol`；未证明边界 `https://arxiv.org/html/2606.25519v1 — §7 Can We Reduce Reasoning-Token Inflation; D.2 Model details`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
 - **SF-2026-ARXIV-2606-26488**：Primary `arXiv:2606.26488v1`；Method `https://arxiv.org/html/2606.26488v1 — §Compression of recursive reasoners across precision, pruning, distillation and attention variants`；Evaluation `https://arxiv.org/html/2606.26488v1 — §Three tasks and two recursive architectures; local vs puzzle-exact accuracy`；未证明边界 `https://arxiv.org/html/2606.26488v1 — §Edge recursive models only; token-level preservation does not imply global-reasoning preservation`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-
-### Source-family integration record
-
-<!-- recovered-daily-20260624:INFER-GPU-MEMORY:start -->
-### 2026-06-24 evidence integration — INFER-GPU-MEMORY
-
-相邻章 `books/part-05-inference-system/55-pd-disaggregation.md` 只接收 handoff，不重复拥有机制。
-
-### Owner-merged minimal text
-
-- **SF-2026-ARXIV-2606-24506**：冷 MoE serving 将 stable weights 与 demand-driven KV 拆成独立资源池；planner virtualize shared KV，layer-wise scheduler/persistent kernel 只激活所需 weights 和 KV heads。 证据聚焦冷模型、低并发与给定 context/model mix；热点突发、跨租户 isolation、模型装载故障和高并发下 shared-pool contention 未证明，应能回退 dedicated allocation。
-
-<!-- recovered-daily-20260624:INFER-GPU-MEMORY:end -->
-
-<!-- recovered-daily-20260625:INFER-GPU-MEMORY:start -->
-### 2026-06-25 evidence integration — INFER-GPU-MEMORY
-
-- **SF-2026-ARXIV-2606-25285**：`3 EPTS: Elastic Post-Training Sparsity` 所定义的源特定机制用于把稀疏、量化或压缩决策绑定到显存预算和质量回退；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Limitations and Discussion` 是 `EPTS: Elastic Post-Training Sparsity for Efficient Large Language Model Compression` 的 source-specific 反例/局限边界；若运行条件离开 `4 Experiments; Experimental Setup; Main Results` 的验证域，`INFER-GPU-MEMORY` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-25519**：`3 Experimental Setup; 5 Quantization Inflates Reasoning Tokens; 6 Anatomy` 所定义的源特定机制用于把稀疏、量化或压缩决策绑定到显存预算和质量回退；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `7 Can We Reduce Reasoning-Token Inflation; D.2 Model details` 是 `Quantization Inflates Reasoning: Token Inflation as a Hidden Cost of Low-Bit Reasoning Models` 的 source-specific 反例/局限边界；若运行条件离开 `D Additional evaluation details; D.1 Benchmarks and evaluation protocol` 的验证域，`INFER-GPU-MEMORY` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-26488**：`Compression of recursive reasoners across precision, pruning, distillation and attention variants` 所定义的源特定机制用于把稀疏、量化或压缩决策绑定到显存预算和质量回退；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Edge recursive models only; token-level preservation does not imply global-reasoning preservation` 是 `What Survives When You Compress a Recursive Reasoner for the Edge?` 的 source-specific 反例/局限边界；若运行条件离开 `Three tasks and two recursive architectures; local vs puzzle-exact accuracy` 的验证域，`INFER-GPU-MEMORY` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-<!-- recovered-daily-20260625:INFER-GPU-MEMORY:end -->
 
 ### Daily Books delta trace（2026-06—08）
 
@@ -653,11 +683,6 @@ Primary-source 校验入口：
   **已吸收的语义增量：** APEX4 把 W4A4 的瓶颈定位到同一 SM 内 Tensor Core 与 CUDA Core 的 compute imbalance，并用 kernel mapping 避免 mixed-precision fallback。
 <!-- daily-books-trace:SF-2026-ARXIV-2606-08761:end -->
 
-<!-- daily-books-trace:SF-2026-ARXIV-2606-11257:start -->
-- `SF-2026-ARXIV-2606-11257` — Daily `2026-06-10`；primary `arXiv:2606.11257v1`；Books review `books-review:SF-2026-ARXIV-2606-11257`。
-
-  **已吸收的语义增量：** 在 GPU Memory 章节补一个端侧 NPU 的全链 RAG memory/energy 分支，限定 Snapdragon X Elite、120-query 与单机测量，禁止外推其他 NPU。
-<!-- daily-books-trace:SF-2026-ARXIV-2606-11257:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-11718:start -->
 - `SF-2026-ARXIV-2606-11718` — Daily `2026-06-11`；primary `arXiv:2606.11718v1`；Books review `books-review:SF-2026-ARXIV-2606-11718`。
@@ -666,7 +691,7 @@ Primary-source 校验入口：
 <!-- daily-books-trace:SF-2026-ARXIV-2606-11718:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-12556:start -->
-- `SF-2026-ARXIV-2606-12556` — Daily `2026-06-11`；primary `arXiv:2606.12556v1`；Books review `books-review:SF-2026-ARXIV-2606-12556`。
+- `SF-2026-ARXIV-2606-12556` — Daily `2026-06-12`；primary `arXiv:2606.12556v1`；Books review `books-review:SF-2026-ARXIV-2606-12556`。
 
   **已吸收的语义增量：** 长 context state 可跨 GPU/host/CXL-hybrid/NVMe 构成 byte-addressable tier，并利用 model-weight/prefix access 可预测性做 multi-tier DMA prefetch。
 <!-- daily-books-trace:SF-2026-ARXIV-2606-12556:end -->
@@ -702,13 +727,13 @@ Primary-source 校验入口：
 <!-- daily-books-trace:SF-2026-ARXIV-2607-10186:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-16184:start -->
-- `SF-2026-ARXIV-2607-16184` — Daily `2026-07-18`；primary `arXiv:2607.16184v1`；Books review `books-review:SF-2026-ARXIV-2607-16184`。
+- `SF-2026-ARXIV-2607-16184` — Daily `2026-07-20`；primary `arXiv:2607.16184v1`；Books review `books-review:SF-2026-ARXIV-2607-16184`。
 
   **已吸收的语义增量：** 新增证据边界：Weights and KV compete for the same HBM budget, so MoE weight precision can become mutable runtime state. A safe page table must commit lower precision before freeing pages and restore pages before committing higher precision; planner identity and per-request quality policy become part of serving correctness. 该 delta 已进入 `books/part-05-inference-system/54-gpu-memory.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-16184:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-22389:start -->
-- `SF-2026-ARXIV-2607-22389` — Daily `2026-07-25`；primary `arXiv:2607.22389v1`；Books review `books-review:SF-2026-ARXIV-2607-22389`。
+- `SF-2026-ARXIV-2607-22389` — Daily `2026-07-27`；primary `arXiv:2607.22389v1`；Books review `books-review:SF-2026-ARXIV-2607-22389`。
 
   **已吸收的语义增量：** 新增证据边界：Hierarchical token and element selection exposes intra-token vector fetch as a second KV bandwidth floor and co-designs ranking state with a reconfigurable sorter. 该 delta 已进入 `books/part-05-inference-system/54-gpu-memory.md#L188`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-22389:end -->

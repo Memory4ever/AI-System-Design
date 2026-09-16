@@ -147,6 +147,20 @@ Agent 通过 typed artifacts 和 shared workflow state 协作，而不是无限�
 
 固定角色顺序，实际更接近 Workflow；不应仅因每步使用模型就称为自主 multi-agent system。
 
+### 执行前的 Resource Algebra 是拓扑准入证书，不是运行时估算的替代
+
+任务图已知且各节点成本可界定时，先启动所有 worker 再观察预算是否耗尽，会把错误拓扑变成不可逆的已花费用。
+更稳妥的控制面先把任务复杂度向量映射为带依赖的 DAG，为候选拓扑计算 token、tool call、并发槽位和 critical-path
+上界，只有守恒条件成立才允许实例化。Orchestrator 拥有拓扑 proposal，budget owner 签发准入证书，worker 只消费
+已分配额度；这样把“能否运行”从生成式判断降为可检查的资源约束。
+
+静态代数依赖 deterministic cost、有限 action space 与可界定 graph depth；工具延迟、重试和模型采样带来随机成本时，
+证书只能给出期望或高概率界，仍需 runtime accounting、限额与中止路径。小任务、固定 pipeline 或成本估计不可靠时，
+直接使用单 Agent 加硬预算更稳；不能为了得到形式化证书而伪造精确成本。当前证据只支持受限资源模型中的可行性检查，
+不证明真实多 Agent workload 的 wall-clock 或质量最优。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-05657 -->
+
 ## Topology 从部署前选择演进到运行时有界修复
 
 运行时 adaptation 不只包括修图，也包括受预算约束的 fan-out。Orchestrator 可以依据任务分解、预计并行 critical path 与当前 worker outcome，选择是否实例化子 Agent、分配多少分支及何时合并；但控制对象必须是 typed dependency graph 和 budget，不是“让模型自由召唤更多模型”。
@@ -282,6 +296,31 @@ Agent 可从 interaction history 推断 co-player 的响应策略，并据此调
 
 文本消息可审计但 token/latency 成本高；共享模型族可传 latent cache 以复用中间表示，但通信 owner 仍须记录发送者、模型 revision、shape、生命周期与 fallback text。收益是减小通信，代价是版本耦合、不可解释和跨模型失配；审计或异构优先时回退显式消息。<!-- source-family:SF-2026-ARXIV-2605-22863 --> exact-v1 §3–4 与 Appendix C 支持其 latent-cache 机制，§5 不证明跨模型互操作或语义等价。
 
+异构 Agent 之间即使都使用 KV，也不能把 sender cache 当作 receiver state。跨模型通信必须经过有版本的 cache transform；identity 至少绑定 sender/receiver model、tokenizer、layer/layout、可见输入和 transform-training revision。Transform 只生成 derived state，receiver 仍拥有最终 reasoning 与 action；context-unaware transfer 需要携带更密的 contextual state，不能假设接收者已看到相同 prompt。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-25422:start -->
+当 Agent 通过受限无线链路协作时，token text 与 KV cache 还是两种不同 communication media：前者可审计且跨模型，后者可能减少接收端计算，却依赖共同的 state layout。因而 medium 选择必须与 bandwidth allocation 联合决定，并绑定 sender/receiver model、cache layout、channel state 和端到端 deadline；没有一种 medium 在所有 compute/channel regime 中都占优。
+
+联合优化增加 telemetry、控制和重规划成本，KV 还引入版本耦合与不可解释性。链路或计算状态漂移会让原选择变慢甚至语义不兼容；身份不完整或预测失配时，应回退显式 typed text 与保守带宽，重新建立可验证 handoff。论文数值实验支持这种条件化选择，不证明真实无线环境或任意多 Agent 拓扑的普遍最优性。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-25422:end -->
+
+这种对齐减少文本重编码，却增加训练、模型升级耦合、不可解释错误和 cache 形状兼容成本。跨模型校准失败、身份不符或审计要求可读时，应回退文本消息。作者只验证 Qwen3 三种规模的六个方向和有限 benchmark，不证明跨架构、跨 tokenizer 或生产网络下普遍优于文本。
+<!-- source-family:SF-2026-ARXIV-2606-13594 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11167:start -->
+显式文本 handoff 在异构、审计优先时仍是可解释基线；两个模型若在每个 generation step 通过可训练 interface 双向交换 hidden state，通信 plane 就从异步消息变成 lockstep causal state。Interface 只拥有 payload transform 与 suppression gate，两个 frozen LM 分别拥有自己的生成状态，tool runtime 仍拥有 effect commit；哪一步看到哪段 tool output、何时注入 residual，必须随 causal schedule 一起版本化。
+
+这种 latent coupling 降低文本序列化开销，却可能近似翻倍模型 compute，并新增同步阻塞、不可解释通信、负迁移与 task-specific causal annotation。能力互补不清、因果放置无法证明或审计要求可读时，应回退显式 typed message、异步协作或单模型 tool loop。exact-v1 只支持作者的 calculator/Z3 与有限 GSM8K 分析，不证明跨工具、跨模型或生产 latency 下普遍有益。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11167:end -->
+
+### Reward Shaping 必须保持 Conditional Best-response
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23562:start -->
+稀疏团队奖励难以提供逐步 credit，dense reward shaping 因而在固定任务和稳定对手下合理；但 learned shaping model 与多智能体 policy 同时更新时，彼此会改变对方看到的环境。只有在固定 opponent policy 条件下保持每个 agent 的 conditional best-response set，才能声称 shaping 没有改变原 equilibrium。Reward learner 只拥有 shaping proposal，policy learner 拥有行为更新，exploration schedule 则必须独立拥有覆盖控制，三者不能由同一个 loss 隐式合并。
+
+该保证依赖固定对手假设，现有实验又只覆盖部分可观测的 multi-agent pathfinding；有限探索与耦合的 policy-reward dynamics 仍可能形成振荡和 reward hacking。检测到循环协调、best-response 漂移或真实 sparse reward 退化时，应增加独立探索、冻结 shaping model，或回退原始 sparse reward。它支持一种受限的 admission contract，不证明动态开放环境中的均衡保持。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23562:end -->
+
 <!-- daily-20260621:agent-multi-agent:start -->
 ### Pairwise coupling 不能外推 group dynamics
 
@@ -306,6 +345,28 @@ workflow status
 ```
 
 Message 作为 event 保留，authoritative state 由 workflow transition 更新。一个 agent 说“B 已完成”不能替代 B 的 signed/verified output。
+
+### 多阶消息需要 Ordered Evidence DAG，而不是压平后的共识摘要
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-02359:start -->
+直接拼接一阶邻居消息在团队小、推理链短时最透明；协作扩到多跳后，压平文本会丢失“谁从谁的哪条证据推出了什么”，重复消息又快速耗尽 Context。聚合器可以把跨 hop 的消息表示为有序 evidence DAG：节点保存 claim/evidence，边保存 sender、receiver、hop、dependency 与 revision，再在预算内做 semantic-topological merge。Message transport 拥有 delivery/order，aggregator 只产生 derived view，workflow/verifier 仍决定哪些 claim 能进入最终 commit。
+
+有序合并保留多跳依赖并减少重复 token，却会引入图构建错误、minority evidence 被压缩、consolidation loss 与额外排序成本；更深 receptive field 也不证明消息真实或独立。每次 merge 应记录被省略节点、lineage closure、token budget 与可回读原始消息，冲突或关键依赖丢失时回退 raw-message view、缩短拓扑或交给独立 verifier。作者在无副作用推理 benchmark、有限模型和 topology 上支持该机制，不证明开放网络的 delivery、权限或生产可靠性。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-02359:end -->
+
+### 声明式协议约束 Transition，而不是相信参与者会协调
+
+集中 coordinator 逐条批准消息和动作，在参与者少、流程固定时最容易复算；异步协作扩大后，它会成为串行瓶颈，
+而自由消息又无法表达谁有权设置某个属性、哪些动作互斥、哪些组合绝不能发生。协议层可以把 attribute priority、
+action conflict 与禁止组合编译为显式的 `sayso / nono / nogo` 一类状态约束，再由 runtime 在提交 transition 前检查
+safety 与 liveness。Agent 只提出 emission，protocol owner 持有规则版本，workflow owner 仍持有真实 commit。
+
+声明式协议获得异步性和可检查性，却增加规则冲突、编译覆盖缺口、delivery/identity 假设和版本迁移成本；形式检查
+也不能证明消息内容真实，或外部工具副作用已正确执行。规则不可满足、开放网络身份无法核验、Byzantine peer 或工具
+副作用超出模型时，应回退串行 coordinator、独立 verifier 或人工仲裁。有限示例上的 safety/liveness 与编译时间只支持
+协议机制本身，不构成开放生产网络的正确性保证。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-29601 -->
 
 Message edge 还可以有独立的 admission policy。全量转发最透明，却会传播错误与增加 Context；简单 dropout
 降低流量但不知道删掉的是噪声还是关键证据。带失败历史的 gate 可以在 receiver 前先 rectify 可修正消息，
@@ -405,6 +466,14 @@ backend，却没有 component ablation、长期 self-evolution 或广泛 domain 
 
 Delegation 不能把调用者所有权限复制给子 Agent。应发放 task-scoped、time-bound、least-privileged credentials，并保留 delegation chain。Agent 不能继续任意转委托。
 
+### Spawn 继承的是不可信输入，不是父 Agent 的可信状态
+
+创建子 Agent 早期只是控制流拆分：父节点把上下文复制过去，简单、低成本，也便于复用已有判断。但当父节点的 memory、credential 或 instruction 已混入外部内容时，原样继承会让一次污染沿 spawn graph 扩散，并在每一跳获得新的工具入口。运行时应把继承内容标成 tainted inheritance，在 child authority 建立前执行 allowlist、scope narrowing 与 provenance check；未通过的字段不进入子节点的可执行上下文。
+
+这会牺牲无损上下文复制和一部分并行效率，还要求 lineage、字段级来源与权限收窄可以被重放。低风险、只读且没有外部输入的任务仍可使用轻量继承；来源不明或验证服务不可用时，应回退到最小上下文、重新取证或人工授权，而不是默认信任父节点。现有 exact-v1 证据只支持其披露的攻击与评测设置，不证明所有模型、拓扑或生产 SLO 下都有同样的传播率。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-08460 -->
+
 ### Governance Provider 也必须进入 Byzantine Threat Model
 
 <!-- semantic-body-binding:SF-ATTACKS-AND-MITIGATIONS-FOR-DISTRIBUTED-GOVERNANCE-OF-AGENTIC-AI-UNDER-B:start -->
@@ -439,6 +508,21 @@ fault threshold 与被保护属性，再选择分支：客户端 audit 适合检
 
 Runtime 需要 max handoffs、dedup keys、leases、timeouts、conflict resolution 和 escalation。自然语言“请协调好”不是协议。
 
+故障通道也不能压成一个 agent error rate。Proposer 不确定、verifier 拒绝、消息丢失与 coordinator 误路由会改变不同
+状态边：前两者产生 epistemic proposal，message loss 破坏 delivery，routing failure 则把任务交给错误 capability。
+可靠性模型应分别记录这些 channel、拓扑 revision 与 certificate dependency，检查是否存在让整个子图无法完成或验证
+的 stopping set；简单增加 Agent 数量可能只复制同一瓶颈。
+
+因此 sub-agent 的 abstention 应是一条 typed failure message，至少说明 `ambiguous / misrouted / unsupported / unavailable`、
+已观察证据、未完成 obligation 和允许的 fallback。Coordinator 只能据此 clarify、reroute、降级或升级，不能把空响应
+当作无意见，也不能把带理由拒绝当作任务失败后继续多数表决。该分层提高可定位性，却增加 schema、校准和消息状态；
+verifier 相关错误、confidently-wrong output 或未建模网络行为仍会击穿理论边界。短链路、单 owner 任务继续使用直接
+错误返回；证书不可靠或关键消息缺失时应 fail closed 或转人工。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07073:start -->
+角色提示不等于权限边界：团队 pass 可能来自某一角色偷偷读取完整规格、修改 workspace 或自行认证。Multi-Agent EvalSpec 应同时冻结 prompt roles 与 OS/runtime enforcement，分别报告 team outcome、unauthorized access/edit attempt、verifier false accept/reject 和相对 single-agent value。强隔离提高可审计性，却增加缺失信息协调和易任务的团队开销；sandbox 覆盖不全或 verifier 不可信时，回退单一最小权限 owner、deterministic grader 与人工 certification。 [受限证据：arXiv:2605.07073v1]
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07073:end -->
+
 ## Verification 与 Aggregation
 
 将多个答案平均或投票只在错误具有一定独立性时有效。对于开放任务，更可靠的方法是：
@@ -451,6 +535,10 @@ Runtime 需要 max handoffs、dedup keys、leases、timeouts、conflict resoluti
 - 比较 aggregate result 与 best single baseline。
 
 Judge model 自身也要版本化和评估。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-06988:start -->
+Multi-Agent 协议不能把快速共识当作协作正确性。Evaluation identity 应同时记录通信频率、消息内容、collective belief divergence 与对独立 truth/effect receipt 的 alignment：低 JSD 或高 consensus rate 只说明内部一致，仍可能是 confidently-wrong herding。增加 truth-alignment 与失败 episode 切片会提高标注和重放成本，开放任务还常拿不到真值；此时必须保留 dissent、provenance 和独立 verifier，不能让团队共识自签完成。 [受限证据：arXiv:2605.06988v1]
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-06988:end -->
 
 ### 同根报告可以帮助读懂证据，却不能按独立观察累加
 
@@ -544,6 +632,10 @@ joint trajectory under team revision k
 ```
 
 team revision、peer policy hashes、trajectory provenance 和 update order 必须共同进入训练 identity。重采样提高 on-policy 可信度，却增加环境成本；importance correction 节省样本，却可能因长 horizon 与 support mismatch 产生高方差。peers 冻结、交互很弱或 simulator 昂贵时，独立训练仍可作为基线，但必须把 distribution shift 暴露为限制，不能用单 Agent 指标代替 joint Gate。
+
+一种 coordinator-free 的受限实现把 team update 写成 block-coordinate sequence：每次只更新一个 Agent，在当前中间 team occupancy 上重新采样/估计 advantage，并为该成员设置 KL trust region，再把新 policy 交给下一成员。这样把“谁拥有当前更新”和“哪个 joint distribution 产生证据”显式化；论文在其 factorized team-policy、充分采样与正则假设下给出单调改进和 plug-and-play 结论，但不能外推成 production runtime、开放式通信或任意 shared-parameter Agent 的保证。顺序更新增加 rollout 与墙钟成本，也可能放大早期成员偏差；support、verifier 或环境预算不足时，应回退冻结 peers、联合重训或独立团队 Gate。
+
+<!-- source-family:SF-2026-ARXIV-2605-05216 -->
 
 <!-- source-family:SF-TEAMTR-MULTIAGENT-OCCUPANCY-SHIFT -->
 
@@ -647,6 +739,15 @@ MoA 不再把所有历史 reasoning 平铺给 aggregator；reviewer 对轨迹排
 
 <!-- source-family:SF-UNO-ORCHESTRA-PARSIMONIOUS-AGENT-ROUTING-VIA-SELECTIVE-DELEGATION -->
 
+递归委派把这个控制问题推进了一步：同一 policy 不只选择 peer，还要在每个递归节点决定是否继续拆分、如何写 subtask，
+以及怎样聚合返回结果。共享 policy 使不同深度复用同一能力，但每层 task identity、authority scope、budget、parent link 与
+result receipt 仍必须显式存在；子 Agent reward 可以训练 delegation proposal，却不能授予权限或证明聚合结果正确。
+
+递归深度能适应任务复杂度，也会放大相似子任务重复、奖励归因、调用成本和错误累积。按深度做 inverse-frequency
+weighting 只能平衡训练样本，不能证明深层分解更有价值。验收应冻结最大深度、总预算、共享 policy revision 和 verifier，
+与固定拓扑、单 Agent 在等预算下比较；无可验证子任务、权限难以分割或边际收益为负时回退固定浅层 workflow。现有证据
+限于作者任务与训练环境，不支持无限递归或开放权限执行。<!-- source-family:SF-2026-ARXIV-2605-06639 -->
+
 ### Shared State 的 Read-set 可以由观察到的访问重建
 
 要求每个 Agent 在 commit 前主动声明完整 read-set，语义清楚但容易遗漏隐式 HTTP GET；完全串行化又牺牲并发。中间路径由 server-side delivery log 记录每个 Agent 实际收到的版本，在 commit 时重建 observable read-set，并检查其依赖是否仍有效。
@@ -659,12 +760,42 @@ MoA 不再把所有历史 reasoning 平铺给 aggregator；reviewer 对轨迹排
 
 固定 agent team 与通信拓扑，在任务类型稳定、角色清晰时容易调试；任务阶段变化后，多余参与会浪费预算，缺失角色又会中断信息链。Coordination owner 可以同时维护 participation graph 和 step-level orchestration，根据当前 task state 选择谁参与、谁拥有下一步以及何时同步。收益是适应任务结构并减少无效通信，代价是联合搜索、centralized training 和更复杂的故障归因；router 漂移或通信成本超预算时应回退固定最小团队。exact-v1 只支持论文测试的任务、模型与预算，不证明任意组织结构或去中心化部署的收益。<!-- source-family:SF-2026-ARXIV-2605-25746 -->
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11136:start -->
+当团队需要在 test time 持续学习时，participation graph 还不足以承载全部状态：individual context、team composition/collaboration structure 与 population knowledge flow 是三个不同 owner。失败或分歧后，经验可以非对称地路由给特定成员以形成 specialization；team operator 只选择成员与协作结构，population controller 才能提交 fork、merge、prune 与 seed，不能把这些生命周期变化写进某个 Agent 的私有 memory。
+
+三层联合演化用跨任务积累换额外推理、credit attribution、population churn、错误 transfer 与 specialization collapse。短任务、固定团队或 lifecycle evidence 不足时，静态 team、局部 memory 与人工或确定性成员管理仍更可靠。exact-v1 只支持作者的 competition math、code、multi-domain reasoning、Qwen3-8B/GPT-4.1-mini 与固定阈值；其推理成本约为 single-agent 的 3.6 倍，也没有证明更长任务流和开放 population 的稳定性。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11136:end -->
+
 ## Latent Communication 必须证明传递了正确样例的状态
 
 Receiver 使用 relayed KV 后性能改善，只能证明它依赖某种 cache，不能证明 cache 携带了当前 teammate 的私有信息。因果验收应加入 mismatched-example、zero 与 moment-matched random intervention：只有正确配对显著优于错配，才能把收益归因于跨 Agent 信息传递。
 
 这种审计会增加运行次数，也无法证明 latent state 可解释或安全；它至少把“存在缓存效应”与“传递了正确协作状态”分开。身份无法绑定或错配不退化时，应回退显式消息、typed artifact 或不共享状态。
 <!-- source-family: arxiv:2608.04893v1; daily: 2026-08-06; semantic-body-binding: causal-audit-of-relayed-agent-state -->
+
+### 总 Cost 与 Wall-clock Latency 需要不同 Credit Assignment
+
+Multi-Agent DAG 的总 token/cost 是所有节点之和，响应延迟却由最长 dependency path 决定。统一惩罚每个 Agent 会错误压缩非关键分支；更合适的训练信号对 critical/near-critical operators 分配更高 latency credit，并以独立 accuracy floor 防止优化器通过删掉必要步骤获得低延迟。
+
+训练期固定 graph 仍看不到运行时 evidence。轻量 controller 可以根据 partial execution 取消尚未开始且预计冗余的交互，但只能在已授权 graph 内缩减，不能新增权限或跳过 hard verification node。它以 controller error、额外训练和 trace 依赖换取更短 critical path；任务拓扑稳定、并行开销小或 correctness 很难定义时，静态 workflow 仍更可靠。作者四个 benchmark 的结果不覆盖工具安全、hallucination 或生产 tail SLO。
+
+<!-- source-family:SF-2026-ARXIV-2607-13359 -->
+
+### Fleet oversight 必须把置信度校准、错误相关性与人工预算一起建模
+
+按 Agent self-confidence 从低到高分配人工复核，在置信度可校准且错误近似独立时很合理；当多个 Agent 共享模型、上下文或工具而产生相关错误时，这种排序可能系统性漏掉共同高置信错误，甚至劣于随机抽检。监督策略因此不能只消费单体 confidence，还要估计 calibration、pair/group correlation，并始终保留随机 baseline。
+
+相关性估计和人工 audit 会增加成本，有限模型样本或 copula 假设也不能给出通用阈值。生产 controller 应按风险 slice 分配定向复核，同时保留一部分随机审计用于发现未知共因；当校准漂移或相关性不可辨识时，扩大人工预算、降低自动提交权限，而不是把高置信度当作 fleet correctness。
+
+<!-- source-family:SF-2026-ARXIV-2607-28317 -->
+
+### 角色正确性必须独立于终局成功验收
+
+端到端 reward 能提高 pipeline 成功率，却可能让 decomposer 偷带答案、reader 回退参数记忆或某个模块接管别人的职责。terminal accuracy 因而不能证明角色分解有效。每个角色需要 local obligation、允许读取的状态、允许产生的 artifact 与 trace gate；只有局部合同通过，终局 reward 才能归因给预定协作结构。
+
+role anchor 或 prompt-distribution probe 只能作为 drift sensor，不是完整角色定义；过强约束还可能牺牲任务成功率。简单任务中允许单体直接完成仍更合理，但系统必须明确这是 fallback/shortcut，而不是把越权成功计作多 Agent 设计证据。
+
+<!-- source-family:SF-2026-ARXIV-2607-21627 -->
 
 ## 本章在知识树中的位置
 
@@ -728,7 +859,64 @@ repair cardinality `q`、共同 replay seeds 与 success threshold；先取 fail
 
 Multi-Agent 的收益来自真正的任务、证据、模型或权限分解，而不是更多对话。稳定系统依赖 typed handoffs、shared workflow state、bounded delegation 和独立 verification。下一章进入连接标准 MCP。
 
+### Population-scale 协商需要把消息与承诺分开
+
+点对点 Agent 对话在参与者少时可以直接路由；规模扩大后，directory/routing、user identity、negotiation state 与最终
+agreement 必须由不同 owner 管理。结构化 message 只表达提案，不自动获得代表用户承诺的 authority；commit 仍需权限、
+版本和用户/策略确认。分权提高可审计性，却增加目录一致性、隐私、冒充与长事务恢复成本。身份或授权无法证明时，应回退
+人工确认、短期会话或拒绝交易，不能用协议成功替代真实 consent。
+
+<!-- source-family:SF-LLM-X-A-SCALABLE-NEGOTIATION-ORIENTED-EXCHANGE-FOR-COMMUNICATION-AMONG-P -->
+
+### Multi-Agent 优化必须把拓扑提案与结果责任分开
+
+分别优化 designer 与 executors 便于定位，却会让局部 reward 与最终任务错配。端到端 RL 可以把 outcome credit 传回
+agent topology、role 和 execution policy；topology generator 只提案，executor 持有本轮环境状态，最终 evaluator 才提交
+reward。这样减少局部目标错配，也带来 credit leakage、昂贵 rollout 与不稳定结构搜索；evaluator 不可靠时应冻结拓扑、
+单独训练组件或回退强单 Agent。MetaAgent-X 的证据只覆盖作者任务与设置。
+
+<!-- source-family:SF-2026-ARXIV-2605-14212 -->
+
+若 workflow graph 本身可执行，counterfactual RL 还可比较替换某个节点或边后的结果，把 topology revision 变成显式动作。
+反事实 estimator 只能提出 graph update，必须在真实 executor、tool schema 和 outcome test 上重放后才能 commit。它提高结构
+归因，却增加 counterfactual bias、组合爆炸和 replay 成本；环境不可复现时应保留原 graph 或人工修改。LEMON 的 exact-v1
+不证明自动 orchestration 在未测环境中稳定优于固定流程。
+
+<!-- source-family:SF-2026-ARXIV-2605-14483 -->
+
+### 对话只有改变对方缺失的 World State 才构成协作
+
+Embodied Agent 共享环境时，发送更多消息能减少动作冲突，却未必提升任务成功：消息可能重复已知内容、引用未观察实体，甚至通过相互确认放大幻觉。协作合同应分别记录各 Agent 的 private world graph、消息带来的 information novelty、belief-sensitive recipient model 与执行后 observation convergence。消息只是 proposal；环境观察和受控 state merge 才能更新 authoritative world state。
+
+同步通信让说话与动作争夺 step budget，异步免费通信降低显式成本却更容易形成重复确认和消息洪泛。部分可观测、grounding 不可靠时，应限制消息频率、携带 locator，或回退 centralized/shared-state controller；简单任务仍可不用对话。exact-v1 的 PARTNR 设置只揭示其架构中的对话失配，不证明所有 embodied multi-Agent 通信都会降低成功率。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12920 -->
+
+### Consensus 与 Channel Framing 是两个独立攻击面
+
+多数投票在成员错误近似独立时合理；当相同压力同时作用于多个模型或同一模型副本时，更多一致意见可能越过共享的错误阈值。系统应把 consensus strength、消息 channel/role、模型族和相关性写入 evidence identity，并用已经单独答对的样本测量 yield，而不是把“大家同意”当置信度。dissenter 或独立 verifier 的价值来自打破相关证据，不是增加一个同质投票者。
+
+更细的机制监控增加 probe、校准和模型版本耦合，内部 activation 证据也不能直接外推到其他架构。低风险、异质成员且独立性经验证时，简单投票仍可用；压力来源或错误相关性未知时，应降权 consensus、回到原始 evidence 或人工裁决。exact-v1 只支持披露模型和 prompt 条件中的阈值行为，不证明单一 RLHF 原因或通用防御。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12991 -->
+
+### 跨 Agent 状态可以不走文本，但必须保持接收者兼容性
+
+文本消息可审计且跨模型通用，却消耗 Context 并丢失 sender hidden state 的细粒度信息。已知固定 receiver 时，另一条实验分支可把 sender state 映射为 query-specific low-rank parameter delta，暂时注入冻结 receiver；generator 拥有 delta proposal，runtime 绑定 receiver architecture、base weights、rank 和生命周期，调用结束即撤销，不能把瞬态权重当成已发布模型。
+
+这种通道减少 token 与部分延迟，却增加不可解释状态、接收者强耦合、训练成本和错误 delta 的广泛影响；receiver 升级、跨供应商协作或需要人工审计时，结构化文本/typed message 仍更可靠。exact-v1 的五个 benchmark 只证明披露配置下的竞争性结果，不证明 latent/weight communication 普遍优于文本、具备安全隔离或可跨模型迁移。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-13839 -->
+
+### 大规模协商必须把 Routing、Identity 与 Commitment 分权
+
+小组内直接传消息在成员和权限固定时足够；参与者扩大后，directory/routing、user identity、negotiation state 和最终 agreement 若混成一层，Agent 会把结构化 offer 误当成代表用户的承诺。exchange 只管理寻址和协议状态，Agent 只提出 offer，用户或授权 policy 保留 commit authority。分权增加目录一致性、认证、消息排序和长事务恢复成本；身份或偏好证据不足时，应回退小组 coordinator、显式 approval 与确定性协商规则。现有 protocol 证据不赋予消息真实 consent，也不证明开放人口规模下的安全性。
+
+<!-- semantic-body-binding:SF-LLM-X-A-SCALABLE-NEGOTIATION-ORIENTED-EXCHANGE-FOR-COMMUNICATION-AMONG-P -->
+
 ## Review notes
+
+- [Retrieval-Conditioned Topology Selection](https://arxiv.org/html/2605.05657v1)（Status: Experimental）：预算守恒证明依赖 deterministic cost、有限 action space 与有界 retrieval depth；随机生产成本仍需 runtime accounting。
 
 - **Epistemic Sybil Resistance（arXiv:2609.01873v1；理论部分的受限解释）**：
   [exact-v1](https://arxiv.org/html/2609.01873v1) §5 支持指定 Gaussian 模型下的同根提取收益边界，§6 讨论
@@ -809,24 +997,7 @@ Review note：`SF-2026-ARXIV-2606-29654`；Method `https://arxiv.org/html/2606.2
 
 ### Source-family integration record
 
-<!-- recovered-daily-20260624:AGENT-MULTI-AGENT:start -->
-### 2026-06-24 evidence integration — AGENT-MULTI-AGENT
 
-相邻章 `books/part-07-agent/81-workflow.md` 只接收 handoff，不重复拥有机制。
-
-### Owner-merged minimal text
-
-- **SF-2026-ARXIV-2606-24437**：MoA 不再把所有历史 reasoning 平铺给 aggregator；reviewer 对轨迹排序写入 reasoning memory，router 按 layer/quality/diversity 投影少量 references，使 memory state 随协作层累积。 只测固定 proposer pool、有限 width 与五个 benchmark；reviewer bias/overhead 和同源 proposer correlation 会放大错误，低置信时回退无 memory MoA 或独立 adjudication。
-- **SF-2026-ARXIV-2606-26156**：把 agent 内部 decision logic 与公开 message protocol 分离：decision maker 只能从 valid decisions 选互相兼容 emission set，adapter 隔离 communication service，operational semantics 拥有 protocol compliance。 2023 AAMAS programming model与语义证明不包含 LLM nondeterminism、tool side effect、Byzantine peer 或大规模 runtime benchmark；不兼容时回退显式 typed state machine。
-
-<!-- recovered-daily-20260624:AGENT-MULTI-AGENT:end -->
-
-<!-- recovered-daily-20260625:AGENT-MULTI-AGENT:start -->
-### 2026-06-25 evidence integration — AGENT-MULTI-AGENT
-
-- **SF-2026-ARXIV-2606-25514**：`2 Adaptive Multi-Agent Issue Resolution; 2.6 Event-Driven Synchronous Communication` 所定义的源特定机制用于把事件通信、角色分工与失败升级纳入多 Agent 协调状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `5 Threats to Validity` 是 `Unlocking Model Potentials Through Adaptive Multi-Agent Scaffolding for Efficient Issue Resolution` 的 source-specific 反例/局限边界；若运行条件离开 `3 Evaluation; 3.2 Analysis of Exclusive Fixes and Failures` 的验证域，`AGENT-MULTI-AGENT` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-<!-- recovered-daily-20260625:AGENT-MULTI-AGENT:end -->
 
 <!-- june29-owner:AGENT-MULTI-AGENT:start -->
 ### 2026-06-29 约束变化与机制增量

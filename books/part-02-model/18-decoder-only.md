@@ -179,6 +179,53 @@ loss = sum_t mask_t * CrossEntropy(logits_t, label_t)
 
 `mask_t` 决定哪些位置贡献 loss，不改变 causal Attention 本身。具体数据格式和训练阶段属于 Part IV，本章只建立模型接口。
 
+## Next-token 接口不要求内部状态只有一个粒度
+
+普通 Decoder-only 让表示、监督与生成都沿同一个 token 时钟推进。它的优势不只是结构简单：每个位置都有与最终输出
+同构的密集监督，KV Cache、vocabulary projection 与流式 runtime 也共享明确的 token identity。只要单 token 粒度足以
+形成需要的抽象，或实现成熟度、可审计性与稳定 latency 更重要，这仍是正确基线。
+
+新的压力在于，跨多个 token 的表示在标准 next-token prediction 中只是间接产生，目标本身没有要求模型预测下一段
+内部状态。一个可共存的层次化分支保留 token-level NTP 和最终 token 输出，同时把中间状态按固定 span 聚合，再在较慢的
+concept 时钟上预测下一个 learned latent target：
+
+```text
+token states
+→ span pooling + product-quantized concept vocabulary
+→ autoregressive next-concept prediction
+→ shift by one complete span and repeat to token resolution
+→ token decoder → next token
+```
+
+关键不在把若干 token 改名为“概念”，而在明确两条时钟间的状态与因果 owner。checkpoint 必须共同版本化 span size、
+codebook 与 segment layout、concept module、cross-module residual route 和多目标权重；runtime 还要区分 observed token、
+由已完成 span 形成的 concept、predicted concept 与允许注入的 token position。预测状态只有在向后移动一个完整 span 后
+才能反馈 decoder，否则 concept target 会把未来 token 泄漏给当前 next-token loss。训练时，codebook fitting、concept
+prediction 与 NTP 也应分别声明 stop-gradient：谁更新 token encoder、谁只更新 codeword、谁保证最终 token 接口，不能
+由一个含糊的“联合 loss”代替。
+
+这条路径获得显式多 token 预测目标和较短的 concept sequence，却增加独立 autoregressive state，并需要防范 codebook
+漂移或坍塌、固定边界错配、concept prediction error accumulation，以及跨模块状态物化、memory traffic 和小 kernel 开销。训练使用真实
+concept history、推理递归使用预测 concept 时，还会出现第二层 teacher-forcing mismatch；causal shift 只能防止信息泄漏，
+不能消除这种 drift。若只需要多个未来 token 的辅助监督，MTP 是不引入 learned codebook 的较小分支；若 concept-aware
+kernel、长上下文验证或状态审计尚不成熟，应回退普通 NTP，而不是把双粒度结构当成 Decoder-only 的必然替代。
+
+现有 exact-v1 作者证据在 OLMo-3/Dolma、约 8.94B 参数和 5.73T token 训练中证明这类联合路径可以规模化训练；
+参数/计算对齐与渐进消融支持其训练-loss 增量不只是简单增加 Vanilla FLOPs。证据仍不证明 codeword 对应人类可解释概念，
+也不证明其普遍优于 NTP/MTP：主训练没有 long-context 结果或独立重复 run，Stage 2 的下游增益明显缩小且部分任务回退，
+analytical FLOPs 又没有计入状态物化、memory traffic 与 launch overhead。因此这里吸收的是**内部预测粒度可以与外部生成
+粒度分离，但必须显式维护跨粒度 causality 与 state identity**，不是作者的通用性能排序。训练目标和 optimizer 的实现继续
+交给第 28 章。<!-- source-family:SF-2026-ARXIV-2609-10715 -->
+
+
+### Multi-stream 把单一 Token Clock 降为接口选择
+
+单流 Decoder-only 让 thought、input 与 output 共用一个因果时钟，训练、KV 与流式协议最简单；并行工具输入、内部推理和可见输出会让单流阻塞暴露出来。multi-stream 分支为不同 stream 保持各自位置与可见性规则，再由显式 synchronization/merge point 交换状态；模型拥有 token proposal，runtime 持有 stream lifecycle、权限与外部 effect commit。
+
+并行流可以减少等待并隔离可见输出，却引入跨流因果一致性、KV/layout、训练数据格式和 monitor blind spot；错误同步可能泄漏 private thought 或产生乱序 effect。普通聊天、工具少或审计优先时，单流协议仍是可靠基线。`arXiv:2605.12460v1` 的 §2–§7 与附录只验证作者的多流训练和实验，不证明 production scheduler 一定获益，也不替代 Agent 权限控制。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12460 -->
+
 ## Output projection 与 weight tying
 
 第12章提到 input embedding matrix：
@@ -223,6 +270,20 @@ explicit token trace
 固定使用完整显式轨迹或固定使用 latent state，是这一设计空间的两个端点。中间分支可以先预测下一段 reasoning span 的冗余度与压缩置信度，只把高置信、低信息增量的 span 编码为 latent representation，同时让 precision-critical span 继续走显式 CoT。这里的 gate 决定的是**下一段采用哪种 reasoning representation**，不是在生成后由 target verifier 接受或回滚 proposal；因此它属于 Decoder-only 的表示与状态演进，而不是 speculative decoding 的 commit protocol。
 
 这种选择性表示减少了部分可见 token，却新增 gate calibration、显式/latent 双路径训练和 latent error propagation。置信度失准或 distribution shift 会把本应显式保留的步骤过早压缩；高风险、需要逐步审计或 gate 未校准时，完整显式 CoT 仍是正确 fallback。现有 exact-v1 证据只覆盖论文披露的数学任务、模型、span anticipation、三阶段训练与消融，不证明压缩无损，也不证明开放域 reasoning 能获得相同结果。<!-- source-family:SF-2026-ARXIV-2605-25745 -->
+
+### 表达能力还取决于实现中的有限精度状态语义
+
+实数域公式常把 causal Attention 看成任意精确的加权聚合，但真实 decoder 逐位置更新的是有限精度内部状态；accumulator、舍入、求值顺序和层间组合都会改变它能稳定区分的历史。因而“架构图相同”并不保证同一表达上界，kernel 重排或精度变化也可能改变可实现的 memory semantics。
+
+组合理论能在明确 arithmetic、mask、position 与 wiring 假设下连接 attention type 和可识别语言，但它不等于对普通 LLM 完整能力的刻画，也没有替代训练和下游实验。长期结论是：讨论 decoder expressivity 或等价实现时，必须同时声明抽象算子与执行语义；在无法证明有限精度等价时，应保留 reference path 和行为回归，而不是只凭代数重写批准替换。
+
+<!-- source-family:SF-2026-ARXIV-2607-26988 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22223:start -->
+有限精度之外还存在另一层上界：固定架构并不保证任意输出序列都可由某个 prompt 触达。prompt 只选择输入，decoder 的 embedding 与 decision regions 才决定输出 support；因此增加 context、Decode 时间或采样预算，可能在既有可达区域里搜索得更充分，却不会自动创造新的可达区域。在一组明确的 bounded-embedding、decision-cell 与 packing 假设下，可达序列的最大长度只随 prompt 长度线性增长，超过模型相关阈值后，可达序列占全部序列的比例会指数下降。
+
+这是一条架构条件下的诊断上界，不是对某个自然语言答案“模型必然无法生成”的判决，也不证明训练不能改变模型相关常数。工程上应由 Evaluation owner 用 copying、cramming 与长度切片实验估计实际 cliff，并把 tokenizer、decoder、precision 与 decoding policy 固定为同一评测身份。形式假设或常数无法核实时，直接行为测试仍是 fallback；理论结果只能提出风险假设，不能替代部署 checkpoint 的验证。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22223:end -->
 
 ## 本章在知识树中的位置
 
@@ -277,6 +338,7 @@ Primary-source 校验入口：
 - Jacob Devlin et al., "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding", 2018: https://arxiv.org/abs/1810.04805
 - Colin Raffel et al., "Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer", 2019: https://arxiv.org/abs/1910.10683
 - ReGuLaR（teacher-guided variational latent reasoning；Status: Experimental）: https://arxiv.org/abs/2601.23184
+- NCP-ArchPreview（joint token/concept autoregression；Status: Experimental；exact-v1 PDF）: https://arxiv.org/pdf/2609.10715v1
 
 ### Daily Books delta trace（2026-06—08）
 

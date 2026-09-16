@@ -109,6 +109,15 @@ confidence
 
 ### 从“结果失败”到“最早可修复偏离”
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-05980:start -->
+### Trajectory Drift Sensor 不能取得成功 Authority
+
+只在 episode 结束后根据 outcome 反思，能保持运行时简单，却无法区分正常长思考与已经进入 overthinking/overacting 的轨迹。若模型可观测，一条受限路径在 trajectory step 上标注 calibrated、overthinking 与 overacting，学习 residual drift axes，并在越界时施加有界 activation steering。Sensor 只建议继续、收缩或停止，外部 verifier、budget 和 effect policy 仍拥有正确性与提交权。
+
+提前干预缩短无效轨迹，也会引入 judge 标签偏差、方向相关而非因果、跨模型失效和白盒依赖。现有证据只覆盖所测 coding agents，不能证明线性可分方向是普遍机制或 steering 天然安全。没有白盒访问、axis calibration 漂移或副作用风险较高时，应回退 observation-based loop guard、hard stop/budget 与外部 verifier。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-05980:end -->
+
 最终 outcome 只能说明整条 trajectory 没有满足目标，不能直接说明应该从哪里修。长链路中，后续
 步骤可能只是沿着早期错误继续执行；若 Reflection 只重写最后答案，它会保留真正的因果偏离，
 若整条轨迹从头再跑，又会丢掉已经验证的工作并重复支付 tool 与 token 成本。
@@ -225,6 +234,10 @@ uncertainty proxy 的受限补充，并展示了较早失败检测与多样本�
 ## Reflection 与 Retry 的区别
 
 Retry 对相同 operation 再执行，适合 transient failure；Reflection 修改 candidate/plan 后再尝试，适合可诊断缺陷。
+
+端到端恢复常把两者混在一起：检测失败、路由重试、提供 critique、重新 grounding 与 candidate selection 是不同 treatment。只有 paired ablation 能把额外收益归因于 rich reflection；若简单 retry 已解释大部分 recovery，就不应把结果记给长 critique。机制分解提高实验成本，却能避免把第二次采样机会误写成自我纠错能力。
+
+<!-- source-family:SF-2026-ARXIV-2609-12746 -->
 
 若失败来自 authorization deny，重复或改写调用不应绕过 policy。若远端 action outcome ambiguous，应先 reconcile state，而不是让模型“换一种方式再做一次”。
 
@@ -356,9 +369,3 @@ Primary-source 入口：
 
   **已吸收的语义增量：** Agent skill registry 需要 lineage、executable evaluation、dependency/permission metadata 与更新治理，不能把可检索文本集合称为 living skill infrastructure
 <!-- daily-books-trace:SF-2026-ARXIV-2606-16523:end -->
-
-<!-- daily-books-trace:SF-2026-ARXIV-2606-16774:start -->
-- `SF-2026-ARXIV-2606-16774` — Daily `2026-06-16`；primary `arXiv:2606.16774v1`；Books review `books-review:SF-2026-ARXIV-2606-16774`。
-
-  **已吸收的语义增量：** 开放 skill 搜索应维护 collective tree、可复现 rollout evidence 与 promotion/pruning，而不是把一次成功轨迹直接写成全局 skill
-<!-- daily-books-trace:SF-2026-ARXIV-2606-16774:end -->

@@ -216,6 +216,15 @@ prefetch 也不能倒写成当时已落地行为。短请求、低 reuse 或 met
 
 ## Selection Service 与状态索引的扩展边界
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-05718:start -->
+### 跨组织 Cooperative Inference 先要解决 Representation Alignment
+
+同构 ensemble 或参数联邦在各方共享 architecture、encoder 或训练协议时最容易合并；独立组织持有异构 pretrained model、不能交换 raw input 和参数后，共同 logit space 不再存在。一条条件路径用双方可访问的 unlabeled data 学习 consensus embedding，再把各模型输出映射到共享表示，形成 cooperative prediction。每个模型仍拥有本地推理状态，alignment service 只拥有映射 proposal，privacy policy 与最终 selector 决定是否接纳合作结果。
+
+这种接口保留模型与输入边界，却把 representation mismatch、共享数据选择、通信与隐私攻击变成新瓶颈。作者在 image、text 与 time-series 上的结果不证明大规模通信效率、advanced privacy 或任意模型可对齐。alignment/calibration 或隐私 Gate 失败时，应回退 solo inference、同构 ensemble 或受控 parameter federation，而不是强行平均不可比表示。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-05718:end -->
+
 当多个 frontends 各自保存完整 KV map，状态事件量大致会同时随 frontend 数量和 cache
 churn 放大。独立 selection service 可以集中消费 events，并通过压缩前缀树或分片 index
 维护“哪些 worker 可能持有哪些状态”：
@@ -328,6 +337,15 @@ revision 的冗余状态恢复 coverage；最后重建 collective、buffer 与 C
 ## 与第55章的边界
 
 本章回答 Dynamo 怎样组合 routing、state transfer、cache tiering 和 planner。第55章从第一性原理回答 PD separation 何时值得，以及 transfer/interference 的 break-even。Dynamo 是一种实现，不是 PD 有效性的证明。
+
+### Stateful Elasticity 必须迁移可验证的 Environment State
+
+无状态 worker 通过重试或重算即可扩缩；World Model 或 edge/cloud split 持有无法在交互 deadline 内重建的 latent/KV/activation state 时，placement 变化成为一次 state transaction。源端只可导出带 model/runtime/precision/schema identity 的快照，传输层负责认证、完整性与 deadline，目标端在验证成功后原子接管 lease；失败时旧 owner 保持服务或回退本地执行，不能出现双方都认为已提交的 split-brain。
+
+精确迁移减少重算并允许弹性，却消耗带宽、加密和 pause budget；state 太大、链路不可信或目标版本不兼容时，stateless recompute 仍更安全。作者的 World Model 与 edge/cloud 实验只证明各自环境、链路和 threat model 下的可行性，不提供通用迁移阈值。
+
+<!-- source-family:SF-2026-ARXIV-2607-10389 -->
+<!-- source-family:SF-2026-ARXIV-2607-13093 -->
 
 ## 本章在知识树中的位置
 

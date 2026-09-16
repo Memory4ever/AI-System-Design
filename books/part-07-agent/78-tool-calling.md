@@ -54,6 +54,12 @@ Description 帮助模型选择工具，Schema 帮助构造参数；二者都不�
 
 ## 模型输出只是 Proposal
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24941:start -->
+Memory 也不能绕过这条边界。长期记忆中的成本、耐心或风险偏好即使与当前任务无关，仍可能通过隐式 steering 改变 tool arguments；简单相关性提示或关键词过滤只能缓解，不能证明偏好没有渗入字段。更稳妥的控制流在 proposal 前执行 memory-to-field relevance gate：只有与当前 intent、参数 schema 和授权边界相关的 memory 才能影响字段，并记录从 memory entry 到 tool field 的 lineage。
+
+双路径检查或 memory-masked 对照会增加延迟，也可能压低合理个性化；关键词重叠和 latent steering 则可能继续绕过过滤。高风险字段应使用 typed default、澄清或人工确认，必要时完全屏蔽 memory 后重新生成。现有实验只证明所测 Agent/tool 环境中的 drift，不能把过滤器写成通用安全保证。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24941:end -->
+
 典型 data path：
 
 ```text
@@ -147,6 +153,12 @@ task intent
 ```
 
 Catalog retrieval 也必须 tenant-aware。工具版本变化可能让旧 Prompt 生成过期参数，因此 tool schema version 是 Context 和 evaluation identity 的一部分。
+
+### Discovery Frontier 可以修订，但不能授予执行权
+
+一次静态 shortlist 在目录小、接口稳定时最容易审计；开放工具生态中，早期 query 或 intent 解释错误会让真正需要的 tool 永远不进入 schema exposure。一个 bounded revisable discovery state 可以为每次 probe 保存 query/intention revision、返回的 tool identity、尝试结果、预算与 parent；并行分支只拥有 proposal，retrieval controller 去重和合并 frontier，executor 仍逐项验证 schema、version、authorization 与 effect dependency。<!-- semantic-body-binding:SF-2026-ARXIV-2605-02411 -->
+
+可修订 frontier 能恢复早期漏检，却增加模型调用、探索噪声、过期 tool memory 和尾延迟；弱 base model 还可能让迭代搜索放大错误描述。Catalog 小、风险高或版本不可可靠追踪时，应回退静态 allowlist 与显式 typed schema。exact-v1 只支持 StableToolBench、所测模型与预算，不证明 retrieval score 可以授权工具，也不提供开放生态的安全保证。
 
 发现一个可用 Tool 不等于应该调用它。纯模型回答在知识稳定、风险低且不需要外部真值时延迟最小；无条件调用所有相关工具会增加 tail latency、费用、失败面和错误 observation。Tool selector 因而还需要一个独立的 utility admission：估计调用后可减少的决策不确定性或错误损失，并与调用延迟、失败概率、副作用风险和预算比较。
 
@@ -391,6 +403,14 @@ Trace 应把 model proposal、policy decision、approval、tool call 和 result 
 
 这些 component metrics 不能脱离最终 task outcome 单独解释。第 66 章提供统一的 subject、environment、scorer、slice 与 decision contract，本章只定义 Tool Calling 特有的失败模式和证据。
 
+### Tool 出现不等于 Tool 对答案有贡献
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-02357:start -->
+只统计 call rate、格式正确率或“使用工具后的准确率”，在工具本来就是固定流程时容易实现，却无法区分模型本就会答、调用壳子改变了推理、真实结果修复了答案，还是工具噪声反而造成伤害。贡献审计应在同一模型、prompt、采样和预算下冻结至少三条反事实：no-tool、保留 call shell 但移除/替换返回值、以及真实 result；再按样本标记 confirm、repair、harm、no-effect，并把额外 tokens、latency 与调用成本共同结算。Evaluator 只拥有 attribution proposal，最终 task verifier 仍拥有 outcome truth。
+
+这种 intervention 比 aggregate accuracy 更接近 answer-critical contribution，却增加重复运行、非确定性配对、工具环境可重放和潜在分布偏移；移除结果也可能改变后续 token trajectory，因此不是严格因果证明。环境不可复现、工具有不可逆副作用或配对条件不成立时，应回退离线 fixture、只读 shadow 或保守地报告相关性，不宣称工具带来收益。论文只覆盖披露的 multimodal agents、benchmark 和 judge，不能外推所有工具或所有任务。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-02357:end -->
+
 ### 条件化机制分支与共存边界
 
 ### Tool Admission 与 Interaction Latency 必须分开控制
@@ -402,6 +422,38 @@ Trace 应把 model proposal、policy decision、approval、tool call 和 result 
 <!-- semantic-body-binding:SF-SPECULATIVE-INTERACTION-AGENTS-BUILDING-REAL-TIME-AGENTS-WITH-ASYNCHRONO:start -->
 复杂多轮 tool path 若等完整 reasoning 后才开始交互，用户看到的 latency 由最长链决定。Agent 可在低风险、可取消的边界并行准备候选 tool call 或 UI response，但只能把它们作为 proposal；authorizer 和 side-effect identity 在真实执行前统一 commit，错误分支必须可撤销。收益是隐藏思考延迟，代价是浪费、重复调用和 stale observation；不可逆工具、权限不明或 cancellation 不可靠时回退串行。
 <!-- semantic-body-binding:SF-SPECULATIVE-INTERACTION-AGENTS-BUILDING-REAL-TIME-AGENTS-WITH-ASYNCHRONO:end -->
+
+Streaming 输入还要区分“可能需要某类工具”和“调用意图及参数已经稳定”。第一个 token 或局部 utterance 只能触发
+可取消的准备；dispatcher 应跟踪 tool identity、argument prefix 和 intent margin 随新输入的变化，在稳定条件满足后
+才提交只读调用，有副作用的调用仍等待完整 request 与 effect-time authorization。未稳定、发生反转或超过预算时，
+继续收集输入、取消 draft，或回落到完整 query 后串行执行。
+
+这种 admission 可以隐藏部分检索延迟，却会用错误预取、取消开销和 duplicate suppression 换响应速度。稳定度不是
+权限，也不是事实置信度；阈值会随模型、语言、tool catalog 与网络延迟漂移。不可取消、参数长、权限高或错误调用
+代价大的工具应继续等待完整意图，现有实验也只支持其受测 streaming retrieval 合同，不证明任意实时 Agent 都受益。
+
+### 执行后行为只能更新下一次 Intent Gate
+
+ASR 后使用一次固定 classifier，在设备、噪声和用户习惯稳定时容易校准；false wake 或漏响应反复出现后，系统可以把 repetition、cancellation、silence 等后续行为作为弱反馈，提炼带 noise、energy、speech-rate、word-count 与转写一致性的 correction pattern。它们只能更新下一轮 intent-admission proposal，不能追溯改变已经发生的 effect，也不能把“用户取消”直接解释成某句话必然没有意图：
+
+```text
+audio / ASR + device state
+→ base intent proposal
+→ policy gate decides suppress or continue
+→ observe repetition / cancellation / silence
+→ bounded correction-pattern proposal
+→ slice-calibrated update for a later request
+```
+
+行为反馈器拥有 pattern proposal，policy owner 拥有 threshold 和启用范围，authorizer 仍在 effect time 判断具体 action；高风险工具不得因历史模式而跳过完整意图、参数和权限验证。自适应可减少重复误触，却引入 cold start、feedback misattribution、stale pattern、threshold drift 与 silent false rejection。新用户、语言/设备切换、clean slice 退化或 confidence 未校准时，应清空/隔离 learned correction，回退 base classifier 与显式确认。
+
+Not All Speech Is Intent 的 exact-v1 §3.2–§3.4 支持 base classifier 与 NLU 并行、基于后续行为的结构化 correction 及设备端 suppression；§4 的 3,667 次私有 interaction 只证明作者 slices 中的条件恢复。其 54.27% 是 baseline-failure subset 的恢复率，clean/no-issue slice 在另一阈值下还会恶化；论文不证明跨用户、语言、设备或长期在线稳定性。因此这里吸收“反馈只更新未来 gate”的控制边界，不把行为 heuristic 变成用户意图真值。<!-- source-family:SF-2026-ARXIV-2609-12469 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11169:start -->
+固定 tool selector 在 action space 与反馈分布稳定时最容易复算；部署环境变化后，可以在 frozen reasoner 与 executor 之间维护 per-action contextual-bandit state。Reasoner hidden state 只提供 context，每个 action 保存线性 sufficient statistics，UCB uncertainty 只决定探索优先级；action-level feedback 更新下一次 selector，不得追溯改变已发生的授权或越过 permission/effect gate。
+
+在线适应以冷启动、unsafe exploration、reward poisoning、per-action state 膨胀和 non-stationary regret 为代价。高风险 action、反馈无法归因或 action space 快速变化时，应回退 frozen policy、allowlist、offline evaluation 与显式审批。exact-v1 只支持 ToolBench、TaskBench、TaskBench-MM、BFCL 及作者的 Qwen3-4B/Mistral-7B tool-multiset F1；它不证明真实 effect success、权限安全或生产 tail latency。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11169:end -->
 
 继续减少交互轮次时，需要区分两种优化：逐个核对最终动作后复用预执行结果，保留原 actor 的决策边界；仅确认宏序列的首动作，再由 executor 接受其余动作，则改变了决策策略，不再是无损复用。后者可以用历史轨迹筛选宏、隔离 draft state，并在提交前检查状态和动作风险，但历史匹配概率不能证明当前后缀合法，首动作相同也不能证明后续决策相同。
 
@@ -449,7 +501,42 @@ streaming tool use 不应在第一个 token 触发；controller 追踪 tool-inte
 
 Sandbox、permission 和 schema validation 在 effect 前限制“允许做什么”；test、log、diff、citation 与 postcondition 在执行后证明“实际做了什么”。只有 preventive control 会产生 false completion，只有 evidential control 又可能让危险 effect 先发生。可靠 runtime 要把 proposal、authorization、effect 与 evidence-gated submission 连成一条链。
 
+Preventive Gate 还应验证 action 是否仍指向用户批准的对象，而不只验证语法。内容锚定的 search/replace 或带上下文 diff 在目标漂移时更容易显式失败；行号、函数名等位置锚定若仍能解析，却可能把改动静默施加到错误位置。执行器应在 effect 前重新匹配唯一 anchor、检查 expected old content，并在多匹配、零匹配或版本变化时拒绝；这用较低 applicability 和一次额外检查换取把 silent corruption 变成可恢复失败。作者在 shell command 与代码 edit benchmark 上的结果支持该失效分界，不证明其静态 verifier 覆盖任意工具、语言或并发文件修改。<!-- source-family:SF-2026-ARXIV-2609-11957 -->
+
 position paper 或事故集合只能支持这种责任分离，不能证明某组 gate 足以覆盖所有工具。不可逆动作提高前置门槛，只读动作可以容许更轻量的后验验证；证据缺失时应返回未完成或请求人工，而不是让模型自证成功。
+
+### Tool Evidence 与 Formal Proof 必须在 Typed Claim 上汇合
+
+工具返回经验数值，proof assistant 证明形式命题；任一单独存在都不足以发布“已验证”的现实 claim。可靠路径先让 tool attestation 固定来源、输入与 observation，再把它提升为显式 formal statement，独立 kernel 只检查证明并成为 `Verified` 的唯一铸造者；语义映射失败、来源缺失或证明不闭合时统一 `Abstain`。Solver、模型和工具都可产生 proposal，不能自授 truth authority。
+
+这减少 evidence laundering，却增加形式化、source audit 与 kernel trust 成本；证明正确的命题仍可能不是用户真正的问题。开放域或无法形式化的任务继续使用带来源的受限结论与人工复核。
+
+### Approval 应绑定 Canonical Action Meaning，而不是显示字符串
+
+同一 effect 可由 shell、MCP、browser 或 wrapper 表达，raw text policy 容易被改写绕过。Runtime 应把 event 规范化为版本化 action object，绑定 executable/operation、target、effect、externality、principal 与 reversibility，计算 fingerprint 后再附 policy verdict、approval、outcome receipt 和可选 attestation。Observe-only adapter 必须声明 enforcement depth，canonicalizer 也不能成为新的隐藏授权者。
+
+规范化提高跨 runtime 可治理性，却引入 parser capture、schema 漂移和语义碰撞。低风险固定 API 可以直接绑定 typed request；异构高风险 action 才需要完整 canonicalization 与独立 effect-time recheck。公开 corpus 证明作者 schema 的可行性，不证明覆盖任意 runtime 语义。
+
+<!-- source-family:SF-2026-ARXIV-2607-12650 -->
+<!-- source-family:SF-2026-ARXIV-2607-13716 -->
+
+### Computer-use Action 与完成判断应优先读取程序真实状态
+
+纯 pixel observation 通用，却会把隐藏控件、滚动、渲染延迟和视觉相似状态混在一起。若应用暴露 accessibility tree、DOM、process/file state 或 API receipt，Agent 应把它们作为 program-state observation 来选择 action，并让 finish gate 独立读取 effect state；截图保留为覆盖缺口和跨应用 fallback。
+
+程序状态可能不完整、权限受限或与画面不同步，因此不能静默取代视觉。每个 action 要绑定 observation revision，completion 需要 effect evidence；两路冲突时 defer/复查，而不是由模型叙述宣布成功。
+
+<!-- source-family:SF-2026-ARXIV-2607-22798 -->
+
+### 工具检索需要表达集合依赖，而不只是独立相关性
+
+按 query 对每个工具独立打分，在工具少、调用彼此独立时最简单；复杂任务却常要求一组互补能力共同出现，例如一个工具产生的对象必须被另一个工具读取，或两个调用共享同一前置状态。独立 Top-k 会选出多个语义相似却无法组成可执行链的工具，也无法表达“这组工具一起可用、单个都不够”的高阶关系。
+
+Set-level retrieval 可以把候选工具集合视为 query-conditioned hyperedge，同时预测集合大小与成员兼容性。它改变的只是 discovery proposal：Executor 仍须逐项验证 tool identity、schema/version、权限、前置状态与 effect dependency，并在执行前构造可检查的 action graph。Hyperedge score 不能替代 authorization，也不能证明工具输出正确。
+
+集合建模用组合可执行性换来更大的搜索空间、共调用数据依赖与 cardinality calibration；新工具、权限变化或 action schema 漂移会让历史超边失效。缺少可靠组合证据时，回退独立工具检索，再由确定性 schema/dependency expansion 补齐必需成员；工具集合很小或调用真正独立时，普通 Top-k 仍更透明。exact-v1 的 ToolBench 结果不证明 learned hyperedge 能跨长尾域或动态 catalog 保持有效。
+
+<!-- source-family:SF-2026-ARXIV-2607-25718 -->
 
 ## 本章在知识树中的位置
 
@@ -518,10 +605,47 @@ Tool Calling 从生成函数名和参数演进到 proposal→validate/simulate�
 
 两级 Gate 的演进关系是：先判断是否需要跨越模型边界，再判断某个具体 proposal 是否可以跨越执行边界。把两者合并会把“最好使用工具”误读成“这个调用已经安全”，把两者完全割裂又会产生无意义的 catalog search 与 latency。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-18882:start -->
+Tool Necessity 本身还需要可校准的 sensor，而不能只看历史调用率。一条受限的诊断路线把模型对 call/no-call 的 proposal margin 与 activation-independent call offset 分开：前者反映当前输入证据，后者近似模型固有的调用倾向。对 offset 做 inference-time steering 可以减少过度调用，但它仍只修改 proposal；外部 policy 继续拥有澄清、调用、拒绝和 effect-time authorization 的决定权。
+
+该 sensor 依赖 SAE basis、局部线性近似与离线 calibration，模型或 workload 漂移时可能压制必要调用。高风险或低置信场景应回退显式 necessity rule、ask-user/abstain 与确定性授权。现有证据只覆盖 When2Call、六个模型和作者的 AMCS 设置，不证明偏置的训练来源、长程 Agent 行为或跨模型稳定性。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-18882:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-15041:start -->
+历史 execution trajectory 还可以被压缩成 complexity profile 与 failure profile：前者只提议 reasoning budget，后者为
+schema-level reward 提供 failure attribution，真实 execution/outcome 仍由 runtime verifier 提交。这比对所有 tool task
+统一 over-think 或 under-think 更节省预算，却新增 case-base drift、profile 误归因、reward shaping 与长程规划不足。
+历史任务不相似、failure attribution 不稳定或执行风险高时，应回退固定 budget、普通 SFT/GRPO 与 deterministic schema gate。
+exact-v1 只支持作者任务和受测模型，不能把 profile 预测当作执行授权。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-15041:end -->
+
 ### 失败反馈是 Retry State，不是普通文本
 
 把失败 tool call 的原始 transcript 直接回灌上下文，可能让模型重复同一 action；结构化、规范化的错误表示更容易让下一步区分已尝试动作、失败原因和允许的替代路径。因此 retry state 至少要包含 call identity、postcondition、错误类别、重试预算和禁止重复条件。压缩错误能够减少提示噪声，但若丢掉关键参数或环境状态，又会制造错误修复。
 <!-- source-family: arxiv:2608.23651v1; semantic-body-binding: normalized-tool-error-retry-state -->
+
+### Abstract Intent 需要有界解析为 Primitive Tool
+
+Planner 直接生成 primitive typed call，在工具少且目录稳定时最透明；异构工具库扩展后，高层意图可能没有
+单个 schema 对应。若参数修复、语义近邻替代和复合分解都塞进 planner，就会把局部 action grounding 与全局
+完成判断混在一起。一个条件分支把 action 分成 executable primitive 与 abstract intent：registry 已匹配则
+直接执行；否则 resolver 只在当前 action 范围内 repair arguments、substitute tool 或 decompose 为 lower-level
+calls，再把规范化 observation 返回 root planner。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-13228:start -->
+resolver 不得输出 `Finish`，root planner 保留 evidence-sufficiency，executor/policy 仍在 effect time 验证并
+提交真实调用。层级 grounding 降低 planner 对 primitive inventory 的耦合，却新增错误 substitution/decomposition、
+递归循环、预算膨胀、tool metadata 维护与 context pressure；更多调用不等于更多有效证据。小型稳定目录应继续
+使用 direct typed call，无法唯一 grounding 时必须返回 typed failure、请求澄清或人工处理。现有证据限于受测
+Qwen3.5-9B、MVTL 与三项 video-QA full-system evaluation；baseline 的 preprocessing/runtime 并不完全同构，
+也不证明高风险副作用安全。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-13228:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21751:start -->
+让同一个模型同时提出优化结构并填入数字、实体与索引，在问题规模小、命名稳定时最直接；但结构正确不代表 binding 正确。文本到优化系统应把变量与约束 schema 同外部结构化数据分开：模型只拥有结构 proposal，确定性 binder/checker 解析实体、单位和索引，solver 才拥有数值可行性与提交权。这样把“会建模”与“绑定无误”拆成可独立验证的两层。
+
+外置 binding 增加 schema、解析器、数据文件和一致性测试，也会暴露原先被端到端生成掩盖的缺失字段。exact-v1 只覆盖作者的 Text2Opt 任务、模型和 OOD cliff-shift 实验，不证明开放实体或生产求解的形式安全；binder 无法唯一解析时必须拒绝求解并请求补充信息。小型、固定且已验证的问题仍可保留端到端路径，但 solver/checker 验收不能省略。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21751:end -->
 
 ### Tool Architecture 会塑造行为，不只是暴露能力
 
@@ -531,6 +655,23 @@ Tool Calling 从生成函数名和参数演进到 proposal→validate/simulate�
 ## 小结
 
 Tool Calling 把语言能力连接到环境，也把概率错误变成现实副作用。可靠系统把模型输出当作 proposal，由可信执行器实施 typed、authorized、observable action。下一章进入多步 Planning。
+
+### 可预测的只读调用可以与 Decoding 重叠
+
+等待模型生成完整 call 再执行，最容易保证顺序与副作用安全，却把工具 latency 全部放在关键路径。若当前 symbolic future
+足以唯一预测一个只读、幂等且可取消的调用，runtime 可提前启动；speculator 只拥有 provisional call，exact action match、
+schema/version 与权限检查通过后，结果才能注入模型状态。它降低延迟，也引入误预测浪费、stale result 和竞态；有副作用、
+参数未定或权限敏感时必须串行回退。论文结果只支持作者工具、模型和 workload。
+
+<!-- source-family:SF-2026-ARXIV-2605-15077 -->
+
+### 异步交互可以隐藏等待，但 Speculative Effect 必须延迟提交
+
+串行 reason-and-act 在用户输入和工具返回完整后才继续，语义最清楚；实时交互中，模型推理和慢工具 I/O 会叠加成明显等待。另一条分支把 partial user input、tool completion、agent reasoning 与 interrupt 分成独立事件流：模型可以提出 provisional call，runtime 暂存可取消、只读调用的结果；完整输入到达后，只有通过参数一致性与 policy gate 的调用才能 commit。task manager 拥有取消和重启 scope，模型只拥有动作 proposal。
+
+异步和推测执行用额外计算换响应时间，也引入浪费调用、过期结果、取消竞态与 partial input 泄漏。不可逆、高风险或参数依赖完整输入的工具必须等待 authoritative input，不能以低延迟为由先执行；新输入改变 request identity 时，旧 speculation 应作废或重验。exact-v1 披露的加速只绑定其模型、工具延迟和评测设置，不证明生产尾延迟、总成本或敏感工具安全；不满足可取消与无副作用条件时，串行路径仍是正确基线。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-13360 -->
 
 ## Review notes
 
@@ -564,6 +705,11 @@ Primary-source 入口：
 
 ### Daily integration evidence trace
 
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25718:start -->
+- `SF-2026-ARXIV-2607-25718` — Daily `2026-07-29`；primary `arXiv:2607.25718v1`；正文锚点“工具检索需要表达集合依赖，而不只是独立相关性”。
+  本章吸收 query-conditioned hyperedge 的 set-level discovery，并保留逐工具授权、依赖校验与独立检索 fallback；ToolBench 不证明动态 catalog 或长尾域中的普遍收益。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25718:end -->
+
 - `2026-05-02 / SF-TOOL-CALL-UTILITY-GATE` — exact-v1 `arXiv:2605.00737v1`；正文吸收 benefit/latency/failure-risk admission，强制合规与高风险工具仍不能被 utility 跳过。
 
 #### Source-specific exact-v1 Review notes
@@ -581,31 +727,6 @@ Primary-source 入口：
 - **SF-2026-ARXIV-2606-25819**：Primary `arXiv:2606.25819v1`；Method `https://arxiv.org/html/2606.25819v1 — §ToolBench-X; Problem Formulation; Benchmark Construction; Reliability Hazard Injection`；Evaluation `https://arxiv.org/html/2606.25819v1 — §Experiments; Experimental Setup; Further Analysis; Error Analysis`；未证明边界 `https://arxiv.org/html/2606.25819v1 — §Canonical recovery-path construction and five injected-hazard boundary`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
 - **SF-2026-ARXIV-2606-25987**：Primary `arXiv:2606.25987v1`；Method `https://arxiv.org/html/2606.25987v1 — §3 Formal Engine; 3.2 Architecture; 4 Weave of Formal Thought`；Evaluation `https://arxiv.org/html/2606.25987v1 — §5 WoFT Improves Surface Modeling; 5.1 Experimental setup`；未证明边界 `https://arxiv.org/html/2606.25987v1 — §6 Next Steps and Research Vision; technical-report preliminary-results boundary`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
 
-### Source-family integration record
-
-<!-- recovered-daily-20260623:AGENT-TOOL-CALLING:start -->
-### 2026-06-23 evidence integration — AGENT-TOOL-CALLING
-
-相邻章 `books/part-07-agent/79-planning.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-23049**：PhoneBuddy: Training Open Models for Agentic Phone Use 的 exact-v1 机制为：We present PhoneBuddy, a training recipe and open-model line for agentic phone use that combines a real-app environment with a mock-app environment, PhoneWorld, which reconstructs runnable mock apps from real GUI usage structure. 因此 把 tool schema、状态前置条件、GUI/CLI execution surface 与 side-effect receipt 绑定。 该 family 的 failure pressure 是：The gains are strongest on app and mini-app tasks, while long-horizontal cross-app workflows remain an important open challenge. 披露的 evaluation signal 是：Across a 150-task human evaluation on real phones spanning apps, mini-apps, and cross-app workflows, task success rate improves from 36.67\% after supervised fine-tuning to 40.67\% after real-app RL and 45.33\% after mixed RL. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-23112**：Self-Evolution for Multi-Turn Tool-Calling Agents via Divergence-Point Preference Learning 的 exact-v1 机制为：Existing approaches often separate inference-time orchestration from parameter-level learning, leaving tool selection weakly structured and preference updates vulnerable to train--deployment prompt mismatch. 因此 把 tool schema、状态前置条件、GUI/CLI execution surface 与 side-effect receipt 绑定。 该 family 的 failure pressure 是：Existing approaches often separate inference-time orchestration from parameter-level learning, leaving tool selection weakly structured and preference updates vulnerable to train--deployment prompt mismatch. 披露的 evaluation signal 是：For within-benchmark self-improvement, ToolGraph combines schema-derived topology, transition weights estimated from successful rollouts, and history-aware controls for write prerequisites and repeated-search loops. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-24551**：GUI vs. CLI: Execution Bottlenecks in Screen-Only and Skill-Mediated Computer-Use Agents 的 exact-v1 机制为：We introduce a matched execution-layer benchmark of 440 desktop tasks across 18 applications and 12 workflow categories, where screen-only GUI agents and skill-mediated CLI agents receive identical goals, states, and final-state verifiers while being restricted to modality-native actions. 因此 把 tool schema、状态前置条件、GUI/CLI execution surface 与 side-effect receipt 绑定。 该 family 的 failure pressure 是：In this controlled setting, the strongest GUI agent reaches a 59.1% full pass rate, outperforming the strongest original-skill CLI agent at 48.2%; however, verifier-guided skill augmentation raises CLI success to 69.3%, showing that much of the CLI deficit comes from incomplete skill coverage rather than model capability alone. 披露的 evaluation signal 是：Computer-use agents can execute software tasks through either graphical interfaces or programmatic command interfaces, but existing evaluations confound interaction modality with differences in tasks, initial states, verifiers, and permitted actions. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-<!-- recovered-daily-20260623:AGENT-TOOL-CALLING:end -->
-
-<!-- recovered-daily-20260625:AGENT-TOOL-CALLING:start -->
-### 2026-06-25 evidence integration — AGENT-TOOL-CALLING
-
-- **SF-2026-ARXIV-2606-25605**：`3 Problem Definition; 4 Experimental Setup; 7 Transparent Two-Pass Execution` 所定义的源特定机制用于把工具候选、模拟执行和恢复路径置于真实副作用 commit 之前；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `7.5 Failure Cases and Limitations; 8.4 Limitations` 是 `Constraint Tax in Open-Weight LLMs: An Empirical Study of Tool Calling Suppression Under Structured Output Constraints` 的 source-specific 反例/局限边界；若运行条件离开 `5 Empirical Findings; 7.3 Experimental Evaluation; 7.4 Cost and Latency` 的验证域，`AGENT-TOOL-CALLING` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-25705**：`3 Methodology; 3.1 Query Selection, Expansion and Saturation; 3.2 Roll-out with Emulator` 所定义的源特定机制用于把工具候选、模拟执行和恢复路径置于真实副作用 commit 之前；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `5 Conclusion; short-paper and emulator-only boundary` 是 `GUI agent: Guided Exploration of User-Sensitive Screens` 的 source-specific 反例/局限边界；若运行条件离开 `4 Experiments and Results` 的验证域，`AGENT-TOOL-CALLING` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-25819**：`ToolBench-X; Problem Formulation; Benchmark Construction; Reliability Hazard Injection` 所定义的源特定机制用于把工具候选、模拟执行和恢复路径置于真实副作用 commit 之前；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Canonical recovery-path construction and five injected-hazard boundary` 是 `Beyond Function Calling: Benchmarking Tool-Using Agents under Tool-Environment Unreliability` 的 source-specific 反例/局限边界；若运行条件离开 `Experiments; Experimental Setup; Further Analysis; Error Analysis` 的验证域，`AGENT-TOOL-CALLING` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-25987**：`3 Formal Engine; 3.2 Architecture; 4 Weave of Formal Thought` 所定义的源特定机制用于把工具候选、模拟执行和恢复路径置于真实副作用 commit 之前；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `6 Next Steps and Research Vision; technical-report preliminary-results boundary` 是 `Weave of Formal Thought` 的 source-specific 反例/局限边界；若运行条件离开 `5 WoFT Improves Surface Modeling; 5.1 Experimental setup` 的验证域，`AGENT-TOOL-CALLING` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-<!-- recovered-daily-20260625:AGENT-TOOL-CALLING:end -->
-
 ### Daily Books delta trace（2026-06—08）
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-13663:start -->
@@ -614,11 +735,6 @@ Primary-source 入口：
   **已吸收的语义增量：** tool granularity 是 interface design变量：平台应在细粒度 primitive与复合 tool之间联合评估planning burden、权限面、失败定位与复用
 <!-- daily-books-trace:SF-2026-ARXIV-2606-13663:end -->
 
-<!-- daily-books-trace:SF-2026-ARXIV-2606-15508:start -->
-- `SF-2026-ARXIV-2606-15508` — Daily `2026-06-14`；primary `arXiv:2606.15508v1`；Books review `books-review:SF-2026-ARXIV-2606-15508`。
-
-  **已吸收的语义增量：** visible tool menu 是运行时权限/认知界面；应按 state 与 causal path 暴露最小工具集，同时测 risky exposure、wrong call、premature action 与 token cost。
-<!-- daily-books-trace:SF-2026-ARXIV-2606-15508:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-16364:start -->
 - `SF-2026-ARXIV-2606-16364` — Daily `2026-06-16`；primary `arXiv:2606.16364v1`；Books review `books-review:SF-2026-ARXIV-2606-16364`。
@@ -691,3 +807,9 @@ Primary-source 入口：
 
   **已吸收的语义增量：** 当前书稿 diff 已把以下长期机制写入该 owner：按字段而非 action 分类为 raw、projection、never-leave 三层；client 在最小化前承诺 canonical digest，并对 policy/tier schema 版本做 attestation；并保留边界：远端服务、schema evolution 与恶意 verifier 未被实证覆盖；projection 本身仍可能泄漏。 相邻章节对读：books/part-07-agent/77-memory.md#L46;books/part-07-agent/79-planning.md#L239。Memory 拥有写入决策，Planning 拥有 policy 约束；action 字段最小化和 side-effect admission 仍由 Tool Calling 拥有。
 <!-- daily-books-trace:SF-2026-FIELD-TIER-MIN:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2605-02411:start -->
+- `SF-2026-ARXIV-2605-02411` — Daily `2026-05-05`；primary `arXiv:2605.02411v1`；Books review `books-review:SF-2026-ARXIV-2605-02411`。
+
+  **写回边界：** static shortlist 扩展为 bounded revisable discovery frontier；检索分支只拥有 proposal，executor 仍验证 schema、version、authorization 与 effect dependency，开放目录安全和生产尾延迟未被证明。
+<!-- daily-books-trace:SF-2026-ARXIV-2605-02411:end -->

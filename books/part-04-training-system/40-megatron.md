@@ -75,6 +75,19 @@ Megatron 可以提供与结构匹配的 components：parallel linear、attention
 
 但 GQA、MoE、不均匀 layer、multimodal encoder 或特殊 position/attention 会改变 divisibility 与 partition。框架必须从 model config 建立真实 layout，不能只按参数量平均。
 
+<!-- semantic-body-binding:SF-2026-BYTEDANCE-VEOMNI-PR-779:start -->
+同一原则也适用于 variable-length / window attention 的辅助 metadata。若 device forward 临时执行
+`grid_thw.tolist()`、`max.cpu()` 一类 host 读取，`cu_seqlens`、`window_index` 与 maximum sequence length 的推导会
+把 D2H synchronization 藏进 GPU critical path。一个可选分支让 dataloader/collator 按 model-config revision 预计算
+这些值，再作为 versioned metadata 交给 ViT forward；device-side producer 仍作为兼容 fallback，启用 host producer
+前必须用同输入 exact-logit gate 验证两条路径一致。
+
+前移计算不等于免费：host 会重复 layout 逻辑，增加 metadata 搬运、picklability、CPU cost 与 config drift 风险；shape
+合法也可能掩盖 token permutation 错误，其他 rotary/mRoPE 同步仍可能存在。等价 gate 或端到端 profile 不通过时，
+应关闭该分支并恢复 device-side 计算。现有 artifact 只证明特定 VeOmni 变更在 A100 上通过披露的 synchronization 与
+Qwen logits tests，不提供端到端 step time、multi-node scaling 或生产 tail 结论。
+<!-- semantic-body-binding:SF-2026-BYTEDANCE-VEOMNI-PR-779:end -->
+
 ## “3D Parallelism”只是历史入口
 
 经典 3D parallelism：

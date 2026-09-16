@@ -77,6 +77,23 @@ Control Plane 不应进入每个 token 的毫秒级调度循环；Data Plane 也
 
 第 56 章的推理 scheduler 属于服务执行域，调度 token work。Part VI 的平台控制面负责把模型、SLO、租户和 cluster capacity 连接起来。两者通过资源声明、指标和策略交互，而不是共享一个巨大的全局调度循环。
 
+### 控制权迁移：共享库何时不再是平台边界
+
+在单一产品、少量调用方且协议稳定时，把路由、鉴权和重试封装在共享 client library 里是合理的：请求少一次网络跳转，团队也可以直接随业务扩展接口。问题不在“client 太旧”，而在规模变化后控制权仍被复制到每个进程。调用方和服务数量增加，区域路由、数据驻留、访问控制、流量整形与协议迁移便需要所有 client 协同升级；一次无关回滚甚至可能重新带回已修复的策略，使发布 fan-out 本身成为故障源。
+
+这时可以把共享策略迁移到独立服务，让它成为统一的路由、授权、审计和灰度控制点，client 则退化为稳定、轻量的接入层。演进的关键不是先换实现语言，而是先把 API、状态 owner、发布和回滚边界集中起来：
+
+```text
+embedded client policy
+→ duplicated rollout and rollback state
+→ centrally deployed service contract
+→ thin client + shared control and evidence point
+```
+
+集中化会新增网络 hop、核心服务成本和更大的 blast radius，因此小规模、低风险或对额外跳转极敏感的路径仍可保留 client-only 方案。中央服务也会暴露新的运行时反馈环：没有 jitter 的周期任务可能让 worker 同步停顿；偏向复用最近连接的 client pool 可能持续把新请求送给已经变慢的后端，形成亚稳态过载；过度进程扩展又会把下游连接数放大。平台因而不能只观察平均 CPU 和吞吐，还要观察 event-loop delay、队列、连接分布、下游饱和度和 circuit-breaker 状态。FIFO 或负载感知分配可以打断反馈，但会付出更多活跃连接与调度状态；复杂查询则应通过隔离的二级视图提供 escape hatch，避免破坏主路径的可预测性。
+
+这条路线把平台化的判断从“是否已有公共 SDK”推进为“策略和恢复状态由谁拥有”。只有当控制权、观测证据和回滚责任随服务边界一起迁移，集中部署才真正降低组织级协调成本。
+
 ### Control Plane 扩展：验证边界与状态分片必须分开设计
 
 声明式 API 变大后，两个压力经常被混成“扩容 apiserver”。第一类是 bootstrap trust：动态 policy 尚未创建、
@@ -173,6 +190,12 @@ AI Platform 的演进起点是共享脚本和集群资源；随着 artifact、�
 
 AI Platform 的本质是统一 identity、state、policy 和 feedback，使模型生命周期从个人操作变成组织能力。下一章以 Kubeflow 为例，观察这组抽象如何建立在 Kubernetes reconciliation 之上，以及为什么一个生态不能自动等同于一个完整平台。
 
+### Adapter Fleet 需要统一的训练—注册—服务对象
+
+手工脚本管理少量 LoRA 时简单直接；当 adapter 数量和租户增长，训练产物、兼容 backbone、placement 与 serving revision 分散在不同系统，会导致“存在一个文件”却无法安全上线。统一控制面应把 adapter artifact、tenant、training lineage、资源放置和服务绑定作为同一版本化对象，并让 controller 负责 reconcile。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13779 -->
+
+平台化增加 metadata、控制器和共享服务故障域，论文中的大规模管理结果也不代表所有组织都需要同样架构。规模较小、更新低频或隔离要求极高时，独立 adapter 服务仍可能更合理；控制面失效时必须能回退已知稳定 revision。
+
 ## Review notes
 
 本章负责冻结 Part VI 的总抽象，不列产品功能清单。它承接第 56 章的 runtime/SLO contract，并把平台拆成 control、data 与 evidence planes；具体组件、调度算法和治理机制分别交给后续章节。
@@ -186,18 +209,12 @@ Primary-source 与官方入口：
 - Kubeflow architecture: https://www.kubeflow.org/docs/started/architecture/
 - Kubernetes controllers: https://kubernetes.io/docs/concepts/architecture/controller/
 - Team Topologies, platform as a product: https://teamtopologies.com/key-concepts
+- OpenAI Habitat engineering report: https://openai.com/index/scaling-storage-one-billion-users-part-one/
+
+OpenAI Habitat 的 2026-09-11 工程报告支持共享 Python library 向集中服务迁移时的 rollout/rollback 故障、event-loop delay、周期任务同步停顿、连接复用反馈环和受限 API 等机制。它是厂商对自身系统的原始工程证据，不是独立 benchmark：`70M+ requests/s`、`1B+ weekly users`、`500PB` 以及 Rust 相对 Python 的 CPU/内存数字只适用于文中披露的 OpenAI 栈；hardware、请求长度、并发、SLO 和 evaluator 未完整公开，不能据此推出通用语言或架构排序。
 
 ### Daily integration evidence trace
 
 #### 2026-06-25 source-specific Review notes
 
 - **SF-2026-ARXIV-2606-25532**：Primary `arXiv:2606.25532v1`；Method `https://arxiv.org/html/2606.25532v1 — §Physically constrained multi-agent discovery engine; Evolutionary Knowledge Graph and algorithmic chain of thought`；Evaluation `https://arxiv.org/html/2606.25532v1 — §Hardware-compliance evaluation and discovered-system validation`；未证明边界 `https://arxiv.org/html/2606.25532v1 — §Exact-v1 research-prototype and evaluated hardware-design boundary`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-
-### Source-family integration record
-
-<!-- recovered-daily-20260625:PLATFORM-FOUNDATIONS:start -->
-### 2026-06-25 evidence integration — PLATFORM-FOUNDATIONS
-
-- **SF-2026-ARXIV-2606-25532**：`Physically constrained multi-agent discovery engine; Evolutionary Knowledge Graph and algorithmic chain of thought` 所定义的源特定机制用于把硬件约束和发现链纳入平台设计候选的验收边界；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Exact-v1 research-prototype and evaluated hardware-design boundary` 是 `Agentic evolution of physically constrained foundation models` 的 source-specific 反例/局限边界；若运行条件离开 `Hardware-compliance evaluation and discovered-system validation` 的验证域，`PLATFORM-FOUNDATIONS` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-<!-- recovered-daily-20260625:PLATFORM-FOUNDATIONS:end -->

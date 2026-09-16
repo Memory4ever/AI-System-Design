@@ -64,6 +64,14 @@ supersede 必须分开。该 ledger 为 replanning 提供 mismatch evidence，�
 只说明 PMR 与 RAG@10 能暴露“可查询状态未进入 Context”和“自述承诺未落实”两类接口失配；23 次受 playbook
 约束的游戏运行、缺少 random/scripted baseline，不能支持模型排名或通用阈值。
 
+### 学习到的 Transition 只能验证候选，不能提交环境事实
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-27806:start -->
+只让语言模型在同一 Context 中想象 state delta 并继续规划，成本低且能处理开放语义，但一次错误 transition 会被后续步骤当成事实继续传播。条件允许时，可以保留 LLM 的语义 proposal authority，同时让独立的 parametric transition model 估计 action validity、候选 state delta、risk 与 value；两者不一致时，它只能降低候选优先级或触发定点 revision，不能把 provisional transition 提交为外部事实。事实 commit authority 仍属于真实 environment observation 或具有明确契约的 controller。
+
+这条分支用额外模型调用和状态校准换取更早的错误拦截，也会引入共享盲点、distribution shift 和错误否决。状态不可结构化、transition confidence 失准或风险不足以支付校验成本时，纯 LLM planning 仍可用于低风险 proposal；高风险或 OOD 状态则必须回到规则、真实 rollout、tool observation 或人工复核后再推进。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-27806:end -->
+
 ## Decomposition 的价值与代价
 
 拆分任务可以：
@@ -150,6 +158,12 @@ plan graph + resource / temporal constraints
 语义目标不能全部形式化。TAPE 的合成任务支持 feasibility/execution-conformance 分离，不证明形式求解器能覆盖
 所有 Agent planning。短任务和低副作用场景仍可用轻量 plan + observation-triggered replanning。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11225:start -->
+Observation-triggered replan 还可以从“重新生成计划”演进为带接受准则的 trajectory refinement：当前已接受轨迹是 versioned incumbent，executor 提供观测，inspector 从 trace 生成 backward discrepancy，evolver 只替换受影响 suffix，verifier 比较新旧轨迹并独占 commit。这样可保留已验证 prefix，并阻止一次看似合理的局部修改静默降低整体计划。
+
+它用额外执行、inspection、版本比较和 verifier 成本换更精确的失败定位；错误 textual gradient 也可能让系统稳定地优化错误方向。工具能力不足、验证不可靠或迭代预算耗尽时，应回退从 checkpoint 全局 replan、保守 retry 或人工接管。exact-v1 只支持 DeepPlanning、GAIA 与作者披露的 token proxy/有限任务；未直接测 latency，也不证明 human-in-the-loop 上界等于 autonomous result。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11225:end -->
+
 ## Search-based Planning 的边界
 
 Chain-of-Thought 产生一条路径；Tree of Thoughts 等方法探索多个候选并评价/回溯。搜索可以提高某些任务成功率，却使模型 calls 近似随 branching factor 和 depth 增长：
@@ -159,6 +173,22 @@ candidate_nodes ≈ 1 + b + b^2 + ... + b^d
 ```
 
 Pruning、heuristic、budget 和 verifier quality 决定是否值得。模型自己生成并评分候选可能共享同一盲点，搜索更多不等于可靠性单调提高。
+
+Search 还要区分训练期 teacher 与运行期 controller。符号 graph search 可以离线为一批问题生成较优 plan，模型再从
+这些监督中学习直接提出计划；迭代时只在未覆盖或失败样本上继续搜索并更新训练集。部署是否保留 search，则由
+latency、optimality 与 verifier budget 决定，不能因为训练用过 search 就默认线上也支付同样的分支成本。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22221:start -->
+Backtracking policy 还必须区分“当前 search state”与“到达该 state 的完整历史”。把整段 trajectory 交给模型保留了 provenance，却可能使两个相同当前状态因为不同历史顺序得到不同回退判断。更稳健的分层是：durable full trace 留给审计和 diagnosis，reactive policy 只消费 canonical current-state block，并用 same-state/different-history transplant 检查不变性。Selective State Attention 或 block-relative position 只改变 action proposal 的输入；search runtime 与 verifier 仍拥有 state transition 和 commit。
+
+隔离历史可以减少伪相关，却增加 state localization、位置处理和训练复杂度，也不解决 state aliasing、隐藏前提或 proactive verification。现有实验只支持其披露的反应式搜索设置，没有证明 current-state text 完备，亦未证明预训练 LLM 能在生产中安全清空上下文。若 state reconstruction 或 aliasing 尚未闭合，应在策略输入之外保留完整轨迹，回退确定性 search checkpoint、显式 backtracking 或外部 verifier，而不是删除唯一的审计依据。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22221:end -->
+
+上述训练期 teacher / 运行期 controller 分层用离线搜索和数据迭代换取更快的 runtime proposal，但会继承 planner domain、搜索启发式与生成计划的偏差。
+训练计划通过也不证明开放环境中的 tool effect 正确；运行时 verifier 弱、环境部分可观测或代价可接受时，保留搜索
+仍更稳健。现有证据限于 PDDL/Blocksworld/Logistics/Labyrinth/Sokoban 等可判定环境，不覆盖开放世界和不可逆副作用。
+
+<!-- source-family:SF-2026-ARXIV-2605-03625 -->
 
 在部分可观测环境中，固定 branching factor 也会浪费预算：某些节点只有一个可信方向，另一些节点存在
 高 epistemic uncertainty。Planner 可以把“请求展开”显式化，并给整棵搜索树共享 leaf budget：
@@ -292,6 +322,13 @@ state、checker、supersession 和完成证据；环境 observation 触发 repla
 受限训练信号。这样把稀疏终局反馈前移，却新增错误 checker、过早终止和为了 milestone 得分而偏离最终目标。
 任务短、状态不可可靠检查或 action 不可逆时，少量人工 checkpoint 与 approval 仍比自动细分更稳健。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21260:start -->
+对可获得 oracle trajectory 的受控环境，可以把实际 trajectory 与 oracle 的 mismatch 分解为 planning risk：错误
+来自目标路径本身、局部 action 偏离，还是误差沿 horizon 传播。这个分解让 verifier 定位哪一段 plan 需要重建，
+却依赖 oracle 与环境模型完整；理论上下界和作者环境不证明开放世界任务完成。oracle 不存在、状态部分可观测或
+不可逆动作占主导时，应回退真实 outcome、保守 milestone 与人工 approval。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21260:end -->
+
 ### 条件化机制分支与共存边界
 
 主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
@@ -311,6 +348,14 @@ PbD pipeline 不把录制动作平铺给 agent，而先按命名 subgoal 建层�
 因此 selector 必须保留随机探索、预算水位和 coverage receipt。任务小、branching factor 低时，简单 breadth/depth search 仍更透明；只有候选高度冗余时，信息分配才值得承担估计与调度成本。
 
 <!-- source-family:SF-MAXIMIZING-ROLLOUT-INFORMATIVENESS-UNDER-A-FIXED-BUDGET-A-SUBMODULAR-VIE -->
+
+### Planning 能力要区分 Acquisition、Shaping 与 Integration
+
+长程 planning 失败可能是模型从未获得基本 transition 能力，也可能已有能力但搜索/反馈没有塑形，或多个教师/阶段产生不兼容策略。受控环境应分别测：能否学习局部状态转移，额外 feedback 是否改变规划路径，以及不同来源能力合并后是否保持可执行的一致 plan。
+
+这种分解提高诊断力，却依赖环境“物理规律”和任务设计，有限实验不能给出开放世界能力结论。若基础 acquisition 未通过，不应靠更长 search 掩盖；若 integration 冲突，则回退单一已验证 planner/teacher，并在 state-transition 与 outcome 层分别验收。
+
+<!-- source-family:SF-2026-ARXIV-2607-24720 -->
 
 ## 本章在知识树中的位置
 
@@ -336,6 +381,21 @@ Planning 从一次性计划文本演进到可执行、可修正的搜索状态�
 ## 小结
 
 Planning 把 goal 转成带依赖、前置条件和证据的可修正状态图。它的可靠性来自 execution observations 与外部 constraints，而非计划文本的流畅度。下一章进入反馈和修正。
+
+### Decomposition Language 让计划成为可执行状态机
+
+自由文本计划易生成，却难确定哪一步完成、何时修改目标以及哪些 reasoning threads 可以并行。受约束 decomposition
+language 可以把目标、子任务、依赖和 revision 编译成可执行状态，由 planner 提议 graph、executor 提交 transition、goal
+owner 批准目标变化。这样提高可重放性，却增加语言设计、token 成本与不适配开放任务的风险；分解不稳定或任务短小时，
+简单 ReAct/单循环仍更合适。DOLORES 的证据限四个 reasoning benchmarks、三个模型与作者受控分解。
+
+<!-- source-family:SF-2026-ARXIV-2605-11388 -->
+
+### Tool Graph 可以进入模型表示，但 Runtime 仍拥有 Legality
+
+把完整 tool DAG 每次序列化进 prompt，透明但昂贵，早期选错后也可能进入非法 graph state。静态图可被编码进专用 graph token，并用 on-policy samples 学习当前 policy 的漂移；模型因此更快提出 plan，但 dependency、permission 和 effect commit 仍由外部 workflow/runtime 验证。内部化减少 prompt 搬运，却增加 tokenizer/model coupling、graph versioning、retraining 和错误不可观察性。图动态变化或置信不足时，应回退 external typed DAG、constraint checker 与 stepwise replan。exact-v1 只支持所测静态 tool graph 和 legality 指标，不证明真实工具成功或权限安全。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11706 -->
 
 ## Review notes
 
@@ -382,38 +442,6 @@ Primary-source 入口：
 - **SF-2026-ARXIV-2606-25274**：Primary `arXiv:2606.25274v1`；Method `https://arxiv.org/html/2606.25274v1 — §3 Problem Definition; 4 Method; 4.2 Candidate Expansion; 4.3 UC-Beam`；Evaluation `https://arxiv.org/html/2606.25274v1 — §5 Experiments; 5.1 Implemented Evidence; 6 Analysis`；未证明边界 `https://arxiv.org/html/2606.25274v1 — §7 Limitations`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
 - **SF-2026-ARXIV-2606-26463**：Primary `arXiv:2606.26463v1`；Method `https://arxiv.org/html/2606.26463v1 — §Variable-delay real-time RL; lightweight gate selects state-dependent planning budget`；Evaluation `https://arxiv.org/html/2606.26463v1 — §Pac-Man, Tetris, Snake, Speed Hex and Speed Go evaluation`；未证明边界 `https://arxiv.org/html/2606.26463v1 — §Game planners and timing model do not prove benefit under production tool latency or safety deadlines`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
 
-### Source-family integration record
-
-<!-- daily-20260627:AGENT-PLANNING:start -->
-### Owner-merged minimal durable delta
-
-语言 planner 可以保留语义 proposal authority，同时由小型 parametric transition model 检查 imagined state delta 是否满足动力学。两者分歧时应开启 targeted revision，而不是静默替换 planner 或提交 action；transition model 只做 bounded verifier，environment/controller 继续拥有最终 authority。
-
-### Trade-off、failure、fallback 与 coexistence
-
-Learned transition verifier 可能与 planner 共享盲点，也不是 physics oracle；分歧或 OOD state 回退 environment validation 或人工复核。
-
-<!-- daily-20260627:AGENT-PLANNING:end -->
-
-<!-- recovered-daily-20260623:AGENT-PLANNING:start -->
-### 2026-06-23 evidence integration — AGENT-PLANNING
-
-相邻章 `books/part-07-agent/80-reflection.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-22948**：ENVS: Environment-Native Verified Search for Long-Horizon GUI Agents 的 exact-v1 机制为：We propose Environment-Native Verified Search (ENVS), a training-time search-and-filter pipeline that uses the environment to construct verified supervision before policy optimization: it branches over behaviorally distinct GUI actions in live OSWorld VMs, verifies successful leaves, and trains from globally balanced step-level supervision. 因此 把搜索环境、承诺点、验证条件与回退分支纳入显式 plan state。 该 family 的 failure pressure 是：As multimodal agents move from interface understanding to real software control, successful trajectory discovery in live desktop environments becomes a key challenge. 披露的 evaluation signal 是：To evaluate robustness under realistic desktop interruptions, we also introduce OSWorld-Noisy, a dynamic benchmark for recoverable desktop interruptions that preserves the original tasks while testing whether agents can refocus, dismiss, wait, or recover under live perturbations. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-<!-- recovered-daily-20260623:AGENT-PLANNING:end -->
-
-<!-- recovered-daily-20260625:AGENT-PLANNING:start -->
-### 2026-06-25 evidence integration — AGENT-PLANNING
-
-- **SF-2026-ARXIV-2606-25274**：`3 Problem Definition; 4 Method; 4.2 Candidate Expansion; 4.3 UC-Beam` 所定义的源特定机制用于以候选扩展或实时 gate 分配规划预算，并在超时或低置信度时回退；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `7 Limitations` 是 `UC-Search: Risk-Aware Test-Time Search for Delayed Constrained Time-Series Control` 的 source-specific 反例/局限边界；若运行条件离开 `5 Experiments; 5.1 Implemented Evidence; 6 Analysis` 的验证域，`AGENT-PLANNING` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-26463**：`Variable-delay real-time RL; lightweight gate selects state-dependent planning budget` 所定义的源特定机制用于以候选扩展或实时 gate 分配规划预算，并在超时或低置信度时回退；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Game planners and timing model do not prove benefit under production tool latency or safety deadlines` 是 `Finding the Time to Think: Learning Planning Budgets in Real-Time RL` 的 source-specific 反例/局限边界；若运行条件离开 `Pac-Man, Tetris, Snake, Speed Hex and Speed Go evaluation` 的验证域，`AGENT-PLANNING` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-<!-- recovered-daily-20260625:AGENT-PLANNING:end -->
-
 ### Daily Books delta trace（2026-06—08）
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-14574:start -->
@@ -422,11 +450,6 @@ Learned transition verifier 可能与 planner 共享盲点，也不是 physics o
   **已吸收的语义增量：** Executable planning evaluator 必须让 symbolic world model 区分 immediate precondition failure、latent hazard 与 irreversible failure，并在 action commit 前运行 counterfactual foresight。
 <!-- daily-books-trace:SF-2026-ARXIV-2606-14574:end -->
 
-<!-- daily-books-trace:SF-2026-ARXIV-2606-17209:start -->
-- `SF-2026-ARXIV-2606-17209` — Daily `2026-06-16`；primary `arXiv:2606.17209v1`；Books review `books-review:SF-2026-ARXIV-2606-17209`。
-
-  **已吸收的语义增量：** Agentic search 的多样性 owner 在 query initialization 而非只增加 parallel samples；budget 应覆盖 seed diversity 与后续 branch pruning
-<!-- daily-books-trace:SF-2026-ARXIV-2606-17209:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-20122:start -->
 - `SF-2026-ARXIV-2606-20122` — Daily `2026-06-19`；primary `arXiv:2606.20122v1`；Books review `books-review:SF-2026-ARXIV-2606-20122`。

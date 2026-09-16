@@ -117,6 +117,12 @@ Inductive bias 不是坏事。没有任何偏好，模型无法从有限经验�
 
 当匹配时，模型能用有限样本捕捉可复用规律；不匹配时，模型可能依赖 shortcut。例如训练图像中背景与标签高度相关，模型可能学习背景而不是对象。它在同分布测试集上表现良好，换背景后却失败。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21692:start -->
+这个判断还可以获得一个更具体、但适用范围更窄的几何解释：若任务的数据空间近似为规则的紧致流形，模型已经充分优化，并且某类变换确实保持任务语义，那么数据流形与训练后模型预测空间之间的 representation gap 会受到任务 intrinsic dimension 支配。此时，equivariance 不只是架构偏好；它相当于把一个观测样本扩展为一组语义等价样本，从而降低需要由有限数据覆盖的有效维度。这解释了为什么与任务对称性匹配的表示可能改善样本效率，也把“归纳偏置有效”进一步落实为“它减少了哪些自由度”。
+
+不过，这个量只拥有几何诊断权，不能接管泛化验收权。它依赖渐近样本、流形与群作用、充分优化等强假设，生成模型推导还集中于 DDIM 或线性高斯设置；估计过程本身也可能需要多个样本规模和多次模型拟合。若真实数据不存在所假设的对称性，或 intrinsic-dimension 估计与实际分布外表现不一致，就应回退到切片、反事实、held-out 与 distribution-shift evaluation，而不是把 representation gap 当作任意现代网络的通用 generalization error。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21692:end -->
+
 因此，“模型学到了正确特征”不能只靠总体 accuracy 证明。需要构造切片、反事实、扰动和跨分布评估，检查模型究竟利用了什么相关性。
 
 ## 记忆与泛化不是简单对立
@@ -127,6 +133,10 @@ Inductive bias 不是坏事。没有任何偏好，模型无法从有限经验�
 
 可以从压缩视角形成直觉：如果许多样本共享结构，用一套可复用计算解释它们比逐个存储更经济；如果样本没有明显共享结构，过参数化模型仍可能拟合它们。这个直觉有助于理解表示，但不是对所有神经网络泛化的完整定理。
 
+这个视角还把闭卷事实错误拆成两个不能互相替代的问题：模型可能从未观察到相关事实，也可能观察过，却在有限参数容量中只能有损保存。前者是 coverage failure，增加相关数据或检索更直接；后者是 compression distortion，单纯重复相同事实未必消除，需要更多有效容量、更可压缩的结构、外部可寻址记忆，或在回答前允许检索与拒答。二者都会表现成“答错”，却要求不同补救；因此不能由最终准确率反推知识从未进入训练，也不能把扩大数据覆盖当作参数记忆无损的保证。
+
+一个均匀随机事实映射下的 rate-distortion 下界只证明这种可分离失效在其假设中必然存在，不是现实 LLM 幻觉率公式。真实语言具有共享结构，模型还会使用上下文、推理、后训练和外部工具；这些机制可以改变有效压缩率或绕过闭卷回忆，但不会让有限参数自动获得“我是否可靠记住此事实”的校准能力。生产系统仍应把 retrieval、claim verification 与 abstention 作为独立证据路径。<!-- source-family:SF-2026-ARXIV-2609-12111 -->
+
 判断泛化必须回到未见数据和部署分布。训练误差、validation 误差、数据去重、污染检查、时间切分和分布外评估分别回答不同问题。benchmark 得分高也可能来自训练数据污染或测试集与真实场景不一致。
 
 对于生成模型，记忆还涉及隐私与版权风险。模型能够逐字复现某些训练片段，不等于全部知识都以逐字数据库形式存储；反过来，表示是分布式的也不意味着不会泄露具体样本。二者必须通过实证测试区分。
@@ -136,6 +146,27 @@ Inductive bias 不是坏事。没有任何偏好，模型无法从有限经验�
 如果每个可解释特征都占据一个独立坐标，理解网络会容易很多。但网络的表示维度有限，潜在有用特征可能远多于维度，而且很多特征不会同时激活。模型可以让多个特征共享表示方向，以更高效地利用容量，这种现象常用 superposition 描述。
 
 它带来一个 trade-off：共享可以提高表示容量，却增加干扰和解释难度。单个神经元可能是 polysemantic 的，一个概念也可能分布在多个方向上。通过 probing、activation patching、feature visualization 或 sparse decomposition 可以获得证据，但这些方法观察的是模型行为的某个投影，不应轻易升级为完整因果解释。
+
+<!-- source-family:SF-2026-ARXIV-2605-00842:start -->
+这种干扰不只发生在推理时，也会进入参数更新。若两个功能特征在共享表示空间中并不正交，针对其中一个方向的微调梯度就可能沿几何相似性同时放大另一个方向；原本为了节省维度而成立的 superposition，因而把“只修改目标行为”的局部假设改成了耦合更新问题。它解释了为什么窄任务数据可能在训练 loss 正常下降时，引起表面无关的行为变化，也说明只监控目标任务 accuracy 或参数距离不足以拥有微调安全结论。
+
+这个机制把微调验收从单任务改成受影响行为集合：训练系统应保存数据、checkpoint 与更新范围，在提交新 artifact 前重跑目标能力和关键安全切片；几何邻近或 SAE feature 可以用于定位风险样本和提出诊断，却不能单独证明因果或替代行为回归。现有证据只在 Gemma、Llama 与 gpt-oss 的若干开放模型上，以共享 SAE basis、cosine similarity 和 LLM judge 检验局部几何假设；它没有证明所有表示都遵循同一坐标、所有邻近特征都会共同更新，或几何过滤能跨模型稳定校准。信号失配时，应回到隔离或移除可疑数据、缩小更新范围并执行完整安全回归，而不是把一个可解释性 proxy 升级为自动发布门禁。
+<!-- source-family:SF-2026-ARXIV-2605-00842:end -->
+
+共享方向带来的干扰还取决于 readout 是否只能做线性叠加。线性 readout 会把非目标特征的投影一起带入，
+因而存在随共享密度上升的 cross-talk floor；在一类递归 superposition 模型中，引入非线性 threshold
+可以在每层重新压低小幅串扰、保留显著信号，相当于重置下一层看到的噪声底。它用阈值选择带来的
+不可微边界、校准敏感性和弱信号丢失，换取比纯线性递归更大的可分离容量；特征近似正交、表示稀疏或
+需要保留连续幅值时，线性 readout 仍是更稳妥的基线。该结论来自特定形式模型与有限 empirical context，
+不证明真实 LLM 普遍执行同一 threshold-reset 算法。
+<!-- source-family:SF-2026-ARXIV-2605-01192 -->
+
+深层非线性网络也不能只用“总深度越大越容易逃离 saddle”解释优化。一类理论结果把逃逸条件收紧到
+具有瓶颈尺度的非线性层数及其 imbalance，而不是所有层的简单计数：额外层若没有改变有效瓶颈与局部
+几何，可能只增加路径长度，并不提供新的逃逸方向。这个判断提醒系统把 architecture shape、activation
+class 与局部曲率一起记录；它不构成对任意 Transformer loss landscape 的普遍定理，假设不满足时仍应
+依赖实际 curvature、gradient 与多 seed 训练证据。
+<!-- source-family:SF-2026-ARXIV-2605-01288 -->
 
 共享概念方向还不足以表达关系：同样包含“老师”和“摄影师”，谁跟随谁仍取决于施事与受事的绑定。分布式表示可以同时编码 filler 与 role，例如用各项张量积之和表达绑定；在角色向量独立等条件下可以解绑定，但这只是一种解释模型，不意味着网络实际执行了张量积程序。冻结表示的拟合、角色干预与局部替换可以检验这种结构是否可用，代价是人工角色方案与近似误差；表征可组合也不保证模型在新任务上行为可组合泛化。
 
@@ -211,6 +242,12 @@ loss 还增加 compute、loss weighting 与 optimization coupling。V-JEPA 2.1 �
 下游因果使用。只需要全局语义的模型仍可能受益于较窄目标；需要定位、跟踪或物理控制时，才应把局部
 信息保留作为明确 contract，并用 intervention 和 downstream task 验证。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21849:start -->
+解释器本身也会遭遇 distribution shift。固定 dictionary 或 replacement model 在训练分布上重构良好，不代表部署 activation 仍落在同一子空间；一种受限修复是在冻结原模型的同时，用无标签部署激活重新适配解释几何。这里 adaptation 只拥有 replacement-model 修复权，重构误差、跨 seed 稳定性、原模型 intervention 与端到端行为共同拥有 faithfulness 判断，不能从适配后的可读 feature 反推唯一机制或稳定语义。
+
+在线适配增加 activation 收集、版本化、污染和跨版本不可比风险。exact-v1 只支持作者的 OOD activation、dictionary 与 circuit attribution 实验，不证明原模型机制在开放分布中已被恢复；若 reconstruction、intervention fidelity 或稳定性未恢复，应把结论降级为相关性观察，回退原 dictionary、多 probe、多 baseline 与原模型行为检验。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21849:end -->
+
 ## 表示为何会随上下文改变
 
 在静态特征模型中，人们容易把“表示”理解成每个输入固定对应一个向量。现代序列模型中的 token representation 通常依赖上下文。同一个词出现在不同句子中，经过多层信息交互后会形成不同状态。
@@ -230,6 +267,13 @@ loss 还增加 compute、loss weighting 与 optimization coupling。V-JEPA 2.1 �
 第三层是跨分布验证。使用时间后移、来源变化或真实线上流量检查表示能否迁移。随机划分只能验证同一数据池内的泛化。
 
 第四层是内部分析。probe、归因和干预可以生成机制假设，但应与外部行为、消融和重复实验结合。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22417:start -->
+归因图若不声明 reference，只能解释当前 input 相对某个隐式 baseline 的差异，不能给出“这个 feature 绝对贡献了多少”。一个可复核的 attribution artifact 至少要冻结 input reference、该 reference 实际诱导的 output baseline、当前 output target、积分 path/step 与 model revision；attributor 分配的是 `F(x)-F(x')`，evaluation 再用 attribution error、受控扰动、干预与行为结果检查，而不是让热力图或人类相似度拥有 causal truth。
+
+显式 reference 使结论可审计，却增加 baseline 构造、path integration 与 variable-output matching 成本；多个同样合理的 reference 也可能产生不同解释。All-zero 只在输入语义和训练分布允许时才可能是便宜基线，不是跨模态的通用“无信息”状态。Reference off-manifold、输出无法稳定匹配或多组 baseline 结论漂移时，应把结果降级为 reference-conditional observation，并回退多 control、perturbation、causal intervention、外部行为与重复实验。现有证据只支持论文披露的 DETR/VGG 案例与误差分析，不证明选定 baseline 中性或归因具有因果唯一性。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22417:end -->
+<!-- source-family:SF-2026-ARXIV-2605-22417 -->
 
 跨模型比较还要处理表示基底不唯一。同一功能算法可以在不同 hidden basis、宽度或训练随机种子下实现；直接
 对齐 neuron 或 coordinate，可能把 basis change 误判成机制差异。一条更强的比较路线是寻找对线性重参数化
@@ -263,6 +307,23 @@ revision 和 intervention 必须进入 evidence identity。Invariant Algorithmic
 第四，“可以 probe 出来就代表模型会用”。可读取信息与因果使用不是同一结论。
 
 第五，“同分布 test set 足以证明生产泛化”。真实环境的时间、用户、语言、上下文和反馈机制都可能变化，必须明确外推边界。
+
+### 参数知识更新必须同时验收获得、保留与泛化
+
+一次编辑后能答对目标问法，只证明局部 acquisition；它没有证明知识会跨后续更新保留，更没有证明模型能在不同实体、关系或表达下正确 generalize。参数知识不是可寻址数据库，因此连续更新应被视为时间过程：
+
+```text
+ordered updates
+-> acquisition at edit time
+-> retention after later updates
+-> temporal decay
+-> cross-instance stability
+-> query generalization
+```
+
+这种验收比单点成功更昂贵，却能区分“写入失败”“后来遗忘”和“只记住模板”。现有实验证据来自合成或半合成 QA、有限模型与编辑方法，不能推出某一种编辑算法在真实知识流中必然失效。若知识变化频繁、需要可撤销或需要来源证明，外部 versioned memory/RAG 仍比直接改权重更合适；参数编辑只在更新边界清晰且上述维度可持续回归时成立。
+
+<!-- source-family:SF-2026-ARXIV-2607-26455 -->
 
 ## 本章在知识树中的位置
 
@@ -310,6 +371,18 @@ Generalization asks: where does that computation remain valid?
 神经网络学到的不是可直接翻阅的规则表，而是分布在参数与激活中的计算结构。它把输入映射到为训练目标服务的表示空间，在其中放大有用差异、压缩部分无关变化，并让后续层更容易完成任务。
 
 这种能力既来自数据中的规律，也来自架构和优化的偏好。它可以表现为泛化，也可以夹带记忆、偏差和 shortcut；它能在训练分布上工作，也可能在 distribution shift 下迅速失效。理解这些边界，是把模型指标连接到 Evaluation、Observability 和数据反馈闭环的前提。
+
+### 可解释标签不是 Feature Identity
+
+Sparse autoencoder 把 activation 分解为稀疏 feature，短自然语言标签便于人理解；但当标签空间远小于 feature 空间时，不同 feature 会发生 descriptive collision。传统 detection score 只检查“看到解释能否预测 feature 是否激活”，即使多个 feature 共享解释和相近激活分布也可能同时得高分，因此可读解释不能独自拥有 feature identity。<!-- semantic-body-binding:SF-2026-ARXIV-2605-12874 -->
+
+更可靠的解释合同应同时记录 collision rate、激活差异、干预结果与未能区分的候选 feature。这样增加了标注和因果验证成本，也仍可能受评估语料覆盖限制；无法通过区分性与干预复核时，应回退到 activation statistics 和具体输入实例，不用标签替代机制。exact-v1 证据限于所用 SAE、标注语料和自动解释评价，不能证明自然语言标签能唯一指代内部概念。
+
+### 行为方向可能早于 Post-training 形成
+
+把 persona 或高层行为全部归因于 alignment 数据，会忽略 pretraining 已经形成的可复用表示方向。沿训练 checkpoint 追踪 residual directions 的受限实验显示，一些 persona-like directions 在早期预训练便出现，并能迁移到同家族的 post-trained checkpoint；后训练更像重塑其可访问性和表达强度，而不一定从零写入行为。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13329 -->
+
+线性可解码和 steering 效果仍不等于单一方向拥有完整因果控制，跨模型与跨数据配方也未证明。系统上应把 pretraining data provenance、checkpoint lineage 与 post-training intervention 分开审计；方向不能稳定复现时，回退行为级 evaluation，不据 representation probe 推断模型“拥有某种人格”。
 
 ## Review notes
 

@@ -62,6 +62,14 @@ y = sum_(e in S(x)) g_e(x) * Expert_e(x)
 
 `g_e(x)` 是选中 expert 的路由权重，可能在 top-k 集合内重新归一化。不同架构可使用 top-1、top-2 或其他 routing，稳定问题都是“谁被选中、权重多少、负载怎样”。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20948:start -->
+条件计算不一定要求在线激活可训练 expert。一条替代分支把另一个冻结模型的 hidden states 预先组织成
+conditional n-gram memory，再由当前 token state 路由读取；它把一部分容量从参数与在线 expert compute 转成
+离线 memory artifact 与检索。收益是复用冻结表征，代价是 memory 规模、构建版本、路由 miss、分布漂移和
+读取带宽；它也不具备 MoE expert 的在线可训练性。memory freshness、覆盖或延迟不达标时，应回退本模型 dense
+MLP / 常规 MoE，并把 grafting model、tokenizer、corpus 和索引版本纳入同一身份。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20948:end -->
+
 ## 一个 top-2 小例子
 
 假设 `E=4`，某 token 的 router probabilities 为：
@@ -170,6 +178,18 @@ token state
 
 共享提高 weight reuse、缩小工作集，却用表示耦合、两级 routing 与潜在 expert interference 换取内存收益。需要强独立专业化、共享部分形成负迁移或大 batch 已能摊薄独立 weight load 时，标准 experts 仍更合理。`arXiv:2608.14385v1` 只在作者的 7B pretraining 与 DeepSeek-V3 microbenchmark、A40/H100 配置上支持这一 operating point，不证明跨节点吞吐、训练稳定性或语义专业化普遍改善。
 
+跨层也可以共享 expert parameters，同时保留每层独立的 attention 与 router。这样减少的是 resident expert weights 和对应 optimizer state，不是逐 token active compute；每层 router 仍拥有自己的 token dispatch，不能因为底层参数相同就合并路由统计。共享版本必须作为单一 expert artifact 更新，而 layer-local routing receipt 继续分别保存。
+
+这种 tying 用近似成倍的 expert-memory 缩减换取层特化能力和更新独立性，多个层对同一权重的梯度还会形成新的耦合。目标模型确有跨层冗余、memory 是主瓶颈且 kernel 能复用布局时，这是一条可选分支；质量回归、并行布局不利或层间功能差异明显时，应回退独立 experts。作者模型与训练规模只证明该 operating point 可行，不支持所有 MoE 都存在相同冗余。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-09516:start -->
+条件计算也可以把稀疏单位从 FFN expert 提升为 thin layer block。传统 token-to-expert MoE 保留完整层深，router 只决定每个 token 进入哪些 FFN；这在需要稳定全局读、kernel 主要围绕 expert GEMM 优化时仍最容易执行。若约束变成“层级状态更新本身也应按输入选择”，block router 可以提出少量 thin blocks，同时保留 shared softmax attention 负责全局读取，让 routed recurrent/Delta-style block 承担稀疏状态更新。Router 只拥有 block proposal，residual path 和训练目标仍决定这些更新如何组合。
+
+这条分支扩大了条件容量的粒度，却引入低秩宽度上限、dispatch 碎片、专用 kernel 缺口和训练不稳定；纯 routed attention 还可能丢失全局覆盖。现有证据限作者的模型、数据、实现和 evaluator，不能外推到任意规模、硬件或 SLO。全局访问不可牺牲、路由难以校准或执行栈只能高效支持完整 block 时，dense block 或传统 expert FFN 仍是正确回退。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-09516:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606.16825 -->
+
 <!-- source-family:SF-2026-ARXIV-2608-14385 -->
 
 ### Expert 粒度缩到向量后，Router 与执行顺序都必须重写
@@ -209,6 +229,15 @@ collision、router calibration、irregular regroup、metadata 与 shared-branch 
 理想路由同时追求 specialization 与 balanced load，但二者可能冲突。训练通常加入 auxiliary load-balancing objective，让平均 router probability 与实际 token assignment 不要过度集中。
 
 Auxiliary loss 是代理约束，不证明所有 experts 语义均匀，也不保证每个 batch 完全平衡。权重过强还可能牺牲内容路由质量。
+
+
+### Routing Information 是选择性代理，不是生产阈值
+
+把 router 看成从输入到 expert identity 的随机信道，可以把选择信息量与 expert bank 可达到的 distortion 分开：路由携带的信息越少，控制、索引和潜在通信越容易压缩，但可区分的 expert path 也越少，任务损失下界随之收紧。这个视角补充了 load balance，却不能替代真实 token、capacity、placement 与 collective 测量；information estimator 只提供 workload-specific 选择性信号，scheduler 仍拥有执行决策权。
+
+该分解用可分析代理换取额外分布估计，并会在 expert bank 非有限、连续路由或分布漂移时失真。估计不稳定或系统不满足假设时，应回退现有 load、quality、capacity 和通信合同。`arXiv:2605.05278v1` 只在有限预训练 CNN expert bank、MNIST 与离散选择规则中验证，理论界也较松；它不证明分布式 LLM MoE 存在通用信息阈值。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-05278 -->
 
 ### 从 Batch-relative Balance 到 Population Routing State
 
@@ -279,7 +308,41 @@ capacity ~= capacity_factor * N * k / E
 
 当 token 超出 capacity，系统可能 drop、选择备选 expert、增加 padding，或采用 dropless execution。每种选择都会影响质量、显存、通信和吞吐。
 
+### 从固定 Top-k 到受总预算约束的 Variable-k
+
+固定 top-k 给每个 token 相同 expert 数，shape、capacity planning 和 All-to-All buffer 都容易预测；当 token 难度与 expert 分歧差异很大时，它也会在低分歧位置浪费计算，在高分歧位置过早提交。一个条件分支先按 router probability 从高到低累积质量，达到 nucleus threshold 后形成初始 expert set；若已选 experts 的输出分歧仍高，再扩展集合。最后由 budget thermostat 调整阈值，使整个 workload 的平均 active experts 不超过发布预算。
+
+```text
+router distribution
+→ cumulative-mass proposal
+→ disagreement-based expansion
+→ workload-level budget thermostat
+→ selected experts and weighted aggregation
+```
+
+Router 拥有逐 token 的候选与分歧信号，budget controller 拥有跨请求平均计算约束，capacity/placement owner 仍决定这些选择能否执行；不能把预算压力偷偷写进 expert 语义。该分支把 compute 从“每个 token 固定”变为“难点多用、易点少用”，但没有增加总模型容量，也不能把 router mass 当作通用 epistemic uncertainty。动态集合会放大 load variance、dispatch fragmentation、buffer 预留和 OOD calibration drift，平均预算满足也不等于尾部 SLO 满足。
+
+只有在 matched-compute evaluation 同时覆盖质量、专家负载和尾延迟时，variable-k 才能作为发布分支；分布漂移、kernel 只支持固定 shape、capacity 溢出或置信信号未校准时，应回退已验证的 fixed top-k。现有结果只覆盖作者披露的两个 backbone 与任务，不能外推为普遍路由最优。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07260:start -->
+Top-k score 高只说明 router 偏好某条路径，不能证明该 expert 对最终序列有因果贡献。对准备进入发布决策的路由，可以在保持 active-expert budget 不变时采样或替换少量备选 routes，比较 realized-token probability、序列结果与负载变化，从而估计 counterfactual route utility。该审计只提出诊断和更新建议；原 router 仍给出默认选择，训练/发布 owner 才能提交参数或策略变更。
+
+反事实路由增加额外 forward、方差与归因歧义，并可能因替换 expert 造成分布外状态；它也不能从 token probability 自动推出任务正确性。作者证据只支持所测 MoE、任务和采样合同，不证明一个通用的最优 router。只有 matched-compute 对照同时覆盖 end-to-end quality、load 与运行成本时才能采用；预算不足、替换不稳定或 evaluator 不可靠时，回退标准 top-k，并继续以 load、capacity overflow 和 held-out quality 做保守监控。<!-- source-family:SF-2026-ARXIV-2605-07260 -->
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07260:end -->
+
+<!-- source-family:SF-2026-ARXIV-2607-26052 -->
+
 ## Expert Parallelism 为什么需要 All-to-All
+
+标准 Expert Parallelism 让全局 router 把 token 发往任意 expert，表达自由但会形成跨全部设备的 all-to-all。若模型结构
+允许把 expert 与 KV heads 重组为若干相对独立的 group，通信图可以改写为组内 all-to-all，再用组间 all-reduce 合并
+必要的共享结果。这里的收益来自**重新参数化模型**，不是 runtime 在不改变语义的情况下少发消息；group membership、
+head/expert layout 与 checkpoint 都成为模型身份。
+
+局部化 dispatch 可降低全局交换压力，却新增组间 reduction、容量碎片和训练/迁移成本；单设备没有通信收益，错误分组
+还会限制 token 能访问的容量。现有 exact-v1 只支持作者拓扑和模型下的通信与质量结果，不证明它可直接替换任意既有
+MoE checkpoint。已有模型不可重训、规模较小或全局带宽充足时，标准全局 all-to-all 仍成立；第 49 章只接手冻结通信图
+的 kernel/collective lowering。<!-- source-family:SF-2026-ARXIV-2605-06206 -->
 
 Experts 分布在不同 GPU 上时，本地 token 未必选择本地 expert。系统必须按 destination 重新排列并发送 tokens：
 
@@ -403,6 +466,14 @@ MoE 减少的是未选 expert GEMMs，但新增：
 - 容量不足时是否允许 drop。
 
 这些运行时策略不在本章展开，但模型 router 已经决定它们必须存在。
+
+### 知识 Expert 必须与 Backbone State 分开版本化
+
+RAG 把知识留在外部、易于更新和引用；普通 fine-tuning 把知识写入共享参数、运行路径短，却会让更新、撤销和冲突处理牵动整个模型。中间分支可以把领域知识编译成独立 expert，只在末端 FFN 与 backbone 输出组合，使 backbone KV state 保持可复用。Knowledge registry 持有 expert 版本与撤销，router 只提出选择，末端组合才形成派生输出。
+
+这种解耦降低高频知识更新对 backbone 的干扰，却限制了知识参与深层推理的机会，并增加 expert/router 生命周期与冲突仲裁。需要可引用出处、细粒度权限或频繁更正时，RAG 仍是主路径；需要广泛重塑表征时，专门 fine-tuning 更合适。小模型和有限 corpus 上的实验不能证明末层注入普遍优于这些旧方案。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606.14243 -->
 
 ## 从参数化 Router 到带检索记忆的 Router
 
@@ -547,9 +618,21 @@ Dense FFN 或固定 expert 配置中，直接复用一组已经调好的 learnin
 
 更稳健的演进是把超参数从某个 checkpoint 的经验数字提升为带架构坐标的 scaling identity：training owner 明确 dense width、expert width/count、top-k、初始化与 optimizer scale 之间的变换，router 仍拥有 token-to-expert 选择，runtime 仍只执行已发布的稀疏路径。这样可以减少每一种 MoE 形态都重新网格搜索的成本，并让 dense-to-MoE 对照更可解释；代价是参数化公式本身也要经过规模、数据和 optimizer family 的校准，错误迁移会表现为训练不稳、expert 饥饿或把架构差异误判成优化收益。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23893:start -->
 当架构变化很小、训练预算足以独立调参，或目标 optimizer/数据分布离校准域很远时，逐配置 tuning 仍是可信 fallback；统一 scaling rule 是可迁移的起点，不是免调参保证。`arXiv:2605.23893v1` 的 §3 与 §5 支持在作者披露的 Dense FFN/MoE 配置间构造并评估这类超参数迁移，§6 不证明任意 expert topology、模型规模、数据或 optimizer 都保持最优。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23893:end -->
 
-<!-- source-family:SF-2026-ARXIV-2605-23893 -->
+这里还需要把 `activation ratio` 与 expert count 分开。总参数相同、active parameters 相近，并不保证每个 expert
+接收相同频率或拥有相同梯度噪声；稀疏度变化会同时移动最优 learning rate 与 batch size，不能只用 total/activated
+parameter count 解释。训练 recipe 因而应把 activation ratio、routing rule、data/token budget、optimizer 与 schedule
+共同绑定到 architecture identity，在固定 active compute 的对照中重新校准，而不是把 dense 或较密 MoE 的超参数直接外推。
+
+更细的 scaling law 可以减少全网格搜索，却仍是 empirical prior。`arXiv:2609.08690v1` 用 1,800 次 pretraining runs、
+最高 6B non-embedding parameters 和 held-out 12B、1/64 active MoE 支持“activation ratio 是额外坐标”；其证据只来自
+单一 hybrid linear-attention/MLA backbone、Muon、特定数据和 sigmoid auxiliary-loss-free routing，validation loss 也不等于
+下游能力。架构、optimizer 或 routing 超出该校准域时，应回退邻近规模 sweep，而不是沿拟合幂律盲推。
+
+<!-- source-family:SF-2026-ARXIV-2609-08690 -->
 
 ## Dispatch 与 Aggregation 是两种不同责任
 
@@ -558,6 +641,15 @@ Top-k router 同时决定“哪些 expert 计算”和“这些结果以多大�
 拆分增加一个 head 和校准状态，也可能在小模型上得不偿失；传统 router 在路由稳定、实现简单优先时仍合理。该结论来自有限模型，不应外推成所有 MoE 必须解耦，但系统监控和负载均衡不能把 aggregation weight 误当 dispatch identity。
 
 <!-- source-family: arxiv:2608.08853v1; daily-trace: papers/2026/08/11/README.md; semantic-body-binding: expert-dispatch-vs-aggregation-ownership -->
+
+### Router 连续性必须与 Expert Residency 共同设计
+
+标准 MoE objective 只要求每个 token 选出合适 Expert；当 Expert 跨设备、权重不能全部常驻时，相邻 token 在 Expert 集合间频繁跳转会把稀疏计算收益重新付给权重搬运与 All-to-All。一个可部署的分支是在质量与负载均衡约束之外，对路由的时间连续性施加受限偏好；runtime 再依据真实访问压力、容量与 3.5D 拓扑决定 hot Expert 的 residency，而不是让 Router 直接拥有 placement 权。
+
+这条路径以更小的 weight churn 和通信换取路由自由度、热点持续时间估计与错误预取风险。连续性过强会压低专家多样性，历史热度在 workload 漂移后也会把旧热点固化；模型小、Expert 可全驻留或网络不是瓶颈时，原始逐 token 路由仍更合理。相关 exact-v1 实验只支持作者模型、拓扑和访问分布，不形成通用 locality 系数。
+
+<!-- source-family:SF-2026-ARXIV-2607-08780 -->
+<!-- source-family:SF-2026-ARXIV-2607-11586 -->
 
 ## 本章在知识树中的位置
 
@@ -617,6 +709,20 @@ MoE 把 Dense MLP 改造成条件计算：Router 为每个 token 选择少数 ex
 代价是路由成为模型与系统共同状态。负载均衡、capacity、token dispatch、All-to-All、expert placement 和小 GEMM 效率决定稀疏参数能否转化为真实收益。
 
 
+### Expert Pool 可以扩展，但 Expansion 也属于 Checkpoint Identity
+
+一次性训练最终规模的 expert pool 要在开始前冻结容量，并为尚未证明有用的专家支付训练和通信成本。渐进扩展让模型从较小 pool 开始，在后续阶段复制或初始化新 expert、继续训练并调整 token budget；它把“模型容量”从静态超参数变为训练过程中的可迁移状态。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13247 -->
+
+因此 checkpoint 不能只记录权重，还要记录 expansion stage、router revision、expert mapping、optimizer state 和 learning-rate continuity。扩展可能复制对称性、扰动 routing 或让新 expert 长期欠训练；受限实验规模小于 frontier MoE，scaling fit 也未覆盖所有 optimizer 超参数。路由不能重新平衡或阶段迁移不稳定时，应回退固定 expert pool，或延长当前阶段再扩容。
+
+### 稀疏收益取决于 Expert Branch 在整网中的 Compute Leverage
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-15484:start -->
+只报告 active parameters 或固定 top-k，在 expert branch 占整网计算的大部分时能近似说明节省；若 backbone 的 dense 部分主导 FLOPs，同样的稀疏率几乎不改变总成本。matched-compute 评估因此要显式记录 expert-compute ratio、top-k、dispatch axis 与整网 FLOPs，而不是把 router 局部稀疏直接升级为系统收益。模型 owner 决定可访问容量，executor 才测量实现后的真实 leverage。
+
+提高 expert branch 占比可以放大条件计算收益，也会放大 routing error、capacity overflow 和通信；只调整 top-k 甚至可能在固定架构下反转 sparse-vs-dense 排序。batch-axis Soft-MoE 在 per-sample CNN 中还可能跨样本混合不该共享的状态。exact-v1 只支持 §3 的 hard/soft routing、§4–5 的视觉模型与受控 sweep，不证明该阈值跨 Transformer、硬件和 workload 普适。leverage 低、batch 语义不允许混合或通信成为主导时，应回退 Dense/较小 expert pool 或重新设计 backbone，而不是继续增加 experts。<!-- source-family:SF-2026-ARXIV-2605-15484 -->
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-15484:end -->
+
 ## Review notes
 
 - Instella-MoE，https://arxiv.org/html/2609.00791v1 ，§2.1.3、§3.3.1/Table13、§3.4 与 Appendix A：FarSkip 的 partial/outdated activation 属于架构变化，而不是同函数调度等价。200B tokens / 48K steps、固定设置与 seed 的单次对照只支持受限平均质量比较，各任务有升降；不采用未绑定完整 workload/SLO 的速度 headline，也不据此否定标准 MoE 内可行的通信重叠。
@@ -666,19 +772,6 @@ Primary-source 校验入口：
 
 - `SF-2026-ARXIV-2606-22798` — primary `arXiv:2606.22798v1`; Method=`arXiv:2606.22798v1 — §Does the Same Token Mean the Same State? MoE Routing as Signal for Reasoning Control; §MoE routing.; §3 Analysis of Anchor-Conditioned Routing`; Evaluation=`arXiv:2606.22798v1 — §3 Analysis of Anchor-Conditioned Routing; §5.3 Analysis`; non-proof=`arXiv:2606.22798v1 — §7 Conclusion; §A.13 Failure case studies`; fallback=该 family 的 failure pressure 是：In sparse Mixture-of-Experts language models, does the same token id imply the same router state and the same experts producing it? 披露的 evaluation signal 是：Its value is the interface: the same selector gives direct pass@1 on code, where exact-string voting is ill-defined, and the same routing-density principle, re-anchored to the agentic boundary, improves best-of-16 patch selection on SWE-bench Verified over random, where patches have no answer string to vote on. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
 
-### Source-family integration record
-
-<!-- recovered-daily-20260623:MODEL-MOE:start -->
-### 2026-06-23 evidence integration — MODEL-MOE
-
-相邻章 `books/part-02-model/22-long-context.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-22798**：Does the Same Token Mean the Same State? MoE Routing as Signal for Reasoning Control 的 exact-v1 机制为：Holding the emitted token id fixed at repeated anchors, we find it does not: the experts that produce it still separate task context, trajectory history, and reasoning-effort mode. 因此 把 router state 视为内部诊断/选择信号，而不是未经验证的正确性证明。 该 family 的 failure pressure 是：In sparse Mixture-of-Experts language models, does the same token id imply the same router state and the same experts producing it? 披露的 evaluation signal 是：Its value is the interface: the same selector gives direct pass@1 on code, where exact-string voting is ill-defined, and the same routing-density principle, re-anchored to the agentic boundary, improves best-of-16 patch selection on SWE-bench Verified over random, where patches have no answer string to vote on. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-<!-- recovered-daily-20260623:MODEL-MOE:end -->
-
 ### Daily Books delta trace（2026-06—08）
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-20220:start -->
@@ -686,3 +779,8 @@ Primary-source 校验入口：
 
   **已吸收的语义增量：** 新增证据边界：Direct Evolution: source-to-destination unicast dispatch -> selected-expert multicast tree -> reverse-tree partial reduction under direct-connect congestion 该 delta 已进入 `books/part-02-model/21-moe.md#L242`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-20220:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-26052:start -->
+- `SF-2026-ARXIV-2607-26052` — Daily `2026-07-29`；primary `arXiv:2607.26052v1`；正文锚点“从固定 Top-k 到受总预算约束的 Variable-k”。
+  证据限作者披露的 matched-compute、两个 backbone 与任务，不证明 router mass 是通用不确定度或满足生产尾部 SLO。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-26052:end -->

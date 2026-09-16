@@ -118,11 +118,21 @@ z = [1.0, 0.0, 0.2, 0.8]    shape [4]
 
 不同 heads 接收同一批 token、服务同一个最终 loss，但各自拥有不同投影参数，并通过不同 score matrix、concat 位置与 `W_O` 路径接收梯度。随机初始化和训练过程会打破完全对称，使它们可能形成互补路由；这不是“每个 head 被分配一个领域”的监督，也不保证最终彼此独立。即使初始化时令投影近似正交，联合优化也可以再次把它们推向相关子空间。
 
+即使进一步约束各 head 的 score 或输出方向近似正交，也不能推出它们的训练动力学彼此独立。各 head 仍读取同一 token trajectory，并在共享 residual stream 与最终 loss 中相遇；球面归一化下的径向投影还会把一个 head 的更新影子带入另一个 head 的能量变化。因而，总体能量存在下降方向，不代表每个 head 的局部能量或聚类过程都单调。只有在额外的 Radial Dominance 等充分条件成立时，才能把更强的逐 head 单调性当作理论结论，而不能把它写成真实 Transformer 的普遍事实。<!-- semantic-body-binding:SF-2026-ARXIV-2605-04279 -->
+
+这条边界没有否定 head 正交化：它仍可作为减少表示重叠的 inductive bias。代价是新增约束与优化耦合，且“几何上更分离”仍需任务行为、因果干预和可执行 kernel 分别验收。相关理论主要依赖 sphere-normalized、score symmetry、scalar 或 equiangular 等受限设定，不证明 heads 已获得独立人类功能；条件不成立时，应回到联合系统的 loss、residual state 与端到端行为，而不是据单 head 能量作提交判断。
+
 因此，多头结构提供的是**可分化的表达路径**，不是 `H` 份必然有效的独立能力。已有剪枝研究表明，特定训练模型和任务中的一些 heads 可在较小质量变化下移除；这能证明冗余可能存在，却不能推出所有层、所有输入都有同一组“无效 heads”，也不能把 post-hoc 分析直接等同于生产加速。真正跳过 head 需要训练期 pruning、gating 或稀疏执行 contract，并让 checkpoint、kernel 与评估共同支持。
 
 另一个层次的冗余发生在同一 head 的参数坐标内部，而不是多个 heads 做了相同工作。以下 `W_Q/W_K/W_V` 均指该 head 对应的投影块，而非前文全部 heads 合并后的大矩阵。暂不加入位置旋转和 bias，沿本章行向量记法，任取可逆的 `d_h × d_h` 矩阵 `S`，令 `W_Q' = W_Q S`、`W_K' = W_K S^{-T}`，则 `W_Q' W_K'^T = W_Q S S^{-1} W_K^T = W_Q W_K^T`，所以全部输入的 score 与 attention weights 不变。Value 与该 head 对应的输出块 `W_O^(h) [d_h,d_model]` 也有类似换基：`W_V' = W_V R`、`W_O^(h)' = R^{-1} W_O^(h)`。参数可以不同，执行的函数却相同；这叫参数化的不唯一性，不能据单个坐标大小给特征赋予唯一语义。
 
 这种换基不会自动减少 heads、矩阵 shape 或 FLOPs，也不保证优化器按相同轨迹训练。GQA 共享 K/V 后，组内换基必须共同兼容共享参数；RoPE 又要求变换保留位置旋转结构，不能套用任意可逆矩阵。因此，可辨识程度、head 功能冗余与可兑现的推理加速是三个不同问题：前者要固定参数等价关系，后两者仍须任务因果验证与 checkpoint/kernel 合同。第16章的非线性 FFN 也不能照搬这里两个线性因子的任意换基。[受限证据：QK/OV 因子化与共享结构约束，arXiv:2609.01231v1 §4](https://arxiv.org/html/2609.01231v1)
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21770:start -->
+固定 activation steering 对所有生成步骤施加同一方向，在错误模式稳定时实现简单；若错误表现为特定 attention head 沿轨迹偏离低维 correctness manifold，这种全程干预会同时扰动原本正确的步骤。一个条件分支把 head-to-manifold distance 当作 trajectory sensor，只在越过校准阈值时把状态投影回已学子空间。距离只拥有 intervention proposal，端到端 verifier 才拥有正确性判定。
+
+该分支需要白盒 activation、对比轨迹、子空间和阈值校准，并增加逐步监测开销；过强投影会损坏正确轨迹。exact-v1 的受测模型、任务和 head 不能证明 correctness manifold 跨模型稳定，也不能把 proximity 当作 correctness certificate。head/任务漂移、阈值失校或 utility regression 超界时，应关闭投影，回退无 steering、较弱静态 steering 或外部 verifier-guided retry。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21770:end -->
 
 ## 为什么 head 数不是越多越好
 
@@ -274,9 +284,19 @@ Multi-Head Attention 让多个投影子空间并行构造上下文路由，再�
 
 MQA 和 GQA 进一步把 Query head 数与 KV head 数解耦，用共享 K/V 换取更低 KV Cache 和 memory bandwidth。这条模型架构选择会在第19章变成具体推理容量。
 
+### 同一 Attention 权重可以暴露多条 KV 路径，但前提必须在训练时成立
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-15250:start -->
+普通 MHA、GQA 与 MQA checkpoint 的投影形状不同，runtime 不能在部署时把它们当成可无损互换的 cache policy。GQLA 的条件分支是在模型设计与训练阶段建立共享权重，使同一 checkpoint 同时支持 MQA-absorb 的 compact-cache 路径和 per-group GQA 的 expanded-cache 路径；runtime 再依据 hardware roofline、Tensor Parallel 布局与当前 memory/compute 压力选择已验收的执行视图。模型权重拥有语义，runtime 只拥有路径选择，不能现场发明新的 attention factorization。
+
+多路径身份必须绑定 checkpoint、group/repetition factor、projection transformation、precision、TP layout 与路径校验结果。compact path 节省 KV 却可能增加 compute，expanded path 反之；训练/转换成本和双路径回归也随之增加。exact-v1 只支持 §3 的 GQLA/TransGQLA 与 §4–5 所测模型和硬件，不证明任意既有 checkpoint 可无损改写。roofline 未校准、路径数值不一致或实现只支持一种布局时，应回退冻结的 MHA/GQA/MQA 单一路径。<!-- source-family:SF-2026-ARXIV-2605-15250 -->
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-15250:end -->
+
 ## Review notes
 
 本章只扩展多头结构，不重复第14章 softmax 小例子，也不提前展开第19章完整 KV Cache 容量。后续 Review 应继续区分 Query head 与 KV head，并以 checkpoint config 核验 `H`、`H_kv` 和 `d_h`。
+
+- `SF-2026-ARXIV-2605-04279`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2605.04279v1) 支持在论文假设下区分总能量梯度流、per-head monotonicity 与 radial-shadow coupling；Radial Dominance 是充分条件。证据不支持把受限动力学外推为任意真实 Transformer 的 head 独立性、功能分工或训练保证。
 
 Primary-source 校验入口：
 

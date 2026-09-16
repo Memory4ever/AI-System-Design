@@ -198,6 +198,12 @@ policy-owned semantic action
 Harness-1 的作者实验支持固定模型会因 interface 改变而改变可用能力，但 component ablation 未重训、verifier/
 compression 也会错，因此不能把 harness gain 归因成模型能力提升。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07134:start -->
+Web Agent 若把完整 DOM/AXTree 平铺进 Context，短页面上最透明；页面变长后，逐元素截断会切断导航、表单、内容区等功能关系，使 token 仍在却失去可操作结构。一个有界分支先按功能区域组织可交互元素，再增量维护 PageDigest：policy 根据当前目标请求区域，renderer 生成下一轮 view，原始 AXTree/DOM 继续作为可回读 authority，而摘要不能自行发明控件状态。
+
+这减少无关元素占用，却新增 region segmentation、digest freshness、跨页 identity 与隐藏元素遗漏。作者证据只支持其网页任务、浏览器表示和 evaluator，不证明功能区域在所有站点稳定。页面短、结构异常、无障碍树缺失或关键控件无法定位时，应回退 `view_all`、完整重新观察或直接读取原始树；任何外部副作用仍需 Tool/Workflow 层单独批准。<!-- source-family:SF-2026-ARXIV-2605-07134 -->
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07134:end -->
+
 ## Context Compression 的损失
 
 Summary、extractive compression 和 structured state 都可减少 token。压缩函数可写为：
@@ -252,6 +258,14 @@ retrieval 未命中，都应作为 correctness failure，而不是普通 relevan
 type-specific compact / decompose / retrieve 改善 retention。该证据说明“不同 correctness contract 需要不同
 retention policy”，不证明论文报告的具体 recall 能跨模型、语言与企业 policy 复现；因此正文吸收机制，不把
 其数字当作生产 SLO。
+
+### 原文是事实状态，摘要只是可替换的派生视图
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-04050:start -->
+只保留滚动摘要，在短会话和低风险辅助任务里最省存储；但摘要一旦覆盖原文，后续问题改变时已经无法恢复被压掉的证据。更稳健的 Context runtime 将每条 message、tool result 与文件引用先写入不可变 history，把层级 summary DAG 视为带 source pointer 的 materialized view：active Context 只装近期原文和摘要，需要审计或命中不确定时再沿稳定 ID 回读原始状态。Compaction engine 拥有阈值、版本与原子替换，模型只能请求检索或分解任务，不能宣称摘要等于原文。
+
+这条路径以额外持久化、索引、summary lineage、回读 I/O 和重新 prefill 换取可恢复性；“所有原文可取回”也不证明模型一定会找对证据。短任务、原文可以完整驻留或存储受限时，直接 transcript 仍更简单。`arXiv:2605.04050v1` 的 §2–§3 只支持作者的 immutable store、summary DAG、三级压缩回退和 operator-level recursion；§4 的 OOLONG/Opus 4.6/Claude Code 对比不证明任意 Agent、任务或生产 SLO 更优，§5 还承认污染与基准边界。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-04050:end -->
 
 ### Compaction 从 Blocking Rewrite 演进为带 Commit 的后台状态转换
 
@@ -375,6 +389,27 @@ Context evaluation 应分解：
 
 只评最终答案会无法区分 retrieval miss、bad ranking、compression loss 与 model misuse。
 
+### Repository Retrieval 必须把 Gold Recall、可用 Span 与 No-Gold Abstention 分开
+
+在代码仓库中，命中将被修改的文件不等于提供了足以完成修改的 Context。调用关系可能把必要证据放在 ripple
+files 中；反过来，有些任务本就不需要额外仓库证据，强行检索只会增加干扰。因而 retrieval contract 至少要
+分离：候选文件召回、token budget 内的有效 span、下游 edit/test outcome，以及 no-gold 场景中的选择性拒绝：
+
+```text
+task + repository revision
+→ candidate files and ripple relations
+→ ranked spans under token budget
+→ sufficiency / abstention decision
+→ edit and test evidence
+```
+
+这比单一 file-recall 分数更能定位失败，却增加 gold lineage、dependency 标注和 counterfactual evaluation 成本；
+文件级 credit 也不能证明模型实际读到了正确 span。小仓库或完整 working set 可低成本常驻时，直接装载仍合理；
+检索候选池不含 required API、仓库 revision 不匹配或 sufficiency 不确定时，应补检、扩大范围或拒绝行动，不能让
+ranking confidence 冒充事实充分性。
+
+<!-- source-family:SF-2026-ARXIV-2607-24882; daily-trace:papers/2026/07/29/README.md -->
+
 ### 条件化机制分支与共存边界
 
 主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
@@ -393,11 +428,11 @@ Scratchpad 不能仅按可见文本保存；因果干预结果应把其中哪些
 
 ### Context 不只选择内容，也选择何时承诺
 
-内部推理状态可以继续修订，公开输出却会立即改变用户、工具和后续 Agent 的行动，因此“想到了什么”和“何时说出来”是两个不同的控制问题。简单做法是每一步都暴露，适合低风险协作，却会把未经验证的中间状态变成不可逆承诺；更强的路径是在 private state 与 public commitment 之间设置 disclosure policy 和 entailment gate，只在证据、任务阶段和风险预算允许时发布。代价是可见性控制器本身也可能过度保守或错过必要升级，所以高风险场景仍需确定性规则拥有最终发布权。
+内部推理状态可以继续修订，公开输出却会立即改变用户、工具和后续 Agent 的行动，因此“想到了什么”和“何时说出来”是两个不同的控制问题。简单做法是每一步都暴露，适合低风险协作，却会把未经验证的中间状态变成不可逆承诺；一种训练侧分支是在构造监督轨迹时，用 entailment checker 过滤与私有推理不一致的公开 disclosure，再学习何时披露。现有证据只支持这种离线数据构造与策略学习，不证明部署时存在逐次执行的 entailment gate。生产系统若要在 private state 与 public commitment 之间增加运行时检查，那是由风险与可逆性推导出的工程选择，仍需独立实现和评价；高风险场景应由确定性规则拥有最终发布权。
 
 <!-- source-family:SF-2026-ARXIV-2605-03314 -->
 
-同理，更多相关 Context 并不保证更好。外部知识在任务早期可能扩大探索，在约束已经收敛后却可能引入锚定、冲突和搜索分叉；Context admission 因而应评估边际决策价值、干扰风险与撤销成本，而不是按相似度无限追加。无法可靠估计 crossover point 时，旧的最小上下文、分阶段加载与可恢复引用仍是更稳健的默认。[受限证据：arXiv:2605.03314v1、2605.04361v1]
+同理，更多相关 Context 并不保证更好。外部知识在任务早期可能扩大探索，在约束已经收敛后却可能引入锚定、冲突和搜索分叉；Context admission 因而应评估边际决策价值、干扰风险与撤销成本，而不是按相似度无限追加。无法可靠估计 crossover point 时，旧的最小上下文、分阶段加载与可恢复引用仍是更稳健的默认。[受限证据：arXiv:2605.04361v1]
 
 <!-- source-family:SF-2026-ARXIV-2605-04361 -->
 
@@ -415,6 +450,10 @@ context assembly 可以为了预算裁剪历史、检索结果和示例，但 ac
 
 收益是把 token 花在决策缺口上；代价是 state estimator 可能错误地认为“已经知道”。每轮 acquisition 仍需记录遗漏风险和停止原因，低风险短文档则保留一次性加载。无法校准未知状态时，扩大检索或转人工比自信停止更安全。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07042:start -->
+Context gathering 不应只把搜索历史压成摘要。Agent 要持有 predicate-based belief state，显式记录已满足条件、未解问题、证据来源和下一观察；programmatic exhaustion gate 只能根据重复查询、无新 predicate closure 与预算判断“继续搜索的边际价值耗尽”，不能把它升级为答案正确。这个状态减少重复搜索和 Context 膨胀，却依赖 extractor/schema 完整性；开放域或高风险中应扩大检索、保留 hard cap，并将 unresolved predicates 交给 verifier 或人工。`arXiv:2605.07042v1` 只支持作者框架和所测任务中的受限机制，exhaustion 不构成开放世界完备性证明。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07042:end -->
+
 <!-- source-family:SF-SCOUT-ACTIVE-INFORMATION-FORAGING-FOR-LONG-TEXT-UNDERSTANDING-WITH-DECOU -->
 
 ## Context Compression 必须保留执行状态，而不只是语义
@@ -424,6 +463,35 @@ context assembly 可以为了预算裁剪历史、检索结果和示例，但 ac
 长期有效的约束还应从自由文本摘要中分离成 versioned state，记录 scope、expiry、来源与当前执行 frontier。side channel 增加 schema 和迁移成本，但避免多轮 compaction 把强约束降成背景事实。低风险问答仍可使用普通摘要，外部 effect 越大，越需要 paired-state regression。
 
 <!-- source-family: arxiv:2608.06503v1; daily-trace: papers/2026/08/10/README.md; semantic-body-binding: context-compression-paired-state-regression -->
+
+### 持久 Instruction 更新应先修改 Typed State，再重建文本 View
+
+直接编辑长 prompt 最接近人类写作，却容易在局部修改时破坏相邻约束、引用或优先级。更稳健的分支把持久 instruction 表示为 typed dependency graph：模型只提出 scoped patch，validator 检查目标节点、依赖与不变量，commit 后再生成带版本的文本 checkpoint。图是 authority state，文本是派生 view；无法无损解析的自由文本仍保留人工编辑路径。
+
+### Compaction 不能把 Partial Observation 提升为已确认事实
+
+进程被 kill、tool 超时或输出截断时，已有文本可能非常像成功结果。Compactor 若只做语义摘要，会把 partial observation 持久化成完成事实并在后续轮次放大。Context item 必须携带 process exit、observation status、source/effect receipt 与 evidence level；只有满足 commit contract 的结果才能进入 confirmed state，其他内容保留为 pending/failed observation。
+
+Typed state 与 status metadata 提高一致性，却增加 schema 演进、validator 和重建成本。短、无持久约束的会话仍可直接拼接；关键 workflow 则宁可保留 unknown，也不能让流畅摘要改变证据等级。
+
+<!-- source-family:SF-2026-ARXIV-2607-09175 -->
+<!-- source-family:SF-2026-ARXIV-2607-13071 -->
+
+### Context Mutation 是 Agent Proposal，State Owner 负责校验与提交
+
+让 Agent 自主选择、压缩、恢复 Context，可以适应任务阶段并控制 token；但 context 是执行状态，模型不应直接覆盖它。每次 mutation 应声明保留目标、删除范围、source handles、预算和预期收益，由 state owner 检查 pinned constraints、provenance、tool/workflow revision 与可恢复性后原子提交。
+
+动态管理用更多 control calls 和 metadata 换适应性，也可能因错误摘要或自我强化删除关键证据。简单短任务仍适合固定窗口；验证失败、收益不明或原文不可恢复时，应拒绝 mutation 或回退最近 checkpoint。
+
+<!-- source-family:SF-2026-ARXIV-2607-23809 -->
+
+### Context Optimization 可以主动取证，但不能自行改变事实权威
+
+把 Context 当作可优化状态，最初可以只在已有材料中改写、筛选和重排；当任务需要新近或小众知识时，这条封闭路径的上限由输入材料决定。更强的分支允许 optimizer 主动调用搜索与浏览工具，把“缺什么信息”转成受预算约束的 acquisition plan，再由 Context owner 验证来源、去重并提交新版本。模型生成的是候选 Context，不是事实本身，也不能借优化目标绕过 provenance 与授权。
+
+主动取证能补齐静态 prompt 无法包含的知识，却引入错误查询、来源污染、工具成本和对开发集的过拟合；直接给顺序优化器增加工具在受限实验中甚至可能变差。低资源、来源稳定或无法可靠验收搜索结果时，应保留被动 Context、人工材料或固定 RAG。现有证据只支持 exact-v1 的任务、工具和模型设置，不证明跨模型迁移等于事实正确，也不证明参数更新可以被 Context 更新普遍替代。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-13050 -->
 
 ## 本章在知识树中的位置
 
@@ -470,6 +538,22 @@ Context 从 token 拼接演进为带类型和生命周期的运行时 state：ta
 
 Context 是受约束的运行时 working set，不是无限知识仓库。好的 assembly 在相关性、权威性、位置、成本和隐私之间做可追溯取舍。下一章进入 RAG 的检索链。
 
+### Budgeted Trace State 需要保留可恢复引用
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22879:start -->
+只保留最近消息或一份自由文本摘要，在短会话中简单有效；长轨迹中，graph、append-only history、reference registry 与 summary+suffix compaction 应共同定义 context identity。压缩器只产生候选视图，原始引用和已提交动作仍由 lossless trace archive 保存。
+
+这种结构能在 token budget 内恢复较长执行链，却增加引用失效、图状态漂移和压缩器误删关键约束的风险。exact-v1 只支持作者的数据结构与评测，不证明任意 Agent 都能无损压缩；引用解析失败、关键 invariant 丢失或重放不一致时，应回退原始 trace archive。arXiv:2605.22879v1
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22879:end -->
+
+### Recursive Intent Memory 只提交有界意图状态
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23668:start -->
+完整重放所有对话能保留细节，却让成本随历史增长；一个受限分支把每轮状态压成有界 intent memory，并把“预测下一意图”和“压缩既有意图”作为不同训练责任。Intent state 只拥有下一步 proposal，不能静默改写原始事实、权限或用户明确约束。
+
+更小状态改善长程交互成本，却可能丢失细节、错误主动化或把暂时偏好固化。作者实验只支持披露任务和训练流程；意图不确定、压缩回归或主动行为风险升高时，应回退 full/recent context，并采用静默或显式确认策略。arXiv:2605.23668v1
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23668:end -->
+
 ## Review notes
 
 - `SF-2026-ARXIV-2606-22528` — primary `arXiv:2606.22528v1`；Method=`arXiv:2606.22528v1 §3 Compaction-Eviction Attack; §4 Constraint Pinning`；Evaluation=`arXiv:2606.22528v1 §5 Results and Robustness`；Non-proof=`arXiv:2606.22528v1 §6 Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
@@ -510,17 +594,6 @@ Review note：`SF-2026-ARXIV-2606-29522`；Method `https://arxiv.org/html/2606.2
 
 ### Source-family integration record
 
-<!-- recovered-daily-20260623:AGENT-CONTEXT:start -->
-### 2026-06-23 evidence integration — AGENT-CONTEXT
-
-相邻章 `books/part-07-agent/76-rag.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-22906**：From Fragments to Paths: Task-Level Context Recovery for Large Industrial Codebases 的 exact-v1 机制为：We present DeepDiscovery, a task-level repository-understanding method for large industrial codebases. 因此 把 context 恢复、压缩、加载与有效期作为持久化状态而不是 prompt 偶然内容。 该 family 的 failure pressure 是：Existing methods often retrieve only local fragments and fail to recover the broader task-relevant context needed for complex repository-level tasks. 披露的 evaluation signal 是：Large language models have shown strong performance on software engineering (SE) tasks, yet understanding large industrial repositories remains challenging. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-22953**：Plans Don't Persist: Why Context Management Is Load Bearing for LLM Agents 的 exact-v1 机制为：We introduce replay pairing, a diagnostic that runs the same trajectory with and without the plan in history and measures hidden-state cosine distance. 因此 把 context 恢复、压缩、加载与有效期作为持久化状态而不是 prompt 偶然内容。 该 family 的 failure pressure 是：Finally, a compression stress test shows the practical cost: naive plan eviction cuts ALFWorld success by 34.7pp, while probe-gated re-surfacing does not recover it. 披露的 evaluation signal 是：Finally, a compression stress test shows the practical cost: naive plan eviction cuts ALFWorld success by 34.7pp, while probe-gated re-surfacing does not recover it. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-<!-- recovered-daily-20260623:AGENT-CONTEXT:end -->
 
 <!-- june29-owner:AGENT-CONTEXT:start -->
 ### 2026-06-29 约束变化与机制增量

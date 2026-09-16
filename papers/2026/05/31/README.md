@@ -1,138 +1,67 @@
 # Daily Research — 2026-05-31
 
-**Research Date:** 2026-05-31
+**规范：** V3
 
-**Timezone:** Asia/Shanghai
+**窗口：** 2026-05-30T09:00:00+08:00 ～ 2026-05-31T09:00:00+08:00
 
-**Strict Window:** 2026-05-30 09:00:00 ～ 2026-05-31 09:00:00（北京时间，左闭右开）
+**状态：** 完成
 
-**Contract:** V2.1 Historical Daily Independent Full Replay
+**Books：** 纳入本次
 
-**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed；initial-created owner replay 与 exact-v1 Evidence Review 已完成。
+**检查时间：** 2026-09-16T17:30:00+08:00
 
-## Executive Summary
+> 本页按当前合同重建，并已由未参与作者修复的 fresh non-author reviewer 完成独立终审。
 
-本次独立重放枚举并逐项闭合 0 个注册 arXiv identity，冻结 0 个 Source Family；pre-denominator closure=0，withdrawn pre-denominator=0。0 个旧候选被迁回正确 owner day，0 个漏检 family 已恢复 exact-v1 全文并完成 Source Review。
+## 1. 结论
 
-DataCite `created` 仅作为 initial DOI registration 的 owner-day proxy；`updated`、v1 Updated 与 current OAI datestamp 只记录 revision provenance，不决定 first-public owner。机制结论只绑定 exact-v1 正文。 本日所有 Books disposition 已有终态。
+本窗确认 0 个 raw identity：0 = 0 retained + 0 pre-denominator closure + 0 withdrawn。官方 arXiv schedule 表明周末没有公告批次；13 个机构来源的窗口切片没有保留材料。Evidence、评分、Books comparison 与 root queue 均为空，作者未修改共享 Books。Meta 历史分页与 MiMo 部分未标日期卡片的限制保持显式，但当前可用原始入口已经穷尽，不把不可恢复的历史列表当作候选或无遗漏证明。
 
-## 1. Coverage
+## 2. 来源覆盖
 
-<!-- validator:report-metadata-v2 -->
-| Field | Value |
-| --- | --- |
-| Contract Version | V2.1 |
-| Score Schema | V2 |
-| Report Type | Daily |
-| Window Start | 2026-05-31 |
-| Window End | 2026-05-31 |
-| Registry Version | 2026-08-25 |
-| Coverage Mode | Full Replay |
-| Baseline Report | — |
-| Changed Source IDs | — |
-| Previous Denominator ID | — |
-| Denominator ID | DEN-20260531-CREATED-e3b0c44298fc1c14 |
-| Denominator Frozen At | 2026-09-03T12:36:05+08:00 |
-| Completion Status | Complete |
-| Coverage Gate | Closed |
-| Evidence Gate | Passed |
-| Books Gate | Passed |
+| 来源 | 检查范围与依据 | 结果 | 缺口 |
+| --- | --- | --- | --- |
+| SRC-OPENAI | 官方 Research 索引/RSS 的窗口内 dated entries | 已检查 | 无窗口内可确认事件 |
+| SRC-ANTHROPIC | 官方 Research 索引的窗口内 dated entries | 已检查 | 无窗口内可确认事件 |
+| SRC-GOOGLE-AI | DeepMind/Google Research 官方 publication 索引 | 已检查 | 无窗口内可确认事件 |
+| SRC-META-AI | 官方 Research/Publications 入口的窗口切片 | 受阻 | 稳定的历史日级分页不可重放，不支持全量无遗漏断言 |
+| SRC-QWEN | 官方文章索引与正文语义切片 | 已检查 | 窗口附近产品/使用指南不满足长期机制贡献门槛 |
+| SRC-DEEPSEEK | 官方 Research/News 窗口切片 | 已检查 | 无窗口内可确认事件 |
+| SRC-MOONSHOT | 官方 Kimi Platform Blog 与组织发布切片 | 已检查 | 无窗口内可确认事件 |
+| SRC-TENCENT-HUNYUAN | 官方 Research“全部”列表及原始链接 | 已检查 | 无窗口内可确认事件 |
+| SRC-ZAI | 官方 Research、release 与仓库发布切片 | 已检查 | 无窗口内可确认事件 |
+| SRC-BYTEDANCE-SEED | 官方 Research 页嵌入 ArticleMeta 与完整摘要 | 已检查 | TaskMem 官方时间已归 05-29；本窗未发现其他可确认事件 |
+| SRC-BAIDU-ERNIE | 官方技术博客与仓库发布切片 | 已检查 | 无窗口内可确认事件 |
+| SRC-XIAOMI-MIMO | 官方论文/博客卡片与仓库发布切片 | 受阻 | 部分卡片缺少日级时间，不支持全量无遗漏断言 |
+| SRC-MINIMAX | 官方中英文 Blog、Research 与 Agent Tech Blog | 已检查 | 无窗口内可确认事件 |
+| SRC-ARXIV | 官方 announcement cadence 与可重放 membership | 已检查 | 官方 schedule 证明该周末窗口没有公告批次 |
 
-### Source Coverage Receipt
+结构化依据见 [`source-coverage-v3.json`](../_sources/daily-20260531/source-coverage-v3.json) 与 [`screening-outcomes-v3.json`](../_sources/daily-20260531/screening-outcomes-v3.json)。
 
-<!-- validator:source-coverage-v2 -->
-| Source ID | Window Start | Window End | Executed At | Endpoint / Filter | Result | Hits | Candidate Source Families | Pagination / Cursor | Window Watermark | Closure Evidence | Gap / Limitation ID |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SRC-ARXIV | 2026-05-30T09:00:00+08:00 | 2026-05-31T09:00:00+08:00 | 2026-09-03T12:36:05+08:00 | DataCite prefix 10.48550 initial created-day inventory + registered arXiv categories + exact-v1 identity/body | no_hit | 0 | — | created-day pages=closed; OAI category sets=closed; direct same-day OAI=0 | 2026-05-31T09:00:00+08:00 | coverage:SRC-ARXIV:20260531 | — |
+## 3. 候选与判断
 
-<!-- coverage:SRC-ARXIV:20260531:start -->全量 raw inventory=0；每个 identity 均具有 retained、family-specific closure 或 withdrawn terminal closure。候选 owner 由 initial DataCite created、arXiv ID month、v1 history 与 announcement cadence 共同约束；冲突不由 updated 字段覆盖。<!-- coverage:SRC-ARXIV:20260531:end -->
+| 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
+| --- | --- | --- | --- | --- |
 
-### Coverage Limitations
 
-- arXiv 月度 listing 只证明月份收录；逐日 owner 使用 initial DOI `created` 日历日 proxy，并以 exact-v1 history 与官方发布节奏约束。
-- DOI ingestion timestamp 不是精确的 09:00 publication instant；本日报不把 `updated` 或 current OAI datestamp 当作 first-public。
+无候选。
 
-### Materials Request Ledger
+## 4. 证据与知识整合
 
-<!-- validator:materials-request-v1 -->
-| Request ID | Priority | Source Family ID | Source ID | Gap / Limitation ID | Owner Week | Known Identifiers / URLs | Missing Material | Why Existing Evidence Is Insufficient | Acceptable Substitute | Suggested File Name | Required Review Scope |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-None — 没有 exact-version primary-material blocker。
+没有通过贡献筛选的唯一材料家族，因此没有合法的 Evidence Review、评分或 Books 改动。TaskMem 的官方时间为 `2026-05-29T00:00:00+08:00`，只归 05-29；arXiv 链接及其之后的提交/公告元数据不把同一家族移动到本日。
 
-## 2. Candidate Ledger
+结构化 Evidence、Books 比较与共享写入队列分别见 [`evidence-review-v3.json`](../_sources/daily-20260531/evidence-review-v3.json)、[`books-comparison-v3.json`](../_sources/daily-20260531/books-comparison-v3.json) 和 [`root-books-writeback-queue-v3.json`](../_sources/daily-20260531/root-books-writeback-queue-v3.json)。
 
-<!-- validator:candidate-ledger-v2.1 -->
-| Source Family ID | Primary Identifier | Event Identity | Owner Week | First-public Date | Supporting Source IDs | Design Delta | System Reach | Durability | Total | Candidate State | Review Status | Access Status | Review Override | Review Ref | Owner Report Ref | Prior Review Ref | Reconciliation | Stable Node ID | Books Disposition | Books Review Ref | Benchmark Claim |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+## 5. 缺口与下一步
 
-冻结候选分母为 0；raw identities 均已在 owner receipt 中以具体理由闭合。
+- 没有候选级材料请求。Meta/MiMo 的历史入口局限已写入来源覆盖；除非出现具体窗口事件或官方历史索引，否则不重扫。
+终态保留项：Meta/MiMo 的历史入口局限不用于正面证据、Books 或无遗漏断言。定点重开条件：出现能够唯一归入本窗的具体官方事件，或取得可重放的官方历史索引；触发后只重开对应来源切片。
 
-## 3. Review Completion Receipt
+## 6. 复核
 
-<!-- validator:review-completion-v1 -->
-| Source Family ID | Review Provenance ID | Review Route | Primary Evidence Version | Reviewed Evidence Versions | Method / Identity Locators | Evaluation Locators | Limitations / Counterevidence Locators | Artifact Locators | Claim Boundary Ref | Completion Result |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+复核者：`fresh-nonauthor:may29-31-final-20260916`（未参与 05-31 author rebuild）
 
-### Source Reviews
+结论：通过
 
-None — denominator 为空，没有把 pre-denominator closure 冒充 Source Review。
-
-## 4. Benchmark Contracts
-
-<!-- validator:benchmark-contract-v1 -->
-| Source Family ID | Workload | Model | Hardware | Precision | Input Length | Output Length | Batch | Concurrency | SLO | Evaluator |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-
-## 5. Deep Analysis Selection
-
-<!-- validator:deep-analysis-selection-v1 -->
-| Source Family ID | Eligibility | Decision | Analysis Unit ID | Subsumed By | Priority Rationale | Narrative Ref |
-| --- | --- | --- | --- | --- | --- | --- |
-
-## 6. Books Comparison
-
-<!-- validator:books-comparison-v1 -->
-| Source Family ID | Stable Node ID | Target Chapter Ref | Adjacent Chapter Refs | Existing Proposition | New Evidence Delta | Evolution Relation | Decision | Books Review Ref |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-
-## 7. Semantic Audit
-
-<!-- validator:semantic-audit-v1 -->
-| Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| SA-20260531-COVERAGE | fresh-context:owner-replay-20260903 | coverage | coverage:SRC-ARXIV:20260531 | none | raw/retained/closure/withdrawn conservation and initial-created owner mapping independently recounted | passed |
-| SA-20260531-EVIDENCE | fresh-context:owner-replay-20260903 | evidence | validator:review-completion-v1 | none | every frozen family has a completed exact-version receipt; blocked=0 | passed |
-| SA-20260531-SELECTION | fresh-context:owner-replay-20260903 | deep_analysis_selection | validator:deep-analysis-selection-v1 | none | eligible=0；selected=0；all others retain completed reviews | passed |
-| SA-20260531-BOOKS | fresh-context:apr-may-books-20260903 | books | validator:books-comparison-v1 | none | — | passed |
-
-## 8. Ignored Noise
-
-- Pre-denominator closures=0；逐 family 理由保存在 owner receipt。
-- Withdrawn=0；只保留审计 closure，不进入候选、评分、Review 或 Books。
-- `updated` / current OAI datestamp 的 revision 噪声不拥有 Daily。
-
-## 9. Recommended Action
-
-本日全部 Gate 已闭合，无进一步动作。
-
-## 10. Repository Changes
-
-- Owner receipt（本阶段只读）：`papers/2026/05/_sources/arxiv-owner-replay-20260903/20260531/arxiv-owner-receipt.json`
-- Canonical ledger（Books terminal state）：`papers/2026/05/_sources/arxiv-owner-replay-20260903/20260531/canonical-ledger.json`
-- Books queue（fresh-context decision）：`papers/2026/05/_sources/arxiv-owner-replay-20260903/BOOKS_WRITEBACK_QUEUE.json`
-- Superseded report：`papers/2026/05/_sources/arxiv-owner-replay-20260903/legacy-reports-before-created-owner-reconciliation/2026-05-31.md`
-- Books body: no change for the recovered families on this date.
-
-## 11. Open Questions
-
-- 无。
-
-## 12. Sources
-
-- [DataCite REST API](https://api.datacite.org/dois) — initial `created` owner-day proxy；`updated` 只作 revision provenance。
-- [arXiv OAI](https://export.arxiv.org/oai2) — identity/date corroboration；current datestamp 不拥有 first-public day。
-- [arXiv](https://arxiv.org/) — exact-v1 abstract、HTML/PDF 与 version history。
-
-## 13. Final Status
-
-Completion Status: Complete; Coverage: Closed; Evidence: Passed; Books: Passed; unresolved findings=0
+窗口、周末 arXiv cadence、零分母守恒、机构来源边界、TaskMem 跨日去重、空 Evidence/Books/queue 与终态保留项均独立核对；详见 [`FRESH_NONAUTHOR_V3_FINAL_REVIEW_20260916.md`](../_sources/daily-20260531/FRESH_NONAUTHOR_V3_FINAL_REVIEW_20260916.md)。
+- **作者检查：** 窗口、14 个每日来源、题摘准入、withdrawn 边界、Source Family 去重、V2 三维评分、Evidence、Books comparison 与 root queue 均已核对；共享 Books 未修改。
+- **机器检查：** JSON、集合算术、identity uniqueness、marker、validator 与 scoped diff-check 由本轮作者执行；机器通过不替代独立语义复核。

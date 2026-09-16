@@ -5,7 +5,7 @@
 **Legacy Chapter:** Ch11
 **Status:** Draft
 
-**Roadmap Intent:** 文本如何被切成 token，为什么 tokenizer 会影响知识表示、上下文长度和多语言能力。
+**Roadmap Intent:** 文本如何被切成 token，为什么 tokenizer 会影响知识表·示、上下文长度和多语言能力。
 
 ## 本章要回答的问题
 
@@ -105,6 +105,22 @@ Unigram  probabilistic candidates compete as segmentations
 
 具体模型采用哪种实现，需要根据其 tokenizer artifact 核验，不能从模型名称推断。
 
+### 从局部启发式到可审计的全局目标
+
+BPE 与 Unigram 的局部或迭代选择易实现、稳定且兼容成熟 checkpoint，因此仍是生产基线。但当团队要回答“这个 vocabulary 距离指定 compression objective 的最优值还有多远”时，只比较最终 token 数并不够：vocabulary 的优劣始终相对于一套确定的 inference procedure，而不是孤立的词表集合。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22705:start -->
+一种路线先生成与 vocabulary 无关的 split-tree artifact，再规定递归遍历时发出第一个命中 vocabulary 的节点，最后在这套固定 traversal 上用整数规划或近整数的线性松弛选择词表。这样 inference procedure、split-tree revision 与 vocabulary 共同组成 tokenizer identity；改变任一项都可能改变同一字符串的 token IDs，不能只把新词表热替换进旧 checkpoint。
+
+全局选择能减少局部 merge 的目标遗憾，却增加 count table、递归 decoder、LP/IP 求解与随 split-tree 数增长的训练成本；所测英语语料、词表和 1.5B 模型也不证明多语言或下游普遍更优。pre-token boundary、求解成本、行为回归或 checkpoint 兼容性失败时，应保留原 BPE/Unigram，只把全局解作为离线诊断。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22705:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22821:start -->
+另一条路线把 vocabulary 与 segmentation 写成离散优化问题，再用 convex relaxation 给出指定 corpus 和 objective 下的 lower bound。这个 bound 可以把“似乎已经很好”改写为可检查的 optimality gap，但 solver 只拥有优化证据，不能拥有 tokenizer 的发布决定：rounding 后的词表仍需通过 sample stability、bits-per-byte、多语言切片、下游质量和生命周期成本 Gate。
+
+接近松弛下界不等于语言建模、延迟、公平性或既有 checkpoint 的全局最优。求解与 rounding 增加成本和样本敏感性，intrinsic compression 改善也可能无法稳定转化为 downstream 收益；LP 过大、rounding 不稳或行为切片回归时，仍应保留 BPE/Unigram，把 lower bound 仅用于量化未解释的 compression headroom。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22821:end -->
+
 ## Byte fallback 为什么重要
 
 即使 subword 词表覆盖很广，Unicode 仍然是开放组合空间。Byte-level tokenization 或 byte fallback 为任意输入提供最终退路：无法由已有文本 token 表示时，转成底层 bytes。
@@ -118,6 +134,14 @@ Unicode text -> encoded bytes -> tokenizer symbols -> token ids
 ```
 
 字符数、byte 数和 token 数不是同一单位。API 计费、context limit 和 KV Cache 容量通常按 token，而不是用户界面里的字符数。
+
+### Byte 覆盖输入，不自动保证输出合法
+
+Byte-level 模型能为任意输入建立表示，却不意味着任意生成的 byte 序列都能还原为合法 UTF-8。Perplexity 衡量模型给目标序列分配概率的能力；decoder validity 则是一份独立的结构合同。面对稀有或训练中未见的字符，若只逐 byte 采样，局部高概率选择仍可能组合成非法 continuation。
+
+因此 tokenizer/runtime 应持有增量 decoder state，在采样时只放行当前 UTF-8 前缀仍可完成的 byte；模型 logits 只提出候选，不拥有编码协议的合法性。这个 gate 能避免把不可解码输出交给下游，但会限制采样、增加状态和实现复杂度；纯 ASCII workload、只生成已封闭 token，或上层协议已经执行等价强校验时，原来的无状态路径仍更简单。现有证据来自受限规模、多语言语料和结构有效性测试，不能把观测到的失效率外推到所有 tokenizer。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606.14122 -->
 
 ## Normalization 与可逆性
 
@@ -250,7 +274,35 @@ Tokenizer 接入不应只测试一句英文。至少需要验证：
 
 这并不意味着 byte-level model 总是更优。较大的语义单元仍可能改善局部建模效率；代价是词表参数、稀有单元、跨语言公平性和 fallback 行为都发生变化。系统验收因此要同时报告 bytes、tokens、平均及尾部压缩率，并把这些量交给训练与推理预算模型。旧的 token 计数在同一 tokenizer、同一 normalization 与同一版本内仍然成立；一旦跨 tokenizer 比较，就必须退回稳定的信息单位。
 
+跨 tokenizer 蒸馏还需要额外的概率接口。Teacher 的一个 token 往往对应 student 的多个 bytes，或者只在某个 byte 边界完成；若直接复制 logits，就把不同事件空间误当成同一标签。系统必须声明 probability mass 如何投影、何时提交一个 teacher token、未闭合 byte prefix 怎样处理，并把映射版本与 teacher/student tokenizer 一起保存。Byte 可以提供稳定的计量分母，却不让 token-level supervision 自动可复用；映射不可靠时，仍应回退 sequence-level distillation 或独立训练。
+
+<!-- source-family:SF-2026-ARXIV-2609-12303 -->
+
+### Dynamic Byte Patch 把分词边界变成 Runtime State
+
+纯 byte-level 表示消除了 OOV，也给跨 tokenizer 计量提供稳定分母；旧方案在短文本、严格 streaming 或实现简单性优先时仍然合理。但生成每个 byte 都走一次全局模型，会把计算步数推向输出字节数。一个有条件的演进是让 dynamic patcher 把可预测的连续 bytes 聚成 variable-length latent，由 global model 按 patch 前进，再让局部 decoder 用 block diffusion 或 self-speculation 并行提出 bytes。
+
+此时 patch 不再只是离线 tokenizer 选择，而是带 byte offset、algorithm/revision 与边界状态的 runtime artifact：tokenizer owner 决定 patch identity，生成范式拥有 provisional masked block，完整 causal verifier 独占提交。若要求 greedy 等价，verifier 必须重新编码候选并只接受到首个 mismatch；这不自动外推到 sampling distribution。更少 global steps 换来 patch drift、固定 block 浪费、额外 re-encode 与 cache invalidation，patch 校准失败或非 greedy 分布需要严格保持时，应回退普通 byte AR 或稳定 subword tokenizer。
+
+[受限证据](https://arxiv.org/html/2605.08044v1)覆盖作者的 architecture、dynamic patch、block generation 与 greedy verification 实验；正文未单列完整 limitations，且没有证明任意 sampling、硬 streaming 或生产 latency/SLO 下都获益。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-08044 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-09630:start -->
+大 patch 以更短的全局序列换吞吐，在局部规律稳定时简单有效；但若 patch 内的计算必须等到边界才发生，局部信息会形成 patch lag。一个中间分支是在 patch 内按 entropy 或其他可重放条件插入瞬态 scratchpad，让局部状态先聚合已见 bytes，再刷新后续预测所用的 patch context。这样 patch owner 仍决定边界和身份，scratchpad 只改变计算 cadence，不成为可跨请求持久化的 Memory。
+
+这条路径用额外 attention、KV、mask 规则与触发频率控制换取更及时的 patch 内计算；触发过密会吃掉长 patch 的吞吐收益，触发过疏则保留原有 lag。当前证据只支持作者的 byte-level architecture、训练设置和 evaluator，不证明在其他模型、硬件、长度或生产 SLO 下普遍获益。局部状态不稳定、实现缺少可靠 mask 或短 patch 已足够时，应回退较小固定 patch 或稳定 tokenizer。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-09630:end -->
+
 <!-- source-family:SF-COMPUTE-OPTIMAL-TOKENIZATION -->
+
+### Tokenizer 与 checkpoint 是联合行为接口
+
+相同底层字符串可以存在多种合法 token segmentation。若只验证 detokenized 文本一致，就会误以为模型输入语义未变；实际上 token boundary 会改变 embedding 序列、position、attention path 与生成概率。跨语言实验表明这种脆弱性并不均匀，因此英语上的 segmentation robustness 不能外推为 checkpoint 的普遍性质。
+
+模型发布、转换和 serving 验收应把 tokenizer revision、normalization、segmentation policy 与 checkpoint 绑定，并加入“同字符串、不同合法分词”的行为回归。多分词增强可能提高鲁棒性，但会增加训练分布宽度和成本，也未被证明对所有语言与任务都有效。生产中仍应优先固定 canonical tokenizer；只有兼容迁移或容错需求明确时，才承担非规范分词的训练与测试成本。
+
+<!-- source-family:SF-2026-ARXIV-2607-26831 -->
 
 ## 本章在知识树中的位置
 
@@ -301,6 +353,26 @@ BPE 只能在 pre-tokenizer 允许合并的边界内学习；如果字符、附�
 Tokenizer 在无限文本空间和有限模型词表之间建立可复现映射。Subword 方法在词级 OOV 与字符级长序列之间折中，byte fallback 提供开放输入覆盖，special tokens 则建立模型协议。
 
 这个选择会一路影响 embedding 参数、sequence length、Attention、KV Cache、成本和多语言公平性。Tokenizer 不是语言学答案，而是 AI System 的第一份模型接口契约。
+
+### Vocabulary Adaptation 是 Tokenizer 与 Checkpoint 的联合迁移
+
+替换或扩展 vocabulary 不能只更新分词规则，因为新增 token 的 embedding 与输出参数在旧 checkpoint 中没有身份。Token alignment lexicon 可以用语料或 hidden-state 表示建立 source/target token 对齐，先把旧参数映射为新 vocabulary 的初始化，再用有限 fine-tuning 恢复行为；迁移资产必须同时版本化两个 tokenizer、alignment matrix、初始化方法和训练语料。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13429 -->
+
+这是一种高效初始化而非 training-free transfer。目标词表明显缩小时会丢失旧参数承载的信息，长尾或领域 token 也受对齐语料覆盖限制；现有证据仍需约千步适配且只覆盖所测模型。对齐质量不足时，应回退更长的 continued pretraining、保留旧 vocabulary，或为关键 token 使用显式兼容映射。
+
+### Fertility 是 Language × Domain 的成本与可达性合同
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24718:start -->
+全局平均 tokens-per-character 适合快速比较 tokenizer，也保留了单一 vocabulary 的部署简单性；但多语言系统里，同一
+平均值会掩盖某些 language × domain 组合产生更长序列、更多注意力计算和更少有效 context。因而 fertility 应按
+语言与领域切片进入训练成本、服务预算和输入可达性合同，而不是只作为 tokenizer quality 的一个平均指标。
+
+扩 vocabulary 或 continued pretraining 可能降低高 fertility 语言的 tokenizer tax，却会改变 checkpoint compatibility、
+embedding/output head、artifact version 和序列分布。exact-v1 的 25 个欧洲语言与披露 domain/few-shot 实验只能支持
+这些切片中的成本差异，不证明 fertility 单独决定任务质量。迁移兼容、实际序列成本或 held-out quality 不通过时，
+应保留旧 tokenizer，并用语言路由、context budget 或独立模型路径缓解，而不是无条件重编码全部模型资产。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24718:end -->
+<!-- source-family:SF-2026-ARXIV-2605-24718 -->
 
 ## Review notes
 

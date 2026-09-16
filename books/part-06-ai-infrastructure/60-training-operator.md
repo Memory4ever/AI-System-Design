@@ -116,6 +116,12 @@ Trajectory 是这条状态机的关键中间资产。至少需要保留 prompt/s
 
 ## Operator 与训练并行的边界
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-26110:start -->
+Continual multimodal tuning 还需要区分 algorithm state 与平台 runtime。一个可复现的 plugin boundary 允许新 tuning strategy 通过注册接口接入，而 backbone、distributed runtime、job reconciliation 和 artifact commit 继续由平台拥有；run identity 至少绑定 plugin、backbone、pipeline revision 与数据阶段。Plugin 可以提出 handler 和算法状态，不能静默修改全局 runtime 或绕过 operator lifecycle。
+
+稳定接口和兼容矩阵增加维护成本，也限制算法任意改写底座；plugin 泄漏 backbone 假设、依赖未登记 hook 或污染全局状态，会破坏公平比较和恢复。不满足接口时应回退 pinned fork/reference implementation，并通过 full integration run 验证后再扩展 contract。研究代码中的可插拔性不等于生产 fault tolerance。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-26110:end -->
+
 第 36～41 章定义 TP、PP、DP/ZeRO、CP、EP 的 tensor/state/communication 机制。Operator 只负责把这些需求映射为 process topology、environment 和 resources。
 
 例如 `world_size = nodes × processes_per_node` 只是进程数量。它不自动证明：
@@ -165,6 +171,15 @@ TrainJob identity
 - admission 校验不可变安全与资源字段；
 - 对实验 runtime 设置独立 queue 和 blast radius；
 - 将 runtime version 写入 lineage。
+
+### Live Training Control 必须是可审计 Proposal，而不是直接改 Run
+
+长训练只允许启动时提交静态 spec，最容易复现；遇到数据异常、资源退化或目标漂移时却只能停机重启。交互式控制面可以提出调学习率、冻结阶段、迁移资源或恢复 checkpoint，但每个 proposal 都必须绑定 run revision、前置状态、影响范围、授权、dry-run 结果与 rollback point，再由确定性 controller 提交。
+
+同一结构适用于 Agent 发起的 Kubernetes remediation：Agent 负责诊断和候选动作，policy/SLO guard 负责 admission，operator 执行并用实际 workload state 验收。收益是缩短故障恢复，代价是控制面扩大、并发修改冲突和错误自动化；无法证明 effect 或 rollback 时仍应暂停并由人工处理。论文中的训练与集群实验只支持其受控场景，不证明通用自治运维安全。
+
+<!-- source-family:SF-2026-ARXIV-2607-18314 -->
+<!-- source-family:SF-2026-ARXIV-2607-19182 -->
 
 ## 本章在知识树中的位置
 

@@ -1,24 +1,367 @@
 # Daily Research — 2026-05-20
 
-**Research Date:** 2026-05-20
+**规范：** V3
 
-**Timezone:** Asia/Shanghai
+**窗口：** 2026-05-19T09:00:00+08:00 ～ 2026-05-20T09:00:00+08:00
 
-**Strict Window:** 2026-05-19 09:00:00 ～ 2026-05-20 09:00:00（北京时间，左闭右开）
+**状态：** 完成
 
-**Contract:** V2.1 Historical Daily Independent Full Replay
+**Books：** 纳入本次
 
-**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed；initial-created owner replay 与 exact-v1 Evidence Review 已完成。
+**检查时间：** 2026-09-15T21:12:00+08:00
 
-## Executive Summary
+Fresh-context 非作者最终审阅已完成。审阅纠正 4 个 author-side false negative，root 串行写回其中 3 个新 Books binding；9 个 root binding 与 27 个既有 binding 均通过写后语义、唯一 marker、位置和相邻段落核验。最终集合为 36 Applied + 34 No Change。
+
+## 1. 结论
+
+旧 V2.1 的 DataCite `created` 账本与 `Complete` 结论不再拥有当前状态。当前 owner 使用落在严格窗口内的 arXiv 官方 announcement batch：covered-category inventory 为 575。base receipt 的逐项状态先把 `closure`、`pre_denominator_closed` 与 `pre_denominator_closure` 三种旧拼法归一为 closure，再应用作者 14 个 FN override；fresh 非作者挑战又把 2605.18810、2605.18999、2605.19260、2605.19619 四项从二次 closure 恢复为候选，形成 `575 = 70 retained + 505 pre-denominator closure + 0 withdrawn`。13 个机构来源另有 Google AI 两个日期为 05-19 的原始事件，但二者均为 ROADMAP 明确排除的 AI for Science 应用，无论日内时刻位于截点哪侧都在候选分母前关闭。因此全日守恒为 `577 = 70 retained + 507 pre-denominator closure + 0 withdrawn`。
+
+70 项候选均完成 exact-v1 深入审阅；其中 55 项仅在 identity/version/claim 不变时复用旧审阅，15 项由当前 V3 challenge 重新读取 exact-v1 的方法、评测、反证/限制与 artifact locator。不能复用旧 owner-day 算术或旧 Complete 状态。评分分布为 `8 score7 + 51 score8 + 11 score9`，即 `70 deep + 0 standard`；blocked=0，materials request=0。
+
+Books 最终对账为 `70 = 27 prior Applied + 9 root Applied + 34 No Change + 0 Structural Candidate`。36 个正文 binding 均已存在，marker 唯一成对且位于目标章节首个 `## Review notes` 前；34 个 No Change 均有当前正文命题锚点。fresh 非作者逐段核验 9 个 root binding 的旧路径、约束变化、state/control owner、evidence boundary、trade-off、failure 与 fallback，其中 2605.19260 由 Ch23 已有 token-budget、position identity、temporal redundancy 与 full-token fallback 命题承载，不重复写入。Coverage、Evidence、Books 三个 Gate 全部通过。
+
+## 2. 来源覆盖
+
+| 来源 | 检查范围与依据 | 结果 | 缺口 |
+| --- | --- | --- | --- |
+| SRC-OPENAI | 官方 Research/news RSS 与相邻事件；无窗内候选 | 已检查 | 无 |
+| SRC-ANTHROPIC | 官方 Research 目录；05-14 后跳至 05-22，无窗内候选 | 已检查 | 无 |
+| SRC-GOOGLE-AI | Google Research 与 DeepMind 官方页面；ERA、Co-Scientist 均标 05-19，两个原始事件均按 AI for Science 在分母前关闭；日级时间缺少时分但不影响 scope closure | 已检查 | 无 |
+| SRC-META-AI | 官方 Publications；GIM exact-v1 为 05-19 01:09:50+08，早于窗口 | 已检查 | 无 |
+| SRC-QWEN | 官方 publication/blog index；无窗内候选 | 已检查 | 无 |
+| SRC-DEEPSEEK | 官方研究/模型发布索引；无窗内候选 | 已检查 | 无 |
+| SRC-MOONSHOT | Kimi Blog 与官方 GitHub；不以 `pushed_at` 冒充首次公开；无窗内候选 | 已检查 | 无 |
+| SRC-TENCENT-HUNYUAN | 官方 Research 目录；04-30 后跳至 05-21，无窗内候选 | 已检查 | 无 |
+| SRC-ZAI | 官方 Research 目录；ZCube 为 05-20 19:51+08，晚于截点，归属下一窗口 | 已检查 | 无 |
+| SRC-BYTEDANCE-SEED | 官方论文目录；Charon 为 05-16，之后无窗内系统事件 | 已检查 | 无 |
+| SRC-BAIDU-ERNIE | 官方技术博客/release index；最近明确记录为 05-09，无窗内候选 | 已检查 | 无 |
+| SRC-XIAOMI-MIMO | 官方 Paper/Blog；03-13 后跳至 06-29，无窗内候选 | 已检查 | 无 |
+| SRC-MINIMAX | 官方 Research/Blog；相邻记录为 03-18 与 05-26/27，无窗内候选 | 已检查 | 无 |
+| SRC-ARXIV | 2026-05-20 08:00+08 官方公告 covered-category batch；DataCite 只作 identity/revision 佐证；575=70 retained+505 closure+0 withdrawn；fresh 非作者 FN challenge 已闭合 | 已检查 | 无 |
+
+完整机构来源边界见 [`non-arxiv-source-coverage-v3.json`](../_sources/daily-20260520/non-arxiv-source-coverage-v3.json)，官方批次投影与可复用取得方法见 [`official-owner-batch-evidence-v3.json`](../_sources/daily-20260520/official-owner-batch-evidence-v3.json)，逐 identity 筛选投影见 [`screening-outcomes-v3.json`](../_sources/daily-20260520/screening-outcomes-v3.json)。`已检查` 只证明注册入口的有界检查，不声称整个互联网绝无遗漏。
+
+## 3. 候选与判断
+
+| 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
+| --- | --- | --- | --- | --- |
+| [2605.18755 Operational Memory Architecture for Kubernetes](https://arxiv.org/html/2605.18755v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-LOGGING；3+2+2=7 | 深入完成 | 已有覆盖：PLATFORM-LOGGING [章节](../../../../books/part-06-ai-infrastructure/68-logging.md) |
+| [2605.18762 ALDEN](https://arxiv.org/html/2605.18762v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-SECURITY；3+2+2=7 | 深入完成 | 已有覆盖：PLATFORM-SECURITY [章节](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [2605.18792 Trust or Abstain? A Self-Aware RAG Approach](https://arxiv.org/html/2605.18792v1) | 2026-05-20T08:00:00+08:00 | 由 FN closure 恢复；AGENT-RAG；3+2+3=8 | 深入完成 | 已有覆盖：AGENT-RAG [章节](../../../../books/part-07-agent/76-rag.md) |
+| [2605.18796 UCCI](https://arxiv.org/html/2605.18796v1) | 2026-05-20T08:00:00+08:00 | 由 FN closure 恢复；INFER-SCHEDULING；3+3+3=9 | 深入完成 | 已有覆盖：INFER-SCHEDULING [章节](../../../../books/part-05-inference-system/56-inference-scheduling.md) |
+| [2605.18810 D-PACE](https://arxiv.org/html/2605.18810v1) | 2026-05-20T08:00:00+08:00 | fresh 非作者 FN challenge 恢复；INFER-SPECULATIVE-DECODING；3+2+3=8 | 深入完成 | 整合：root 已写回并通过 fresh 语义复核；INFER-SPECULATIVE-DECODING [章节](../../../../books/part-05-inference-system/48-speculative-decoding.md) |
+| [2605.18812 PASC](https://arxiv.org/html/2605.18812v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-EVALUATION-SYSTEM；3+2+3=8 | 深入完成 | 已有覆盖：PLATFORM-EVALUATION-SYSTEM [章节](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
+| [2605.18813 Composition of Memory Experts for Diffusion World Models](https://arxiv.org/html/2605.18813v1) | 2026-05-20T08:00:00+08:00 | FN challenge 恢复；MULTIMODAL-WORLD-MODELS；3+3+3=9 | 深入完成 | 整合：root 已写回并通过 fresh 非作者复核；MULTIMODAL-WORLD-MODELS [章节](../../../../books/part-03-multimodal-world-models/25-multimodal-world-models.md) |
+| [2605.18814 Trajectory-Based Data Attribution](https://arxiv.org/html/2605.18814v1) | 2026-05-20T08:00:00+08:00 | exact-v1；TRAIN-DATA；3+2+3=8 | 深入完成 | 已有覆盖：TRAIN-DATA [章节](../../../../books/part-04-training-system/27-data.md) |
+| [2605.18815 DynaTrain](https://arxiv.org/html/2605.18815v1) | 2026-05-20T08:00:00+08:00 | exact-v1；TRAIN-DISTRIBUTED-TRAINING；3+3+3=9 | 深入完成 | 已有覆盖：TRAIN-DISTRIBUTED-TRAINING [章节](../../../../books/part-04-training-system/36-distributed-training.md) |
+| [2605.18822 Hybrid-LoRA](https://arxiv.org/html/2605.18822v1) | 2026-05-20T08:00:00+08:00 | FN challenge 恢复；TRAIN-SFT；3+2+3=8 | 深入完成 | 已有覆盖：TRAIN-SFT [章节](../../../../books/part-04-training-system/29-sft.md) |
+| [2605.18824 Fine-Grained Benchmark Generation](https://arxiv.org/html/2605.18824v1) | 2026-05-20T08:00:00+08:00 | 由 FN closure 恢复；PLATFORM-EVALUATION-SYSTEM；3+2+3=8 | 深入完成 | 已有覆盖：PLATFORM-EVALUATION-SYSTEM [章节](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
+| [2605.18825 Semantic-Aware Prefix-Cache Eviction](https://arxiv.org/html/2605.18825v1) | 2026-05-20T08:00:00+08:00 | exact-v1；INFER-KV-CACHE；3+2+3=8 | 深入完成 | 已有覆盖：INFER-KV-CACHE [章节](../../../../books/part-05-inference-system/45-why-kv-cache-speeds-up.md) |
+| [2605.18841 Adaptive Runtime Safety Control](https://arxiv.org/html/2605.18841v1) | 2026-05-20T08:00:00+08:00 | FN challenge 恢复；PLATFORM-SECURITY；3+3+2=8 | 深入完成 | 整合：root 已写回并通过 fresh 非作者复核；PLATFORM-SECURITY [章节](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [2605.18853 INAR-VL](https://arxiv.org/html/2605.18853v1) | 2026-05-20T08:00:00+08:00 | exact-v1；INFER-SCHEDULING；3+2+3=8 | 深入完成 | 已有覆盖：INFER-SCHEDULING [章节](../../../../books/part-05-inference-system/56-inference-scheduling.md) |
+| [2605.18854 Memory Condensation for Coding Agents](https://arxiv.org/html/2605.18854v1) | 2026-05-20T08:00:00+08:00 | exact-v1；AGENT-MEMORY；3+2+3=8 | 深入完成 | 已有覆盖：AGENT-MEMORY [章节](../../../../books/part-07-agent/77-memory.md) |
+| [2605.18857 The 99% Success Paradox](https://arxiv.org/html/2605.18857v1) | 2026-05-20T08:00:00+08:00 | FN challenge 恢复；AGENT-TOOL-CALLING；3+3+2=8 | 深入完成 | 已有覆盖：AGENT-TOOL-CALLING [章节](../../../../books/part-07-agent/78-tool-calling.md) |
+| [2605.18882 To Call or Not to Call](https://arxiv.org/html/2605.18882v1) | 2026-05-20T08:00:00+08:00 | FN challenge 恢复；AGENT-TOOL-CALLING；3+2+3=8 | 深入完成 | 整合：root 已写回并通过 fresh 非作者复核；AGENT-TOOL-CALLING [章节](../../../../books/part-07-agent/78-tool-calling.md) |
+| [2605.18891 Reasoning-Trace Memorization Audit](https://arxiv.org/html/2605.18891v1) | 2026-05-20T08:00:00+08:00 | exact-v1；TRAIN-DATA；3+3+3=9 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；TRAIN-DATA [章节](../../../../books/part-04-training-system/27-data.md) |
+| [2605.18918 ESLD](https://arxiv.org/html/2605.18918v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-SECURITY；3+3+2=8 | 深入完成 | 已有覆盖：PLATFORM-SECURITY [章节](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [2605.18930 OEP Memory Poisoning](https://arxiv.org/html/2605.18930v1) | 2026-05-20T08:00:00+08:00 | exact-v1；AGENT-MEMORY；3+3+3=9 | 深入完成 | 已有覆盖：AGENT-MEMORY [章节](../../../../books/part-07-agent/77-memory.md) |
+| [2605.18999 Distance-Aware Muon](https://arxiv.org/html/2605.18999v1) | 2026-05-20T08:00:00+08:00 | fresh 非作者 FN challenge 恢复；TRAIN-PRETRAINING；3+2+3=8 | 深入完成 | 整合：root 已写回并通过 fresh 语义复核；TRAIN-PRETRAINING [章节](../../../../books/part-04-training-system/28-pretraining.md) |
+| [2605.19008 Learn-by-Wire Training Control](https://arxiv.org/html/2605.19008v1) | 2026-05-20T08:00:00+08:00 | exact-v1；TRAIN-PRETRAINING；3+3+2=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；TRAIN-PRETRAINING [章节](../../../../books/part-04-training-system/28-pretraining.md) |
+| [2605.19049 KVBuffer](https://arxiv.org/html/2605.19049v1) | 2026-05-20T08:00:00+08:00 | exact-v1；INFER-KV-CACHE；3+3+3=9 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；INFER-KV-CACHE [章节](../../../../books/part-05-inference-system/45-why-kv-cache-speeds-up.md) |
+| [2605.19095 ScheduleFree+](https://arxiv.org/html/2605.19095v1) | 2026-05-20T08:00:00+08:00 | FN challenge 恢复；TRAIN-PRETRAINING；3+3+2=8 | 深入完成 | 整合：root 已写回并通过 fresh 非作者复核；TRAIN-PRETRAINING [章节](../../../../books/part-04-training-system/28-pretraining.md) |
+| [2605.19099 DecisionBench](https://arxiv.org/html/2605.19099v1) | 2026-05-20T08:00:00+08:00 | exact-v1；AGENT-MULTI-AGENT；3+2+2=7 | 深入完成 | 已有覆盖：AGENT-MULTI-AGENT [章节](../../../../books/part-07-agent/82-multi-agent.md) |
+| [2605.19101 Heterogeneity-Aware Dataset Scheduling](https://arxiv.org/html/2605.19101v1) | 2026-05-20T08:00:00+08:00 | exact-v1；TRAIN-DATA；3+3+2=8 | 深入完成 | 已有覆盖：TRAIN-DATA [章节](../../../../books/part-04-training-system/27-data.md) |
+| [2605.19127 POLAR-Bench](https://arxiv.org/html/2605.19127v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-SECURITY；3+2+3=8 | 深入完成 | 已有覆盖：PLATFORM-SECURITY [章节](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [2605.19140 Learning to Hand Off](https://arxiv.org/html/2605.19140v1) | 2026-05-20T08:00:00+08:00 | exact-v1；AGENT-WORKFLOW；3+3+2=8 | 深入完成 | 已有覆盖：AGENT-WORKFLOW [章节](../../../../books/part-07-agent/81-workflow.md) |
+| [2605.19151 Progressive Autonomy](https://arxiv.org/html/2605.19151v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-SECURITY；3+3+2=8 | 深入完成 | 已有覆盖：PLATFORM-SECURITY [章节](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [2605.19169 Geo-Distributed Training Fiber Latency](https://arxiv.org/html/2605.19169v1) | 2026-05-20T08:00:00+08:00 | exact-v1；TRAIN-DISTRIBUTED-TRAINING；3+2+2=7 | 深入完成 | 已有覆盖：TRAIN-DISTRIBUTED-TRAINING [章节](../../../../books/part-04-training-system/36-distributed-training.md) |
+| [2605.19193 Sequential Consensus](https://arxiv.org/html/2605.19193v1) | 2026-05-20T08:00:00+08:00 | exact-v1；AGENT-MULTI-AGENT；3+2+3=8 | 深入完成 | 已有覆盖：AGENT-MULTI-AGENT [章节](../../../../books/part-07-agent/82-multi-agent.md) |
+| [2605.19196 Time to REFLECT](https://arxiv.org/html/2605.19196v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-EVALUATION-SYSTEM；3+3+3=9 | 深入完成 | 已有覆盖：PLATFORM-EVALUATION-SYSTEM [章节](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
+| [2605.19218 Rotation-Aligned KV Pruning](https://arxiv.org/html/2605.19218v1) | 2026-05-20T08:00:00+08:00 | exact-v1；INFER-KV-CACHE；3+2+2=7 | 深入完成 | 已有覆盖：INFER-KV-CACHE [章节](../../../../books/part-05-inference-system/45-why-kv-cache-speeds-up.md) |
+| [2605.19220 Position: Uncertainty Quantification in LLMs is Just Unsupervised Clustering](https://arxiv.org/html/2605.19220v1) | 2026-05-20T08:00:00+08:00 | FN challenge 恢复；PLATFORM-EVALUATION-SYSTEM；3+3+2=8 | 深入完成 | 已有覆盖：PLATFORM-EVALUATION-SYSTEM [章节](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
+| [2605.19240 CASPIAN](https://arxiv.org/html/2605.19240v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-SECURITY；3+2+3=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；PLATFORM-SECURITY [章节](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [2605.19242 PhyWorld](https://arxiv.org/html/2605.19242v1) | 2026-05-20T08:00:00+08:00 | exact-v1；MULTIMODAL-WORLD-MODELS；3+2+3=8 | 深入完成 | 已有覆盖：MULTIMODAL-WORLD-MODELS [章节](../../../../books/part-03-multimodal-world-models/25-multimodal-world-models.md) |
+| [2605.19250 Causal Evidence for Attention Head Imbalance in Modality Conflict Hallucination](https://arxiv.org/html/2605.19250v1) | 2026-05-20T08:00:00+08:00 | FN challenge 恢复；MULTIMODAL-REPRESENTATION；3+2+3=8 | 深入完成 | 整合：root 已写回并通过 fresh 非作者复核；MULTIMODAL-REPRESENTATION [章节](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md) |
+| [2605.19260 AQuaUI](https://arxiv.org/html/2605.19260v1) | 2026-05-20T08:00:00+08:00 | fresh 非作者 FN challenge 恢复；MULTIMODAL-REPRESENTATION；3+2+3=8 | 深入完成 | 已有覆盖：MULTIMODAL-REPRESENTATION [章节](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md) |
+| [2605.19282 Rethinking Muon Beyond Pretraining](https://arxiv.org/html/2605.19282v1) | 2026-05-20T08:00:00+08:00 | exact-v1；TRAIN-PRETRAINING；3+2+3=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；TRAIN-PRETRAINING [章节](../../../../books/part-04-training-system/28-pretraining.md) |
+| [2605.19314 ContextFlow](https://arxiv.org/html/2605.19314v1) | 2026-05-20T08:00:00+08:00 | exact-v1；AGENT-WORKFLOW；3+2+3=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；AGENT-WORKFLOW [章节](../../../../books/part-07-agent/81-workflow.md) |
+| [2605.19317 Inference-Time Scaling in Diffusion Models through Iterative Partial Refinement](https://arxiv.org/html/2605.19317v1) | 2026-05-20T08:00:00+08:00 | FN challenge 恢复；MULTIMODAL-GENERATIVE-PARADIGMS；3+2+3=8 | 深入完成 | 已有覆盖：MULTIMODAL-GENERATIVE-PARADIGMS [章节](../../../../books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md) |
+| [2605.19319 SWEET](https://arxiv.org/html/2605.19319v1) | 2026-05-20T08:00:00+08:00 | exact-v1；MULTIMODAL-WORLD-MODELS；3+3+2=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；MULTIMODAL-WORLD-MODELS [章节](../../../../books/part-03-multimodal-world-models/25-multimodal-world-models.md) |
+| [2605.19321 Pre-Model Safeguard with Draft Models](https://arxiv.org/html/2605.19321v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-SECURITY；2+2+3=7 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；PLATFORM-SECURITY [章节](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [2605.19322 DynaTok](https://arxiv.org/html/2605.19322v1) | 2026-05-20T08:00:00+08:00 | FN challenge 恢复；MULTIMODAL-REPRESENTATION；3+2+3=8 | 深入完成 | 已有覆盖：MULTIMODAL-REPRESENTATION [章节](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md) |
+| [2605.19328 RoboJailBench](https://arxiv.org/html/2605.19328v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-EVALUATION-SYSTEM；2+2+3=7 | 深入完成 | 已有覆盖：PLATFORM-EVALUATION-SYSTEM [章节](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
+| [2605.19335 Scheduling ANNS with I/O Stalls](https://arxiv.org/html/2605.19335v1) | 2026-05-20T08:00:00+08:00 | exact-v1；AGENT-RAG；3+3+2=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；AGENT-RAG [章节](../../../../books/part-07-agent/76-rag.md) |
+| [2605.19341 HalluWorld](https://arxiv.org/html/2605.19341v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-EVALUATION-SYSTEM；3+2+3=8 | 深入完成 | 已有覆盖：PLATFORM-EVALUATION-SYSTEM [章节](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
+| [2605.19373 CRDT Model Merging](https://arxiv.org/html/2605.19373v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-MODEL-REGISTRY；3+3+3=9 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；PLATFORM-MODEL-REGISTRY [章节](../../../../books/part-06-ai-infrastructure/59-model-registry.md) |
+| [2605.19407 A Bitter Lesson for Data Filtering](https://arxiv.org/html/2605.19407v1) | 2026-05-20T08:00:00+08:00 | exact-v1；TRAIN-DATA；3+3+3=9 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；TRAIN-DATA [章节](../../../../books/part-04-training-system/27-data.md) |
+| [2605.19447 Selective Hindsight Distillation](https://arxiv.org/html/2605.19447v1) | 2026-05-20T08:00:00+08:00 | exact-v1；TRAIN-RLHF；3+3+2=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；TRAIN-RLHF [章节](../../../../books/part-04-training-system/31-rlhf.md) |
+| [2605.19461 Distribution Matching for Diverse Reasoning](https://arxiv.org/html/2605.19461v1) | 2026-05-20T08:00:00+08:00 | exact-v1；TRAIN-RLHF；3+3+3=9 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；TRAIN-RLHF [章节](../../../../books/part-04-training-system/31-rlhf.md) |
+| [2605.19478 Functional Fusion Backdoor](https://arxiv.org/html/2605.19478v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-SECURITY；3+3+2=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；PLATFORM-SECURITY [章节](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [2605.19481 C2CServe](https://arxiv.org/html/2605.19481v1) | 2026-05-20T08:00:00+08:00 | exact-v1；INFER-PD-DISAGGREGATION；3+2+3=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；INFER-PD-DISAGGREGATION [章节](../../../../books/part-05-inference-system/55-pd-disaggregation.md) |
+| [2605.19577 GoLongRL](https://arxiv.org/html/2605.19577v1) | 2026-05-20T08:00:00+08:00 | FN challenge 恢复；TRAIN-GRPO；3+3+2=8 | 深入完成 | 整合：root 已写回并通过 fresh 非作者复核；TRAIN-GRPO [章节](../../../../books/part-04-training-system/33-grpo.md) |
+| [2605.19604 Formal Skill](https://arxiv.org/html/2605.19604v1) | 2026-05-20T08:00:00+08:00 | exact-v1；AGENT-PLATFORM；3+2+3=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；AGENT-PLATFORM [章节](../../../../books/part-07-agent/84-agent-platform.md) |
+| [2605.19619 MiMuon](https://arxiv.org/html/2605.19619v1) | 2026-05-20T08:00:00+08:00 | fresh 非作者 FN challenge 恢复；TRAIN-PRETRAINING；3+2+3=8 | 深入完成 | 整合：root 已写回并通过 fresh 语义复核；TRAIN-PRETRAINING [章节](../../../../books/part-04-training-system/28-pretraining.md) |
+| [2605.19722 Autonomous Security-Agent Evaluation](https://arxiv.org/html/2605.19722v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-SECURITY；3+2+3=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；PLATFORM-SECURITY [章节](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [2605.19755 Operationalising AIBOMs](https://arxiv.org/html/2605.19755v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-SECURITY；3+3+2=8 | 深入完成 | 已有覆盖：PLATFORM-SECURITY [章节](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [2605.19769 OpenComputer](https://arxiv.org/html/2605.19769v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-EVALUATION-SYSTEM；3+2+3=8 | 深入完成 | 已有覆盖：PLATFORM-EVALUATION-SYSTEM [章节](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
+| [2605.19779 Distribution-Free UQ for Agent Evaluation](https://arxiv.org/html/2605.19779v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-EVALUATION-SYSTEM；3+2+3=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；PLATFORM-EVALUATION-SYSTEM [章节](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
+| [2605.19932 PEEK Context Map](https://arxiv.org/html/2605.19932v1) | 2026-05-20T08:00:00+08:00 | exact-v1；AGENT-CONTEXT；3+2+3=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；AGENT-CONTEXT [章节](../../../../books/part-07-agent/75-context.md) |
+| [2605.19945 GEM Expert Mapping](https://arxiv.org/html/2605.19945v1) | 2026-05-20T08:00:00+08:00 | exact-v1；INFER-SCHEDULING；3+2+3=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；INFER-SCHEDULING [章节](../../../../books/part-05-inference-system/56-inference-scheduling.md) |
+| [2605.19952 Beyond Atomic Facts in Agent Memory](https://arxiv.org/html/2605.19952v1) | 2026-05-20T08:00:00+08:00 | exact-v1；AGENT-MEMORY；3+2+3=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；AGENT-MEMORY [章节](../../../../books/part-07-agent/77-memory.md) |
+| [2605.19999 Contamination-Resistant Benchmarks](https://arxiv.org/html/2605.19999v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-EVALUATION-SYSTEM；2+2+3=7 | 深入完成 | 已有覆盖：PLATFORM-EVALUATION-SYSTEM [章节](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
+| [2605.20005 Loss-Adaptive Fine-Tuning](https://arxiv.org/html/2605.20005v1) | 2026-05-20T08:00:00+08:00 | exact-v1；TRAIN-SFT；3+3+3=9 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；TRAIN-SFT [章节](../../../../books/part-04-training-system/29-sft.md) |
+| [2605.20022 FlexDraft](https://arxiv.org/html/2605.20022v1) | 2026-05-20T08:00:00+08:00 | exact-v1；INFER-SPECULATIVE-DECODING；3+2+3=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；INFER-SPECULATIVE-DECODING [章节](../../../../books/part-05-inference-system/48-speculative-decoding.md) |
+| [2605.20051 Vulnerability Variant Hunting](https://arxiv.org/html/2605.20051v1) | 2026-05-20T08:00:00+08:00 | exact-v1；PLATFORM-SECURITY；3+2+3=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；PLATFORM-SECURITY [章节](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [2605.20061 Consistency-Guided Credit Assignment](https://arxiv.org/html/2605.20061v1) | 2026-05-20T08:00:00+08:00 | exact-v1；TRAIN-RLHF；3+2+3=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；TRAIN-RLHF [章节](../../../../books/part-04-training-system/31-rlhf.md) |
+| [2605.20084 BalanceRAG](https://arxiv.org/html/2605.20084v1) | 2026-05-20T08:00:00+08:00 | exact-v1；AGENT-RAG；3+2+3=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；AGENT-RAG [章节](../../../../books/part-07-agent/76-rag.md) |
+| [2605.20179 TIDE](https://arxiv.org/html/2605.20179v1) | 2026-05-20T08:00:00+08:00 | exact-v1；INFER-TENSORRT-LLM；3+2+3=8 | 深入完成 | 整合：正文已存在并通过 fresh 非作者复核；INFER-TENSORRT-LLM [章节](../../../../books/part-05-inference-system/49-tensorrt-llm.md) |
+
+## 4. 证据与知识整合
+
+70 个候选逐项 exact-v1 清单、canonical/legacy marker alias、评分与 Stable Node 见 [`evidence-review-v3.json`](../_sources/daily-20260520/evidence-review-v3.json)。55 项可读的 Method、Evaluation、Counterevidence/Limitations、Artifact 与 adopted claim 保留在下方 legacy evidence appendix 的 Source Reviews 中；复用只因 identity、版本与命题未变，不沿用旧完成结论。15 个 FN 恢复项的当前可读审阅在本节，完整结构化 locator 同步写入 V3 artifact。
+
+当前 Books 对读见 [`books-comparison-v3.json`](../_sources/daily-20260520/books-comparison-v3.json)：27 个 prior Applied 与 9 个 root Applied 均已通过 target file、正文 heading、marker、首个 Review-notes line、相邻衔接和语义完整性检查；34 个 No Change 逐项给出当前正文命题。root 写回队列、exact-v1 locator 与 fresh post-write 结果见 [`root-books-writeback-queue-v3.json`](../_sources/daily-20260520/root-books-writeback-queue-v3.json)。
+
+### [2605.18755 Operational Memory Architecture for Kubernetes](https://arxiv.org/html/2605.18755v1)
+对应 exact-v1 deep review 由 `review:SF-2026-ARXIV-2605-18755` 与 `evidence-review-v3.json` 共同定位；只复用版本和命题不变的证据正文。
+
+### [2605.18762 ALDEN](https://arxiv.org/html/2605.18762v1)
+对应 exact-v1 deep review 由 `review:SF-2026-ARXIV-2605-18762` 与 V3 artifact 共同定位。
+
+### [2605.18792 Trust or Abstain? A Self-Aware RAG Approach](https://arxiv.org/html/2605.18792v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位；adopted claim 只覆盖 belief estimator 到 trust/retrieve/abstain decision 的控制边界。
+
+### [2605.18796 UCCI](https://arxiv.org/html/2605.18796v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位；adopted claim 只覆盖 calibrated error probability 与 constrained cost threshold。
+
+### [2605.18810 D-PACE](https://arxiv.org/html/2605.18810v1)
+问题与机制：固定 head/block-position weight 在 bottleneck 稳定时简单且可重放；parallel block drafter 的早位变准后，限制 accepted prefix 的位置会迁移。exact-v1 §3.1–3.3 用 expected accepted-length surrogate 的 prefix-survival 与 continuation contribution 动态分配 CE credit，并以 asymmetric smoothing 避免后位权重消失；target verifier 仍独占 accept/commit，architecture 与 inference procedure 不变。§4、§5.1–5.6 只支持所列 DFlash、Qwen/Llama targets、六个 benchmark、T=0/1 与 H200/L40S 配置；2.3% training overhead、speedup 与 emitted-length 不能外推到 tree drafter 或 production SLO。surrogate 相关性下降、低置信度不稳、target/temperature 漂移或成本超界时，回退 fixed decayed CE、普通 Forward-KL/CE 或重新标定。
+
+### [2605.18812 PASC](https://arxiv.org/html/2605.18812v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.18813 Composition of Memory Experts for Diffusion World Models](https://arxiv.org/html/2605.18813v1)
+问题与机制：单一 Transformer memory 保留局部细节却承担二次注意力成本，recurrent/SSM 则会压缩丢失历史；exact-v1 §3.2–3.3 把 short-term、weight-adapted episodic long-term 与 spatial long-term memory 拆给不同 diffusion experts，再以 contrastive product-of-experts 在 sampling 时组合。§4 与 Appendix D 在多个 simulated/real-world dataset 上评估 temporal consistency、recall 与 navigation。限制与回退：§3.2 trade-off 与 §G 表明 contrast 会压低有效 secondary modes，test-time LoRA 还产生 revision/遗忘与成本；专家不一致、freshness 不可证或预算不足时回退有界 history bank 或单一 world-model path。Artifact 为论文 project page，event-time commit 未披露。长期命题不把权重 memory 当作事实存储。
+
+### [2605.18814 Trajectory-Based Data Attribution](https://arxiv.org/html/2605.18814v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.18815 DynaTrain](https://arxiv.org/html/2605.18815v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.18822 Hybrid-LoRA](https://arxiv.org/html/2605.18822v1)
+问题与机制：full fine-tuning 自由度高但状态/显存成本大，纯 LoRA 限制 trainable subspace；exact-v1 §3.1–3.4 用固定参数预算和 gradient/parameter-based Hybrid-Score 把少数 LoRA 不适配模块交给 FFT，其余交给 LoRA。§4 的模型、reasoning tasks 与 matched baselines 支持作者报告结果；§5 明确仅到 7B，且 two-stage probing 仍增加分配成本。长期命题已由 TRAIN-SFT 的 parameter-mask/trainable-subspace artifact 覆盖；budget、base revision 或 probe 失真时回退纯 LoRA、单轴选择或 full SFT。
+
+### [2605.18824 Fine-Grained Benchmark Generation](https://arxiv.org/html/2605.18824v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位；benchmark 结论绑定 reference、solution graph 与 validation artifact。
+
+### [2605.18825 Semantic-Aware Prefix-Cache Eviction](https://arxiv.org/html/2605.18825v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.18841 Adaptive Runtime Safety Control](https://arxiv.org/html/2605.18841v1)
+问题与机制：CMDP cumulative budget 不能阻止单次危险动作，fixed shield 又会在 nonstationarity 下过严或过松；exact-v1 §3–§4.1 从 remaining budget、horizon 与 context 投影 per-state admissibility threshold，policy 只提议 action，shield 执行或切换 fallback。§6 在 highway-env 四环境评估；§5.1/§7 限制 theoretical guarantee 与 safety-cost proxy，不证明真实驾驶安全。sensor/predictor 漂移时回退保守 fixed threshold、预定义 safe controller 或人工接管；reproducibility package 有声明但 event-time commit 未披露。
+
+### [2605.18853 INAR-VL](https://arxiv.org/html/2605.18853v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.18854 Memory Condensation for Coding Agents](https://arxiv.org/html/2605.18854v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.18857 The 99% Success Paradox](https://arxiv.org/html/2605.18857v1)
+问题与机制：top-K coverage 接近 100% 仍可能只等于随机选择；exact-v1 §4 以 hypergeometric baseline 计算 BoR，§5–§7 检查 retrieval 与 tool-selection collapse。该 measure 只校正 selectivity，不证明候选正确、工具安全或 downstream answer 正确；小 catalog、success rule 或 relevant-count 分布变化需重新校准。当前 AGENT-TOOL-CALLING 已明确拥有“exposure reward 扣随机候选集优势”，因此 No Change。
+
+### [2605.18882 To Call or Not to Call](https://arxiv.org/html/2605.18882v1)
+问题与机制：合法调用率无法区分是否存在 intrinsic over-calling；exact-v1 §3–§5 把 SAE feature margin 与 activation-independent call offset 分开，并用 AMCS 做 causal steering。§5.2 在六模型上验证，§6 限定 When2Call、SAE basis 与局部线性近似，不解释训练来源或长程 agent。calling-effort 只能是 proposal sensor，执行仍由外部 policy；漂移或必要调用受损时回退显式 necessity rule、ask-user/abstain 和 effect-time authorization。代码仓库有声明，event-time commit 未披露。
+
+### [2605.18891 Reasoning-Trace Memorization Audit](https://arxiv.org/html/2605.18891v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.18918 ESLD](https://arxiv.org/html/2605.18918v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.18930 OEP Memory Poisoning](https://arxiv.org/html/2605.18930v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.18999 Distance-Aware Muon](https://arxiv.org/html/2605.18999v1)
+问题与机制：normalized optimizer 的 direction 与 step scale 是独立控制；固定 scale 在几何和轨迹半径稳定时仍是合理基线。exact-v1 §3–§5 分别用 explored trajectory、local descent certificate 与 recentered majorized scalar search 决定 step radius，要求 optimizer owner 把 certificate、momentum、参数块和 checkpoint transition 一起版本化。§2 assumption map 将 DA/SC/DF-Muon 分别约束于 bounded trajectory、star-convex/bounded sublevel set 与 majorized search；§6 只覆盖 GPT-124M/WikiText-103、ViT-Tiny/CIFAR-100 及附录小型配置，不证明大规模分布式 wall-clock 优势。certificate 失真、轨迹爆炸、假设不成立或搜索成本过高时，回退 tuned fixed-scale Muon、clipped trust radius 或 AdamW。
+
+### [2605.19008 Learn-by-Wire Training Control](https://arxiv.org/html/2605.19008v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19049 KVBuffer](https://arxiv.org/html/2605.19049v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19095 ScheduleFree+](https://arxiv.org/html/2605.19095v1)
+问题与机制：传统 WSD/cosine 需要预知 horizon；exact-v1 §2–§8 把 schedule-free interpolation/averaging 与 large-batch gradient-norm drift、weight decay、adaptive step 共同处理，§12 解释 model averaging/merging。§9–§11 的比较只支持披露模型、token-per-parameter 与配置，31% headline 不可外推。它以 averaged-iterate state 和更复杂 weighting 换 anytime training；短 run、scale 超界或终点明确时回退 tuned WSD/cosine 与显式 tail averaging。Artifact commit 未披露。
+
+### [2605.19099 DecisionBench](https://arxiv.org/html/2605.19099v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19101 Heterogeneity-Aware Dataset Scheduling](https://arxiv.org/html/2605.19101v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19127 POLAR-Bench](https://arxiv.org/html/2605.19127v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19140 Learning to Hand Off](https://arxiv.org/html/2605.19140v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19151 Progressive Autonomy](https://arxiv.org/html/2605.19151v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19169 Geo-Distributed Training Fiber Latency](https://arxiv.org/html/2605.19169v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19193 Sequential Consensus](https://arxiv.org/html/2605.19193v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19196 Time to REFLECT](https://arxiv.org/html/2605.19196v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19218 Rotation-Aligned KV Pruning](https://arxiv.org/html/2605.19218v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19220 Position: Uncertainty Quantification in LLMs is Just Unsupervised Clustering](https://arxiv.org/html/2605.19220v1)
+问题与机制：exact-v1 §2–§4 论证 semantic entropy、graph 与 verbal-belief UQ 主要测 generation consistency，而非外部 correctness；稳定但错误的答案会形成 confident hallucination。§5 提议 tail-risk、sensitivity curve、conformal/native uncertainty 与 objective truth grounding，但这是一篇 position paper，不提供 production confidence authority。当前 PLATFORM-EVALUATION-SYSTEM 已明确 internal probe 是 model-specific sensor、外部 evidence/verifier 才拥有 truth，故 No Change；标签或 calibration drift 时回退 external verification、abstain 或人工复核。
+
+### [2605.19240 CASPIAN](https://arxiv.org/html/2605.19240v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19242 PhyWorld](https://arxiv.org/html/2605.19242v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19250 Causal Evidence for Attention Head Imbalance in Modality Conflict Hallucination](https://arxiv.org/html/2605.19250v1)
+问题与机制：只看输出 hallucination rate 不能定位 text-over-vision 的 causal owner；exact-v1 §3 用 path patching 区分分布式 driving heads 与少量 resisting heads，§4 让 conflict probe 触发 conditional suppression。§4.2 与 Appendix 0.A 支持五个开源 MLLM、MMMC 与 SCI-SemanticConflict；§5 明确 labeled probe、prefill/object-conflict 与 visual-as-truth 限制。head identity 漂移、视觉不可信或干预伤害 task state 时回退原始 multimodal path、外部 evidence check 或 abstain。Artifact 未披露。
+
+### [2605.19260 AQuaUI](https://arxiv.org/html/2605.19260v1)
+问题与机制：GUI screenshot 的信息密度高度不均；exact-v1 §3.2 用 adaptive quadtree 对 homogeneous region 合并 visual token、保留代表 token 的位置身份，§3.3 用前一 screenshot 的 quadtree 区分 static/shifted/replaced region。§4–§5 的 grounding/navigation 结果只支持作者列出的 GUI models、benchmarks 与 serving path；Qwen2 路径上 reduction overhead 会抵消 latency，2B models 也几乎无收益，不能把 13.22%/29.52% headline 外推。当前 Ch23 已拥有分层 token-budget、position identity、temporal redundancy、selector drift 与 full-token fallback 的更一般命题，因此 Books No Change；变化检测或布局假设失效、overhead 超界、证据完整性优先时回退独立截图或完整 tokens。
+
+### [2605.19282 Rethinking Muon Beyond Pretraining](https://arxiv.org/html/2605.19282v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19314 ContextFlow](https://arxiv.org/html/2605.19314v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19317 Inference-Time Scaling in Diffusion Models through Iterative Partial Refinement](https://arxiv.org/html/2605.19317v1)
+问题与机制：one-pass sequential diffusion 会让早期区域决定不可修正；exact-v1 §3 反复 re-noise 子区域并以其余区域为 context 再生，无外部 verifier。§4 只在 Sudoku/shape/pixel constraint tasks 评估；§6 披露约 13× compute、resampling-ratio 敏感与随机 region selection。当前 MULTIMODAL-GENERATIVE-PARADIGMS 已拥有 mutable correction、runtime commit 与重开 provisional region 的命题，故 No Change；延迟超限或 context 被过多丢弃时回退 one-pass/更小 refinement budget。
+
+### [2605.19319 SWEET](https://arxiv.org/html/2605.19319v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19321 Pre-Model Safeguard with Draft Models](https://arxiv.org/html/2605.19321v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19322 DynaTok](https://arxiv.org/html/2605.19322v1)
+问题与机制：attention-only compression 忽略 positional bias 与长期 temporal redundancy；exact-v1 §3.2–3.3 用 EMA memory 先分 temporal budget，再以 spatial memory 分配区域 token。§4 覆盖两类 Video-LLM 与四个 VideoQA benchmark；未证明 streaming scene-cut、任意 encoder 或生产 latency。当前 MULTIMODAL-REPRESENTATION 已拥有固定总预算→时空/模态分层分配、selector drift 与 full-token fallback，故 No Change；memory/position identity 失效时回退固定帧/固定预算或完整 tokens。
+
+### [2605.19328 RoboJailBench](https://arxiv.org/html/2605.19328v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19335 Scheduling ANNS with I/O Stalls](https://arxiv.org/html/2605.19335v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19341 HalluWorld](https://arxiv.org/html/2605.19341v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19373 CRDT Model Merging](https://arxiv.org/html/2605.19373v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19407 A Bitter Lesson for Data Filtering](https://arxiv.org/html/2605.19407v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19447 Selective Hindsight Distillation](https://arxiv.org/html/2605.19447v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19461 Distribution Matching for Diverse Reasoning](https://arxiv.org/html/2605.19461v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19478 Functional Fusion Backdoor](https://arxiv.org/html/2605.19478v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19481 C2CServe](https://arxiv.org/html/2605.19481v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19577 GoLongRL](https://arxiv.org/html/2605.19577v1)
+问题与机制：heterogeneous long-context tasks 的 EM/F1/NDCG/ROUGE-L reward scale 不可直接混合；exact-v1 §3 冻结九类 capability/data construction，§4 以 task-level RMS 替代跨任务不可比的 per-prompt scale，再用 smoothed pass rate 调节难度权重。§5 只覆盖 23K、Qwen3 4B/30B 与作者 benchmark，§6/Appendix C–D 不证明 taxonomy 完备或 reward 是现实 outcome truth。task 样本不足、metric 不可比或历史难度漂移时回退 task-specific GRPO、单任务 batch 或不跨任务聚合；代码/数据仓库有声明，event-time commit 未披露。
+
+### [2605.19604 Formal Skill](https://arxiv.org/html/2605.19604v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19619 MiMuon](https://arxiv.org/html/2605.19619v1)
+问题与机制：持续 orthogonalization 在 singular-value gap 稳定时是清晰 Muon 路径；gap 接近阈值时 paper 的 stability/generalization bound 会恶化。exact-v1 §3 的 MiMuon 以 gap test 选择 orthogonalized direction 或 momentum-SGD direction，optimizer owner 因而必须保存 threshold、branch decision、momentum 和 checkpoint identity。§4–§5 的结论受论文 smoothness/stability 条件约束，§6 仅覆盖 Qwen3-0.6B/WikiText-103 与 YOLO26m；不证明大规模、分布式或生产吞吐优势。Introduction contribution 句把 Muon/MiMuon bound 方向写反，与 abstract、Table 1、定理和 §7 冲突，本审阅只采用后者一致的受限命题。gap estimate 噪声、threshold 抖动、假设不可验证或 matrix path 无收益时，回退版本化 pure Muon、SGDM 或 AdamW。
+
+### [2605.19722 Autonomous Security-Agent Evaluation](https://arxiv.org/html/2605.19722v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19755 Operationalising AIBOMs](https://arxiv.org/html/2605.19755v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19769 OpenComputer](https://arxiv.org/html/2605.19769v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19779 Distribution-Free UQ for Agent Evaluation](https://arxiv.org/html/2605.19779v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19932 PEEK Context Map](https://arxiv.org/html/2605.19932v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19945 GEM Expert Mapping](https://arxiv.org/html/2605.19945v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19952 Beyond Atomic Facts in Agent Memory](https://arxiv.org/html/2605.19952v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.19999 Contamination-Resistant Benchmarks](https://arxiv.org/html/2605.19999v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.20005 Loss-Adaptive Fine-Tuning](https://arxiv.org/html/2605.20005v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.20022 FlexDraft](https://arxiv.org/html/2605.20022v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.20051 Vulnerability Variant Hunting](https://arxiv.org/html/2605.20051v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.20061 Consistency-Guided Credit Assignment](https://arxiv.org/html/2605.20061v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.20084 BalanceRAG](https://arxiv.org/html/2605.20084v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+### [2605.20179 TIDE](https://arxiv.org/html/2605.20179v1)
+对应 exact-v1 deep review 由 canonical/legacy marker alias 与 V3 artifact 共同定位。
+
+## 5. 缺口与下一步
+
+无
+
+- 无待修复项。fresh 非作者挑战恢复了 4 个 false negative；其 exact-v1 Evidence、score、Books comparison 已同步。
+- root 已按 serialized queue 写回 2605.18810、2605.18999、2605.19619；连同先前 6 项，9/9 root binding 均通过 post-write 语义复核。
+- 2605.19260 为 No Change；Ch23 已完整承载空间/时间 token budget、position identity、压缩 state、failure 与 full-token fallback。
+- Materials Request=0；未 stage、commit 或 push。
+
+## 6. 复核
+
+复核者：fresh-context non-author final reviewer `/root/may12_fresh_postwrite`
+
+结论：通过
+
+Fresh non-author final Gate：PASS。官方 announcement owner/cutoff、`575 = 70 + 505`、两项机构 closure、70 份 exact-v1 Evidence、`8 score7 + 51 score8 + 11 score9`、`70 = 36 Applied + 34 No Change` 已对账。36 个 Applied 的 marker 唯一/成对/位于首个 `## Review notes` 前；9 个 root binding 顺读相邻段落后语义通过。整体状态：Complete；Coverage=Closed、Evidence=Passed、Books=Passed、unresolved findings=0。
+
+Fresh 审阅记录见 [`FRESH_NON_AUTHOR_FINAL_REVIEW_20260915.md`](../_sources/daily-20260520/FRESH_NON_AUTHOR_FINAL_REVIEW_20260915.md)。
+
+完整作者检查点见 [`AUTHOR_V3_RECERTIFICATION_20260915.md`](../_sources/daily-20260520/AUTHOR_V3_RECERTIFICATION_20260915.md)。
+
+### Legacy V2.1 evidence appendix — Executive Summary
 
 本次独立重放枚举并逐项闭合 727 个注册 arXiv identity，冻结 75 个 Source Family；pre-denominator closure=652，withdrawn pre-denominator=0。32 个旧候选被迁回正确 owner day，3 个漏检 family 已恢复 exact-v1 全文并完成 Source Review。
 
 DataCite `created` 仅作为 initial DOI registration 的 owner-day proxy；`updated`、v1 Updated 与 current OAI datestamp 只记录 revision provenance，不决定 first-public owner。机制结论只绑定 exact-v1 正文。 本日所有 Books disposition 已有终态。
 
-## 1. Coverage
+### Legacy V2.1 — Coverage
 
-<!-- validator:report-metadata-v2 -->
+<!-- legacy-validator:report-metadata-v2 -->
 | Field | Value |
 | --- | --- |
 | Contract Version | V2.1 |
@@ -33,14 +376,14 @@ DataCite `created` 仅作为 initial DOI registration 的 owner-day proxy；`upd
 | Previous Denominator ID | — |
 | Denominator ID | DEN-20260520-CREATED-8ba5495e97ea385a |
 | Denominator Frozen At | 2026-09-03T12:36:05+08:00 |
-| Completion Status | Complete |
+| Completion Status | Historical V2.1 record only; current V3 final status is Complete |
 | Coverage Gate | Closed |
 | Evidence Gate | Passed |
-| Books Gate | Passed |
+| Books Gate | Historical V2.1 record only; current V3 Books Gate is Passed |
 
 ### Source Coverage Receipt
 
-<!-- validator:source-coverage-v2 -->
+<!-- legacy-validator:source-coverage-v2 -->
 | Source ID | Window Start | Window End | Executed At | Endpoint / Filter | Result | Hits | Candidate Source Families | Pagination / Cursor | Window Watermark | Closure Evidence | Gap / Limitation ID |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | SRC-ARXIV | 2026-05-19T09:00:00+08:00 | 2026-05-20T09:00:00+08:00 | 2026-09-03T12:36:05+08:00 | DataCite prefix 10.48550 initial created-day inventory + registered arXiv categories + exact-v1 identity/body | checked | 727 | SF-2026-ARXIV-2605-18755;SF-2026-ARXIV-2605-18762;SF-2026-ARXIV-2605-18792;SF-2026-ARXIV-2605-18796;SF-2026-ARXIV-2605-18803;SF-2026-ARXIV-2605-18859;SF-2026-ARXIV-2605-18891;SF-2026-ARXIV-2605-18899;SF-2026-ARXIV-2605-18918;SF-2026-ARXIV-2605-18930;SF-2026-ARXIV-2605-18991;SF-2026-ARXIV-2605-19008;SF-2026-ARXIV-2605-19049;SF-2026-ARXIV-2605-19099;SF-2026-ARXIV-2605-19101;SF-2026-ARXIV-2605-19127;SF-2026-ARXIV-2605-19140;SF-2026-ARXIV-2605-19151;SF-2026-ARXIV-2605-19169;SF-2026-ARXIV-2605-19192;SF-2026-ARXIV-2605-19193;SF-2026-ARXIV-2605-19196;SF-2026-ARXIV-2605-19218;SF-2026-ARXIV-2605-19228;SF-2026-ARXIV-2605-19240;SF-2026-ARXIV-2605-19242;SF-2026-ARXIV-2605-19262;SF-2026-ARXIV-2605-19269;SF-2026-ARXIV-2605-19276;SF-2026-ARXIV-2605-19282;SF-2026-ARXIV-2605-19314;SF-2026-ARXIV-2605-19319;SF-2026-ARXIV-2605-19321;SF-2026-ARXIV-2605-19328;SF-2026-ARXIV-2605-19335;SF-2026-ARXIV-2605-19341;SF-2026-ARXIV-2605-19373;SF-2026-ARXIV-2605-19407;SF-2026-ARXIV-2605-19444;SF-2026-ARXIV-2605-19447;SF-2026-ARXIV-2605-19461;SF-2026-ARXIV-2605-19478;SF-2026-ARXIV-2605-19481;SF-2026-ARXIV-2605-19537;SF-2026-ARXIV-2605-19576;SF-2026-ARXIV-2605-19593;SF-2026-ARXIV-2605-19604;SF-2026-ARXIV-2605-19722;SF-2026-ARXIV-2605-19755;SF-2026-ARXIV-2605-19769;SF-2026-ARXIV-2605-19775;SF-2026-ARXIV-2605-19779;SF-2026-ARXIV-2605-19811;SF-2026-ARXIV-2605-19847;SF-2026-ARXIV-2605-19893;SF-2026-ARXIV-2605-19932;SF-2026-ARXIV-2605-19945;SF-2026-ARXIV-2605-19952;SF-2026-ARXIV-2605-19999;SF-2026-ARXIV-2605-20005;SF-2026-ARXIV-2605-20022;SF-2026-ARXIV-2605-20023;SF-2026-ARXIV-2605-20051;SF-2026-ARXIV-2605-20061;SF-2026-ARXIV-2605-20084;SF-2026-ARXIV-2605-20179;SF-DYNATRAIN-FAST-ONLINE-PARALLELISM-SWITCHING-FOR-ELASTIC-LLM-TRAINING;SF-EVALUATING-MEMORY-CONDENSATION-STRATEGIES-FOR-CODING-AGENTS-IN-DATA-DRIV;SF-FINE-GRAINED-BENCHMARK-GENERATION-FOR-COMPREHENSIVE-EVALUATION-OF-FOUNDA;SF-HOW-FAITHFUL-IS-TRAJECTORY-BASED-DATA-ATTRIBUTION-ERROR-SOURCES-REMEDIES;SF-INAR-VL-INPUT-AWARE-ROUTING-FOR-EDGE-CLOUD-VISION-LANGUAGE-INFERENCE;SF-NOT-ALL-TOKENS-ARE-WORTH-CACHING-LEARNING-SEMANTIC-AWARE-EVICTION-FOR-LL;SF-PASC-PIPELINE-AWARE-CONFORMAL-PREDICTION-WITH-JOINT-COVERAGE-GUARANTEES-;SF-ROBUST-CHECKPOINT-SELECTION-FOR-MULTIMODAL-LLMS-VIA-AGENTIC-EVALUATION-A;SF-SPHERICAL-KV-ANGLE-DOMAIN-ATTENTION-AND-RATE-DISTORTION-RETENTION-FOR-EF | created-day pages=closed; OAI category sets=closed; direct same-day OAI=575 | 2026-05-20T09:00:00+08:00 | coverage:SRC-ARXIV:20260520 | — |
@@ -54,14 +397,14 @@ DataCite `created` 仅作为 initial DOI registration 的 owner-day proxy；`upd
 
 ### Materials Request Ledger
 
-<!-- validator:materials-request-v1 -->
+<!-- legacy-validator:materials-request-v1 -->
 | Request ID | Priority | Source Family ID | Source ID | Gap / Limitation ID | Owner Week | Known Identifiers / URLs | Missing Material | Why Existing Evidence Is Insufficient | Acceptable Substitute | Suggested File Name | Required Review Scope |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 None — 没有 exact-version primary-material blocker。
 
-## 2. Candidate Ledger
+### Legacy V2.1 — Candidate Ledger
 
-<!-- validator:candidate-ledger-v2.1 -->
+<!-- legacy-validator:candidate-ledger-v2.1 -->
 | Source Family ID | Primary Identifier | Event Identity | Owner Week | First-public Date | Supporting Source IDs | Design Delta | System Reach | Durability | Total | Candidate State | Review Status | Access Status | Review Override | Review Ref | Owner Report Ref | Prior Review Ref | Reconciliation | Stable Node ID | Books Disposition | Books Review Ref | Benchmark Claim |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | SF-2026-ARXIV-2605-18755 | arXiv:2605.18755v1 | paper-v1:2605.18755 | 2026-W21 | 2026-05-20 | SRC-ARXIV | 3 | 2 | 2 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2605-18755 | self | — | new_in_window | PLATFORM-LOGGING | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2605-18755 | yes |
@@ -140,9 +483,9 @@ None — 没有 exact-version primary-material blocker。
 | SF-ROBUST-CHECKPOINT-SELECTION-FOR-MULTIMODAL-LLMS-VIA-AGENTIC-EVALUATION-A | arXiv:2605.18852v1 | paper-v1:2605.18852 | 2026-W21 | 2026-05-20 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | knowledge_gap | review:SF-ROBUST-CHECKPOINT-SELECTION-FOR-MULTIMODAL-LLMS-VIA-AGENTIC-EVALUATION-A | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | Integrate | books-review:SF-ROBUST-CHECKPOINT-SELECTION-FOR-MULTIMODAL-LLMS-VIA-AGENTIC-EVALUATION-A | no |
 | SF-SPHERICAL-KV-ANGLE-DOMAIN-ATTENTION-AND-RATE-DISTORTION-RETENTION-FOR-EF | arXiv:2605.18856v1 | paper-v1:2605.18856 | 2026-W21 | 2026-05-20 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-SPHERICAL-KV-ANGLE-DOMAIN-ATTENTION-AND-RATE-DISTORTION-RETENTION-FOR-EF | self | — | new_in_window | INFER-KV-CACHE | No Change — Existing Coverage | books-review:SF-SPHERICAL-KV-ANGLE-DOMAIN-ATTENTION-AND-RATE-DISTORTION-RETENTION-FOR-EF | no |
 
-## 3. Review Completion Receipt
+### Legacy V2.1 — Review Completion Receipt
 
-<!-- validator:review-completion-v1 -->
+<!-- legacy-validator:review-completion-v1 -->
 | Source Family ID | Review Provenance ID | Review Route | Primary Evidence Version | Reviewed Evidence Versions | Method / Identity Locators | Evaluation Locators | Limitations / Counterevidence Locators | Artifact Locators | Claim Boundary Ref | Completion Result |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | SF-2026-ARXIV-2605-18755 | RP-10421f11c0c05fee | deep | arXiv:2605.18755v1 | SRC-ARXIV@arXiv:2605.18755v1 | https://arxiv.org/html/2605.18755v1#S2 | https://arxiv.org/html/2605.18755v1#S4 | https://arxiv.org/html/2605.18755v1#S6 | Not Disclosed — exact-v1 review found no versioned public artifact contract | claim:SF-2026-ARXIV-2605-18755 | complete |
@@ -1127,18 +1470,18 @@ Books Decision=`Integrate`。旧方案在固定 workload、较低风险或无需
 Books Decision=`No Change — Existing Coverage`。旧方案在固定 workload、较低风险或无需新增 owner 时仍成立；新机制引入的分类器/控制器误差、额外状态、迁移成本与攻击面必须与 fallback/coexistence 同时进入 owner narrative。
 <!-- review:SF-SPHERICAL-KV-ANGLE-DOMAIN-ATTENTION-AND-RATE-DISTORTION-RETENTION-FOR-EF:end -->
 
-## 4. Benchmark Contracts
+### Legacy V2.1 — Benchmark Contracts
 
-<!-- validator:benchmark-contract-v1 -->
+<!-- legacy-validator:benchmark-contract-v1 -->
 | Source Family ID | Workload | Model | Hardware | Precision | Input Length | Output Length | Batch | Concurrency | SLO | Evaluator |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | SF-2026-ARXIV-2605-18755 | exact-v1 evaluation for Operational Memory Architecture for Kubernetes:Preserving Causal Context Across the Evidence Horizon | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | paper authors |
 | SF-2026-ARXIV-2605-18762 | exact-v1 evaluation for ALDEN: Boosting Private Data Extraction from Retrieval-Augmented Generation Systems via Active Learning and Distribution Estimation | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | paper authors |
 | SF-2026-ARXIV-2605-19755 | exact-v1 evaluation for Operationalising Artificial Intelligence Bills of Materials (AIBOMs) for Verifiable AI Provenance and Lifecycle Assurance | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | Not Disclosed | paper authors |
 
-## 5. Deep Analysis Selection
+### Legacy V2.1 — Deep Analysis Selection
 
-<!-- validator:deep-analysis-selection-v1 -->
+<!-- legacy-validator:deep-analysis-selection-v1 -->
 | Source Family ID | Eligibility | Decision | Analysis Unit ID | Subsumed By | Priority Rationale | Narrative Ref |
 | --- | --- | --- | --- | --- | --- | --- |
 | SF-2026-ARXIV-2605-18755 | score_7_9 | not_selected | — | — | Evidence Review 已完成，但相对当日 Top 3 未增加更高 Design Delta/System Reach；保留完整 Review。 | analysis-decision:SF-2026-ARXIV-2605-18755 |
@@ -1379,9 +1722,9 @@ Books Decision=`No Change — Existing Coverage`。旧方案在固定 workload�
 
 <!-- analysis-decision:SF-SPHERICAL-KV-ANGLE-DOMAIN-ATTENTION-AND-RATE-DISTORTION-RETENTION-FOR-EF:start -->该 family 已完成所需 Source Review；因当日最多三个 Deep narrative units，未选入展示层不等于跳过证据审计。<!-- analysis-decision:SF-SPHERICAL-KV-ANGLE-DOMAIN-ATTENTION-AND-RATE-DISTORTION-RETENTION-FOR-EF:end -->
 
-## 6. Books Comparison
+### Legacy V2.1 — Books Comparison
 
-<!-- validator:books-comparison-v1 -->
+<!-- legacy-validator:books-comparison-v1 -->
 | Source Family ID | Stable Node ID | Target Chapter Ref | Adjacent Chapter Refs | Existing Proposition | New Evidence Delta | Evolution Relation | Decision | Books Review Ref |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | SF-2026-ARXIV-2605-18755 | PLATFORM-LOGGING | books/part-06-ai-infrastructure/68-logging.md#L72 (H2: 可靠传输与背压) | books/part-06-ai-infrastructure/67-monitoring.md#L10 (H2: 本章要回答的问题); books/part-06-ai-infrastructure/69-trace.md#L10 (H2: 本章要回答的问题) | existing:SF-2026-ARXIV-2605-18755 | delta:SF-2026-ARXIV-2605-18755 | Layering / Dependency | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2605-18755 |
@@ -1838,9 +2181,9 @@ Decision: `No Change — Existing Coverage`; reviewer=fresh-context:apr-may-book
 <!-- delta:SF-SPHERICAL-KV-ANGLE-DOMAIN-ATTENTION-AND-RATE-DISTORTION-RETENTION-FOR-EF:start -->We present Spherical KV, a long-context inference method that treats KV allocation as a rate-distortion problem grounded in attention geometry for efficient decoding.<!-- delta:SF-SPHERICAL-KV-ANGLE-DOMAIN-ATTENTION-AND-RATE-DISTORTION-RETENTION-FOR-EF:end --> Independent decision=`No Change — Existing Coverage`；prewrite challenge 已通过，不写共享 Books。
 <!-- books-review:SF-SPHERICAL-KV-ANGLE-DOMAIN-ATTENTION-AND-RATE-DISTORTION-RETENTION-FOR-EF:end -->
 
-## 7. Semantic Audit
+### Legacy V2.1 — Semantic Audit
 
-<!-- validator:semantic-audit-v1 -->
+<!-- legacy-validator:semantic-audit-v1 -->
 | Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | SA-20260520-COVERAGE | fresh-context:owner-replay-20260903 | coverage | coverage:SRC-ARXIV:20260520 | none | raw/retained/closure/withdrawn conservation and initial-created owner mapping independently recounted | passed |
@@ -1848,17 +2191,17 @@ Decision: `No Change — Existing Coverage`; reviewer=fresh-context:apr-may-book
 | SA-20260520-SELECTION | fresh-context:owner-replay-20260903 | deep_analysis_selection | validator:deep-analysis-selection-v1 | none | eligible=75；selected=3；all others retain completed reviews | passed |
 | SA-20260520-BOOKS | fresh-context:apr-may-books-20260903 | books | validator:books-comparison-v1 | none | — | passed |
 
-## 8. Ignored Noise
+### Legacy V2.1 — Ignored Noise
 
 - Pre-denominator closures=652；逐 family 理由保存在 owner receipt。
 - Withdrawn=0；只保留审计 closure，不进入候选、评分、Review 或 Books。
 - `updated` / current OAI datestamp 的 revision 噪声不拥有 Daily。
 
-## 9. Recommended Action
+### Legacy V2.1 — Recommended Action
 
 本日全部 Gate 已闭合，无进一步动作。
 
-## 10. Repository Changes
+### Legacy V2.1 — Repository Changes
 
 - Owner receipt（本阶段只读）：`papers/2026/05/_sources/arxiv-owner-replay-20260903/20260520/arxiv-owner-receipt.json`
 - Canonical ledger（Books terminal state）：`papers/2026/05/_sources/arxiv-owner-replay-20260903/20260520/canonical-ledger.json`
@@ -1866,16 +2209,16 @@ Decision: `No Change — Existing Coverage`; reviewer=fresh-context:apr-may-book
 - Superseded report：`papers/2026/05/_sources/arxiv-owner-replay-20260903/legacy-reports-before-created-owner-reconciliation/2026-05-20.md`
 - Books body: no change for the recovered families on this date.
 
-## 11. Open Questions
+### Legacy V2.1 — Open Questions
 
 - 无。
 
-## 12. Sources
+### Legacy V2.1 — Sources
 
 - [DataCite REST API](https://api.datacite.org/dois) — initial `created` owner-day proxy；`updated` 只作 revision provenance。
 - [arXiv OAI](https://export.arxiv.org/oai2) — identity/date corroboration；current datestamp 不拥有 first-public day。
 - [arXiv](https://arxiv.org/) — exact-v1 abstract、HTML/PDF 与 version history。
 
-## 13. Final Status
+### Legacy V2.1 — Final Status
 
-Completion Status: Complete; Coverage: Closed; Evidence: Passed; Books: Passed; unresolved findings=0
+Legacy Completion Status: Complete under V2.1 only; superseded by the current V3 Complete result above.

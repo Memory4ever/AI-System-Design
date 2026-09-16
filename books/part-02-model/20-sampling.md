@@ -173,6 +173,15 @@ x_(t+1) ~ p(. | x_<=t)
 
 不存在全任务通用的最佳参数。代码生成、创意写作、事实问答、结构化 JSON 和 Agent tool arguments 对随机性的容忍不同。
 
+
+### 局部校准误差会复合成序列级多样性坍缩
+
+top-k、top-p 或 temperature 假设 token 概率的相对顺序和形状足以支持逐步选择；在短输出和低歧义任务中这是合理近似。长序列会把 order miscalibration 与 shape miscalibration 持续写回 prefix：前者让候选排序错误，后者让概率质量过尖或过平，局部误差最终表现为 sequence-level diversity collapse。评测因此要同时保存 token-level calibration slice 与整段输出的覆盖、多样性和正确性，不能只调一个解码超参数。
+
+联合校准增加 reference distribution、采样次数和 evaluator 成本，也可能把任务本身的单峰答案误判为坍缩。确定性任务或严格可复现接口仍可使用 greedy/低温策略；缺少可靠 target distribution 时应报告未判定而非声称已校准。`arXiv:2605.11128v1` 的 §4–§5、相关附录实验及 Appendix J 只证明作者模型与任务上的两类误差，不给出跨 workload 的通用采样配方。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11128 -->
+
 ## EOS、停止条件和最大长度
 
 EOS 是 vocabulary 中的特殊 token。若被选中，generation 可以结束。系统还可能使用：
@@ -219,6 +228,14 @@ tokenizer、注入 layer、control vector、window、阈值和 prompt/adapter re
 该 envelope 内调节轨迹。ReBalance 的实验说明这类双向控制在若干 reasoning workload 上可以改变 accuracy-length frontier，
 不证明它能普遍提升线上 capacity。无法取得 hidden/logprob、高风险任务需要可解释 verifier，或控制 artifact 尚未校准时，
 固定 budget、普通 EOS 和外部 early exit 继续成立。
+
+### Semantic Steering 可以从单向 Vector 扩展为受限 Subspace
+
+单个 steering vector 适合近似一维、方向稳定的概念；当概念在 hidden state 中占据多个相关方向时，固定向量会漏掉模式，过强插值又可能破坏流畅性。Conceptor 一类分支用 contrastive activations 估计概念子空间，再通过 interpolation 或 replacement 控制投影强度；layer quota 只用于发现可能有效的 intervention point，不能作为 correctness 或安全真值。
+
+子空间扩大 coverage，也会因 overlap、有限 pairs、layer drift 与 Boolean composition 产生非预期耦合，replacement 过强还可能生成退化输出。概念近似线性、简单向量已经稳定时保留旧方案；校准不足或外部行为 verifier 不通过时，应降低强度、关闭 steering 或回退提示/微调。exact-v1 只测试三种较小 instruction model、三个英文概念、单层 intervention 与自动 classifier，不证明生产行为正确或安全。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-04980 -->
 
 ### Parallel Sampling：先分开 Coverage 与 Selection
 
@@ -316,6 +333,12 @@ Parallel sampling 的预算也不能只写“调用次数”。完整 contract �
 一次长 pairwise judge 与一次短 candidate generation 不是等价工作量。Greedy 或单样本在低延迟、低
 风险和 selector 不可靠时仍更合理；majority 在可规范化且错误相对独立时仍很有效；pairwise graph 是
 当绝对评分困难、又无法承受全量两两比较时出现的中间设计，而不是它们的单向替代。
+
+### Answer-first 与 Optional Justification
+
+传统 reasoning decoding 把答案提交排在完整推理轨迹之后，这在 verifier、tool 或后续步骤必须消费过程时合理，却把 answer latency 与解释成本绑在一起。另一条条件分支是先生成并提交 final answer，再按需生成 answer-conditioned justification；训练时还可以 mask answer loss，只对 justification 提供监督。<!-- semantic-body-binding:SF-2026-ARXIV-2605-06165 -->
+
+后生成的解释不证明它忠实反映答案的因果过程，也可能把错误答案包装得更连贯。需要 faithful process、外部 verifier 消费 trace，或任务本身要求显式搜索时，仍应保留 pre-answer reasoning 或把搜索移入可审计的 workflow。该分支优化的是输出接口与延迟，不是凭空获得推理能力。
 
 ## Logit penalties 与约束的边界
 

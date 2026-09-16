@@ -142,6 +142,24 @@ old weights + optimizer moments
 
 它用已有训练计算换取延后容量决策，却新增短期 loss shock、parallel-layout migration 与可复现性风险。从头训练在目标形状已知、稳定性优先时仍是清晰基线；“函数近似不变”也不证明 optimizer trajectory 连续。
 
+### 梯度不存在时，训练必须改写更新接口
+
+反向传播适合几乎处处可微的网络；含离散跳变、硬事件或黑盒算子的模型中，真实梯度可能根本不存在，
+继续套用 straight-through estimator 只是引入带偏 proxy。一个条件分支把目标分布与当前输出的差异
+写成 optimal-transport 问题，用 forward-only 样本构造参数迁移，并把收敛声明收紧为固定离散分辨率
+下的 stationarity。它获得对不可微组件的训练入口，却增加采样、transport 求解和分辨率依赖；可微
+近似足够准确或规模化吞吐优先时，标准梯度仍更合适。现有理论与实验只覆盖论文定义的网络和有限
+分辨率，不能外推为大模型预训练的通用替代优化器。
+<!-- source-family:SF-2026-ARXIV-2605-01928 -->
+
+### Gradient Horizon 可以从全局 BP 收缩为受控的 Block-local Objective
+
+全局 backpropagation 让最终 loss 协调所有层，是端到端训练的标准基线；代价是必须保存跨整图 activation，并让深层信用通过完整反向链传播。显存成为首要约束时，可以在 block boundary 增加局部 readout，用局部 objective 与相邻统计训练当前 block，并把 gradient horizon 作为显式配置，而不是把“forward-only”误写成与 BP 等价的优化。
+
+局部目标减少 activation memory，却牺牲跨层协同并引入 label/readout 依赖；不同 block 的 goodness 也未必对应全局任务质量。只在局部 objective、边界 state 和最终 evaluation 都通过时才扩大使用；失配时应增加可反传范围、混合全局 loss 或回退完整 BP。exact-v1 证据限 CNN/VGG、监督分类与作者硬件，不证明该分支可扩展到 Transformer/LLM 预训练、跨设备通信或获得 BP 等价轨迹。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-04346 -->
+
 ### Dynamic Sparsity 的 Topology Update 也是 Training State Transition
 
 Dense training 或静态 mask 让一组参数持续积累 Adam moments，状态身份简单且恢复路径成熟；dynamic sparse training 周期性 prune / regrow 后，新激活连接没有历史一阶、二阶矩，却若沿用全局 late-training step，首次更新可能远大于成熟参数。此时 loss spike 的 owner 不是 collective，而是 `mask/topology revision + regrowth initialization + local optimizer timestep/moments + learning-rate phase` 这一组训练状态。
@@ -257,6 +275,20 @@ alignment 做 damping，就引入了有意 bias。被 mask 的 block 也不是�
 checkpoint。论文的小模型结果不能证明大规模分布式训练存在 wall-clock 收益，dense update 在实现成熟、景观较均匀或
 可复现性优先时仍是基线。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-18999:start -->
+归一化 optimizer 还必须把“选择方向”与“选择 step scale”拆开。固定 scale 在几何、训练预算与轨迹半径稳定时仍是
+最易复现的基线；这些条件变化后，同一 normalized direction 可能因半径失配而过冲或停滞。一个受限分支保留 Muon
+方向作为 proposal，再从已经探索的 trajectory radius、局部下降 certificate，或重新居中的 scalar search 推导
+step radius。于是 optimizer owner 不只保存 momentum，还必须把 scale certificate、参数块身份与 checkpoint
+transition 一起版本化。
+
+这种自适应半径降低手工 scale sensitivity，却新增 trajectory/certificate state、标量搜索成本和理论假设依赖。
+certificate 错误、轨迹爆炸、star-convex 等假设不成立，或搜索成本超过收益时，应回退 tuned fixed-scale Muon、
+clipped trust radius 或 AdamW，而不能沿用失效 certificate。现有理论分别受 bounded trajectory、smooth
+star-convex、bounded initial sublevel set 与 majorized search 条件约束；实验只覆盖 GPT-124M/WikiText-103、
+ViT-Tiny/CIFAR-100 及附录小型配置，不证明大规模或分布式预训练的 wall-clock 优势。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-18999:end -->
+
 ### Optimizer State Allocation 也应服从参数角色
 
 Uniform Adam 为每个参数维护同构的一阶、二阶状态，语义清楚、kernel 成熟，在参数统计相近且 memory 可接受时仍是基线。MoE 改变的是参数角色与 activation frequency：dense backbone 持续更新，experts 稀疏且按 routing 命中，router 参数少却直接控制流量。
@@ -271,6 +303,18 @@ Uniform Adam 为每个参数维护同构的一阶、二阶状态，语义清楚�
 
 这种 regime-aware policy 用额外 eigenspectrum 估计、阈值和 module-specific state 换稳定性；估计陈旧或 rank/SNR 判错会抑制有用探索。纯 pretraining、gradient spectrum 稳定或缺少可靠 module telemetry 时，统一 baseline 仍更容易复现。`arXiv:2605.19282v1` 的 §3–§5 只支持其 spectral failure analysis、high-pass remedy 及 VLA/RLVR experiments，Appendix M 不证明该策略跨模型、规模与训练阶段普遍成立。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-08933:start -->
+Full-matrix Muon 把一个参数矩阵作为统一几何块，在梯度结构相近时最简单；attention heads 的梯度若近似满秩且相互独立，按稳定 head group 分块 whitening 可以提高单位 norm cost 的下降收益。相反，当不同 heads 的更新落在对齐的低秩子空间，过度切分会重复支付范数和正交化成本。分组因此不是无条件加速：optimizer artifact 必须绑定逻辑参数块、grouping revision 和恢复语义，训练 Gate 同时验收 loss trajectory 与稳定性。
+
+分块路径用更多正交化、重排和静态分组漂移换潜在收敛收益；融合张量的物理 layout 也不能反过来偷换数学分组。当前证据只覆盖作者的小模型、数据和 grouping 实验，不证明大规模预训练或其他硬件上的普遍优势。梯度子空间高度对齐、分组诊断不可靠或正交化成为瓶颈时，应回退 full-matrix Muon 或 AdamW。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-08933:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11181:start -->
+Matrix-aware update 的价值不能由“精确求解全局几何”这一句话解释。反例显示，随机或反转 singular spectrum 仍可能保留相近收益，因此更可检验的分解应分别观测：更新是否抑制极端 spectrum、与梯度方向的 alignment、给定 norm 下的 descent potential，以及 step size 是否与该几何匹配。Optimizer 名称只标识一套 proposal；training Gate 必须在 matched budget 下比较 update norm、loss trajectory 与 noise regime，不能从 LMO 形式直接推出性能原因。
+
+这项纠错收窄的是因果解释，不是否定所有 matrix-aware optimizer。现有理论和诊断主要依赖 random-feature model，实验只覆盖单一 GPT-2 architecture，不能外推为 Kaon 或其他部署的推荐。若分解指标无法复现、模型结构改变或额外谱诊断成本过高，应回退 matched-budget AdamW/Muon 基线，并把未解释收益保留为经验事实而非全局几何定理。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11181:end -->
+
 <!-- source-family:SF-2026-ARXIV-2605-19282 -->
 
 ### Matrix-aware Step 可以与 Sign Step 按成本交替
@@ -282,6 +326,33 @@ Muon-style matrix update 保留二维参数块的几何结构，却要支付正�
 交替减少平均高成本 step，却引入 schedule、两套 state interaction 与恢复复杂度；比例选择错误可能同时失去 Muon 收益与 sign simplicity。小模型、矩阵开销不显著或结构假设不成立时，单一 AdamW/sign path 仍更合适。`arXiv:2605.19811v1` 的 §3–§5 只支持其 optimizer geometry、alternating spectral/sign descent 与所测 language-model runs，§6 不证明更低平均 iteration cost 等价于跨 workload 更优收敛。
 
 <!-- source-family:SF-2026-ARXIV-2605-19811 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-19619:start -->
+另一条分支不是按固定 schedule 交替，而是把 gradient spectrum 当作 proposal sensor：minimum singular-value gap
+足够时采用 orthogonalized direction；gap 接近或穿越阈值、其 stability bound 恶化时，切换到 momentum-SGD
+direction。这样做以部分 matrix-aware progress 换取条件性的 stability/generalization 保证；optimizer owner 必须
+保存 threshold、每步 branch decision、momentum 与 checkpoint identity，不能把混合轨迹伪装成同一 Muon recipe。
+
+条件正交化新增 SVD/Newton-Schulz 成本、threshold calibration、分支抖动和双轨迹恢复复杂度。gap estimate 噪声大、
+理论假设无法验证、阈值频繁抖动或 matrix path 没有 wall-clock 收益时，应回退明确版本化的 pure Muon、SGDM 或
+AdamW，并保留 matched-budget 比较。exact-v1 的结论只在论文假设下成立，实验也仅覆盖 Qwen3-0.6B/WikiText-103
+与 YOLO26m；其 Introduction 有一处与 abstract、Table 1 和定理方向相反的文字错误，不能据此扩大结论。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-19619:end -->
+
+#### Sign Step 的优势取决于范数几何与噪声结构
+
+保留梯度幅度的 SGD/AdamW 是通用基线：当梯度的相对尺度包含有效曲率或置信信息、噪声相关且稠密时，直接丢掉幅度
+没有理由更好。SignSGD 则把每个坐标压成方向，只在另一套问题几何下得到不同优势：以 `ell_1` stationarity 衡量进展、
+loss 满足 `ell_infinity` smoothness，且噪声近似逐坐标可分并稀疏时，幅度可能主要携带噪声，而 sign 仍能稳定提供方向。
+矩阵版本可把相同问题扩到 Muon 一类结构化方向，但这不是“sign optimizer 普遍优于 SGD”的排名。
+
+这条分支把 optimizer selection 从名称选择改成可验证的 contract：训练 artifact 需要记录目标 stationarity norm、
+smoothness/noise 假设、参数块身份、实际 update spectrum 与失效诊断。收益是能在特定高维稀疏噪声 regime 中避免让
+不可靠幅度支配更新；代价是丢失 magnitude information，并对相关噪声、稠密噪声和错误范数假设非常敏感。假设未被
+观测支持、模型结构不匹配或稳定恢复优先时，应继续使用 magnitude-aware optimizer。现有理论结论受其假设约束，
+实验也仅覆盖 GPT-2-small 124M、10K steps 的设置，不能外推到生产规模预训练。
+
+<!-- source-family:SF-2026-ARXIV-2605-06615 -->
 
 ### Optimizer Update 要尊重参数块的对称性
 
@@ -314,6 +385,12 @@ N ~= steps * tokens_per_step
 B_global = B_micro * gradient_accumulation_steps * data_parallel_degree
 ```
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21573:start -->
+训练效率也不能只用单步 FLOPs 或模型大小表示。每一步消费多少计算、batch 中有多少可用监督信息，以及达到同一质量目标需要多少步，三者共同决定 quality-per-update。对 text-to-image 训练，稠密 caption、混合分辨率与宽高比 packing、文本/图像表示选择可以同时改变这一分母；更小的单步成本若需要更多低信息 update，并不一定更高效。
+
+这种联合设计以 caption 生成、异构样本 packing、预处理和更强 encoder/VAE 成本换取收敛效率，也很难从组件 bundle 中识别单项因果贡献。现有 exact-v1 只支持作者披露的模型、数据和比较基线；其计算比例不能外推为通用配方。若 matched-budget 收敛未改善，应回退较简单的数据与架构 recipe，并用受控 ablation 分别测量每个组件。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21573:end -->
+
 ### Preconditioner 与 Gradient 共享 Batch 时会改变估计语义
 
 用同一 minibatch 同时估计 gradient 与 curvature/preconditioner，状态简单、吞吐高，在 batch 足够大且预条件变化平缓时仍合理；但二者的统计耦合会产生 coupling bias，而 inverse/root 等非线性即使输入估计无偏也会产生 inversion bias。Cross-fit 把两类估计分到独立 microbatch，variance correction 再校正非线性偏差，因此 data cursor、microbatch identity、preconditioner revision 与 correction state 都要进入 optimizer/checkpoint 账本。
@@ -345,6 +422,14 @@ g <- g * min(1, max_norm / ||g||)
 ```
 
 它可以避免单次异常梯度破坏训练，却也可能隐藏数据异常、数值 overflow 或不合适的 learning rate。平台应同时观测 unclipped norm、clipping frequency 和 loss behavior。
+
+### Dropout Schedule 也是 Training State
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21648:start -->
+固定 dropout 在所有阶段施加相同扰动，简单且易复现；但早期表示形成与后期收敛面对的 noise budget 不同。把 dropout rate 纳入 training state，允许前期较强正则、后期降低优化噪声，不过 schedule revision、当前 step 与恢复位置也必须进入 checkpoint identity，不能只保存一个最终 rate。
+
+时变 schedule 增加调参和恢复状态，已有收益又受 mean-field edge-of-chaos 假设及作者 MLP/ViT 实验约束，并未证明同一 optimum 能迁移到 LLM 预训练。激活类别、架构或 matched-budget 验证不成立时，常量 dropout 或 no-dropout 仍是更稳妥的基线。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21648:end -->
 
 ### 每层是否需要不同或动态的 Learning Rate
 
@@ -476,6 +561,18 @@ SVD 近似都成为 optimizer-side state，必须记录 cadence、rank、误差�
 
 ## Mixed precision 为什么不是简单改 dtype
 
+### 原生低比特训练可以来自参数几何，而不只是额外缩放补丁
+
+传统低精度训练常以 per-tensor scale、Hadamard rotation 或更高精度 master state 修补动态范围，这在既有架构不可改时
+最合理。另一条路线先约束网络参数与激活的几何，使关键向量落在受控 hypersphere 上，再让 NVFP4 等窄格式直接承载
+forward/backward 的主要数值路径。变化的不是一个 dtype 开关，而是 architecture、normalization、optimizer transform、
+block scale 与硬件 kernel 的联合身份。
+
+这种共设计减少额外变换，却锁定参数化和目标格式，并把长程误差累积、异常 layer 与 optimizer state 精度变成新的
+failure mode。验收必须绑定模型规模、训练 horizon、格式、scale 粒度、optimizer、硬件和最终质量；现有 exact-v1
+证据只覆盖作者公开配置，不能推出任意 Transformer 都能“原生 4-bit”。已有 BF16/FP8 recipe 在架构冻结、稳定性优先
+或 kernel 未覆盖时仍是可靠 fallback。<!-- source-family:SF-2026-ARXIV-2605-06067 -->
+
 FP16、BF16 或更低精度可以减少 memory、communication bytes 并利用专用硬件，但训练需要维持数值范围和累积精度。
 
 系统可能使用：
@@ -488,6 +585,12 @@ FP16、BF16 或更低精度可以减少 memory、communication bytes 并利用�
 所以“模型以 BF16 训练”并不能唯一确定每份状态的 dtype。Checkpoint、optimizer memory 估算和 collective bytes 都必须基于实际 precision policy。
 
 ### Precision Policy 应沿误差传播路径分区
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-25966:start -->
+Precision policy 还与 learning-rate schedule 和模型规模耦合，不能把“低比特训练需要更长 warmdown”写成普遍规则。一个 factorial study 在匹配训练预算下未观察到 FP16、INT8、INT6 需要不同 schedule，却在 INT4、约五千万参数以上看到从 noise-dominated 到明确 warmdown preference 的边界。长期结论不是某个阈值本身，而是 bit-width、model size、optimizer/data 和 schedule 必须共同组成训练 identity。
+
+定位这种交互需要 matched seeds 和大规模 sweep；数据、optimizer、训练长度或更大模型变化都可能移动边界。只有在已验证 cells 才能复用高精度 schedule，越界时应回退 precision-specific local sweep 和保守高精度 recipe。作者的小模型范围不能证明 frontier-scale QAT 的最优日程。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-25966:end -->
 
 训练中的 operator 即使都表现为 GEMM，也不具有相同的误差容忍度。Forward activation 的局部误差只需
 在当前输出尺度下足够小；backward 中的弱信号还会被后续乘法、跨层传播、optimizer accumulation 和漫长
@@ -610,6 +713,28 @@ learner updates only on unlabeled batch
 feedback distribution、designer version 与 alignment approximation 都属于训练 identity。局部 gradient alignment
 不保证长期 trajectory，更可能牺牲 general capability；无可信 verifier 或多域冲突强时固定 objective 仍更稳。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20613:start -->
+层级递归模型还可把长程 credit assignment 拆成多时间尺度 hidden-state update，并用特定 normalization 控制
+递归梯度。这类 HRM-style objective 改变了 recurrence depth、state identity 与 optimizer dynamics；论文规模、
+数据和 MagicNorm 设置上的收益不证明它是 Transformer 预训练的通用替代。递归状态不稳定、墙钟成本或 matched
+baseline 不占优时，应回退固定深度 objective 与常规 normalization。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20613:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21104:start -->
+若一个 step 组合多个 optimizer，更新顺序也会成为训练身份：非交换算子使 `A→B` 与 `B→A` 到达不同参数状态。
+HORST 一类 learned composition 可以按局部信号选择顺序，却新增 controller state、额外 probe 与过拟合特定训练段
+的风险。作者实验只能支持披露模型与 horizon；顺序收益不能在 matched run 重现时，应回退单一 optimizer 或固定、
+可复算的 composition，并把每个子更新与 checkpoint 顺序完整记录。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21104:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21486:start -->
+超参数从小规模向大规模迁移，不能只看一次最优值是否接近。更完整的 transfer contract 同时检查 scaling-law fit、
+对 extrapolation error 的鲁棒性，以及所选 parameterization 在极限尺度留下的 loss penalty；weight decay、训练长度
+和 compute-optimal allocation 也要作为联合变量。它增加多尺度 probe 与拟合成本，且仍依赖作者的模型族和实验
+范围。拟合不稳或目标规模越出观测区间时，应回退目标尺度小网格、保守 schedule 和在线 canary，而不是把一条
+经验缩放规则永久固化。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21486:end -->
+
 ### Mid-training：能力生产链中的独立阶段
 
 Tool-use mid-training 不应只把 API 文档拼进语料。数据单元需要同时包含 tool schema、调用 proposal、可执行环境 transition、result/receipt 与失败修复，并把模拟或生成轨迹先通过 schema、执行和 outcome verifier；否则模型学到的是看似正确的调用文本。该阶段能在大规模训练中建立 affordance 表示，却不授予运行时权限，真实 effect 仍由 Agent runtime 控制。<!-- semantic-body-binding:SF-2026-ARXIV-2608-20314 -->
@@ -695,6 +820,25 @@ KV/activation identity 与恢复复杂度。它在作者受限实验中是 `Stat
 wall-clock 或 energy 一定下降。硬件偏好规则 shape、SLO 要求稳定、exit policy 漂移或缺少专用 kernel 时，
 固定深度仍是更好的系统设计。
 
+### Latent Reasoning 要分开路径优化与表示空间约束
+
+把显式 chain-of-thought 压入连续 latent state，可以缩短可见序列并让中间计算更自由；但“最终答案 loss 能反向传播”不代表每一段 latent trajectory 都获得了有效监督。深路径上的 gradient attenuation 属于 optimization-path failure，而不同 latent step 漂移、坍塌或失去可区分性属于 representation-space failure，两者需要不同传感器和 actuator：前者检查梯度到达与中间目标，后者检查表示几何、可预测性和跨步一致性。
+
+联合监督可能改善可训练性，却增加辅助目标、权重调节与错误 inductive bias；强行让 latent 可解释也可能限制有效内部表示。显式 reasoning、较短 latent path 或只监督终态在任务简单、路径稳定时仍成立。现有证据只覆盖特定 latent-CoT 设置，不是所有隐藏推理架构的收敛定理，也不提供可解释性保证。
+<!-- source-family:SF-2026-ARXIV-2606-20075 -->
+
+### 稀疏长上下文预训练可以在末期恢复为稠密部署 Artifact
+
+全程 dense attention 最接近部署语义，却让长上下文训练承担完整二次成本；永久稀疏又要求推理 runtime 接受不同模型
+结构。Training-only 的中间分支可以在大部分训练阶段用多分辨率 Q/K/V 金字塔选择少量位置，经 gather→FlashAttention
+→scatter 完成更新，随后在同一 optimizer 与 dataloader identity 下切回 dense SDPA 做 recovery。最终 artifact 恢复
+稠密结构，训练期 selection state 和恢复步数则必须进入 run lineage。
+
+它用训练吞吐换来 selection bias、稀疏 kernel/gather 开销和 recovery 不充分风险；末期 dense loss 恢复也不自动证明
+所有长上下文能力被恢复。应比较等 token/compute 的 dense baseline，报告选择率、恢复曲线、长上下文切片和目标硬件；
+现有证据绑定作者的长上下文模型与 B200 环境，也不覆盖 autoregressive decode。上下文较短、选择开销不可摊销或部署
+前无法完成 dense recovery 时，全程 dense 仍更可靠。<!-- source-family:SF-2026-ARXIV-2605-06554 -->
+
 ## Activation checkpointing 移动了什么瓶颈
 
 Backpropagation 需要 forward activations。全部保留会占据大量显存；activation checkpointing 只保存部分边界，backward 时重新计算中间 activations：
@@ -721,6 +865,22 @@ data quality and mixture
 
 只增大参数而训练 tokens 不足，模型可能 undertrained；只增加重复低质量 tokens，也不会获得与独立高质量数据相同的收益。Compute-optimal 分配是特定模型家族、数据和预算下的经验决策，不是永恒常数。
 
+### 模型压缩的 Baseline 必须绑定训练预算与可执行粒度
+
+从大模型剪枝可以复用已有表示，直接训练较小 dense 模型则拥有更简单的 artifact 和执行路径；若二者消费的追加训练 tokens、初始化来源和数据顺序不同，只比较最终精度会把压缩机制与额外训练预算混在一起。公平比较至少要冻结 parent lineage、目标尺寸、训练 token budget、mask/granularity 与 optimizer recipe，再把质量 Gate 和硬件执行 Gate 分开。
+
+细粒度稀疏可能在相同 token budget 下保留更多质量，却未必被目标 kernel 消费；结构化剪枝更容易产生速度收益，也可能删除更有用的容量。Training run 只证明压缩后的模型质量，runtime owner 仍需在目标硬件上证明 latency、memory 和 SLO 改善。缺少稳定 sparse kernel、训练预算无法匹配或质量回归超界时，直接训练 dense small model 仍是可验证 fallback；单一模型族和剪枝比例不能推出通用最优路径。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606.14150 -->
+
+### 数据受限的 Scaling 必须把 Unique Data 与 Repetition 分账
+
+<!-- semantic-body-binding:SF-SPARSE-REPEATED-TRAINING:start -->
+经典 compute-optimal 分配隐含一个近似前提：新增训练 tokens 仍带来足够的新信息。语料受限后，同一批 unique tokens 会被重复消费；此时把训练 token 总量继续当作独立数据，会把记忆化收益、数据饱和与模型容量混成一个轴。更完整的实验身份应同时冻结 unique-token volume、repetition count、effective parameters、sparsity、数据质量和 optimizer/schedule，再比较同一预算下增加模型、增加重复轮次或改变稀疏度的边际收益。
+
+这条分支把“稀疏模型能容纳更多参数”与“重复数据还能提供多少新信号”放进同一 data-saturation boundary。它能避免直接套用 dense Chinchilla 分配或把理论 FLOPs 节省解释成真实硬件收益，却增加 scaling-law 拟合、语料多样性估计和跨配置 sweep 成本。拟合范围之外、token 质量改变、optimizer 或稀疏 kernel 改变时，原最优点必须重新校准；unique data 充足、重复率低或稀疏执行没有硬件支持时，普通 dense scaling 与单次语料遍历仍是更清楚的基线。现有 exact-v1 证据只覆盖论文披露的模型尺度、语料、稀疏过程和 compute regime，不证明 frontier-scale mixture 或生产硬件效率。
+<!-- semantic-body-binding:SF-SPARSE-REPEATED-TRAINING:end -->
+
 Pretraining loss 曲线还不能直接解释具体能力。某些能力只在合适 prompting、post-training 或 Evaluation 中显现；另一些平均 loss 改进可能集中在高频简单 tokens。
 
 ### Scaling-law Pilot 也是有预算的实验调度
@@ -730,6 +890,13 @@ Pretraining loss 曲线还不能直接解释具体能力。某些能力只在合
 <!-- semantic-body-binding:SF-2026-ARXIV-2604-22753:start -->
 一种条件分支把待跑配置、成本、当前拟合后验与目标区域写成 versioned experiment state，每一步选择最能减少目标区外推不确定性的下一项实验，再用新结果更新选择策略。Scheduler 只拥有实验 proposal；训练结果、拟合模型和独立 holdout 共同决定 scaling-law artifact 是否可用。它能把预算集中到信息量高的 runs，却依赖不确定性校准、候选池与成本 proxy，且一次或近视选择可能错过更好的组合。后验不可信、目标区改变或需要审计可比性时应回退预定义 grid。作者只在其 scaling-law tasks 与 mixture approximation 下展示效果，不证明可安全规划任意大模型训练。
 <!-- semantic-body-binding:SF-2026-ARXIV-2604-22753:end -->
+
+#### Probe 饱和后，Fragility 只能补充诊断
+
+线性 probe accuracy 在训练早期饱和，不代表表示停止演进；它可能只是分类边界已经可分，却没有反映 margin 与冗余继续变化。可以逐层注入 activation noise，测量 probe accuracy 崩溃的临界点，把 fragility 作为补充 sensor。跨层比较必须按各层 activation RMS 归一化，否则幅值差会伪装成鲁棒性；同层随训练比较则可保留 raw threshold。
+
+噪声诊断增加 forward 成本，也依赖 probe、noise family 和阈值选择；更稳不等于下游能力更强。它只拥有训练过程的诊断权，不能单独提交 checkpoint 质量，必须与原 probe、迁移任务和最终 Evaluation 共存。现有证据限作者模型和训练轨迹，不提供跨架构的统一阈值。
+<!-- source-family:SF-2026-ARXIV-2606-11375 -->
 
 ### Training Budget 与 Test-time Compute 必须放进同一生命周期目标
 
@@ -780,6 +947,7 @@ Loss spike 或 NaN 可能来自：
 - Learning rate、initialization 或 optimizer 配置。
 - Low-precision overflow/underflow。
 - Collective、硬件或 silent data corruption。
+
 - 恢复 checkpoint 后状态不一致。
 - 不同 ranks 读取到不同 batch 或参数。
 
@@ -792,6 +960,14 @@ Loss spike 或 NaN 可能来自：
 - Checkpoint save/restore validation。
 
 训练平台的价值，是把模型信号、数据身份与系统信号放在同一条 timeline 上。
+
+### Architecture Warm-up 只能作为受测曲率压力的 Actuator
+
+固定深度配合 learning-rate warm-up，状态简单且容易恢复，在曲率随训练平稳变化时仍是默认路径；但深度本身也会使预条件后的最大曲率突然上升，此时统一降低 learning rate 会让所有方向一起变慢。一个条件分支用 warm-started power iteration 估计最大 preconditioned Hessian eigenvalue，再逐步启用更深的网络，使 active depth 成为 trainer 持有的版本化状态。
+
+这不是让 curvature sensor 自动掌控训练。Trainer 仍拥有 active-depth 与 optimizer transition，sensor 只提供有边界的风险信号；Hessian-vector product、深度切换和状态迁移会增加计算与恢复复杂度，估计失真还可能掩盖真正发散。小模型、曲率稳定或拓扑切换成本过高时，固定架构加普通 LR warm-up 更合适；现有理论和实验也不能成为所有架构与 optimizer 的通用 recipe。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-16768 -->
 
 ### Operator-normalized Risk 把异常信号变成有预算的 Recovery Proposal
 
@@ -849,6 +1025,24 @@ slice replacement 用更高的 resharding、replay 与一致性复杂度，换�
 
 <!-- source-family:SF-2026-ARXIV-2605-19008 -->
 
+### 超多 Epoch 训练会把单一 Checkpoint 演进为模型群体状态
+
+数据充足时，沿一条 optimizer trajectory 持续更新单个 checkpoint，拥有最简单的 lineage、恢复和部署语义；当 unique data 已固定、训练仍要跨越大量 epoch 时，后期 checkpoint 可能只是在同一数据上继续偏移，而不是稳定增加可迁移能力。此时一种实验性分支不急于把历史状态压成最后一个模型，而是在训练过程中冻结多个 snapshot，并把它们视为带 lineage 的 population：后续 snapshot 可从前序成员蒸馏，held-out evidence 决定成员权重，部署侧再按推理预算选择单成员、少量成员组合或蒸馏后的单模型。
+
+```text
+unique-data revision + optimizer trajectory
+-> immutable population snapshots
+-> chain-distillation lineage
+-> held-out prior / member admission
+-> inference-budget-specific member set
+```
+
+这条分支用更多 teacher forward、snapshot 存储、held-out 选择状态和多成员推理成本，换取不把重复 epoch 的全部知识压在一个终点上；它也新增成员相关性、selection overfit、lineage 漂移和 serving 成本失控。population controller 只拥有成员选择，不能把训练集重用或成员一致性当成泛化证明。held-out prior 不稳定、部署预算只允许一次 forward，或成员组合没有超过 matched 单模型时，应回退单 checkpoint，或把群体重新蒸馏成一个可独立验证的模型。
+
+`arXiv:2606.03938v1` 只在 1.8B 模型、100M FineWeb tokens 与披露的高 epoch 设置中支持 snapshot population、chain distillation 和 held-out weighting 的组合；它没有证明 frontier-scale data/model、真实 serving cost 或蒸馏后仍保留全部增益。
+
+<!-- semantic-body-binding:SF-Q0-HYPER-EPOCH-PRETRAINING -->
+
 ## Pretraining 没有解决什么
 
 Next-token training 可以形成广泛能力，却不直接规定模型应如何响应用户。互联网文本包含描述、争论、错误和危险行为；“预测文本分布”与“遵循意图”不是同一目标。
@@ -880,7 +1074,7 @@ LoRA         parameterize a cheaper task-specific update
 
 ### Optimizer State 也必须服从数据与硬件契约
 
-在差分隐私训练中，先过滤梯度再加噪并不只是一个数据预处理步骤：过滤改变了创新项的条件分布，直接影响 AdamW 的一阶、二阶矩估计。若继续沿用未过滤 DP-SGD 的 bias correction，优化器会把过滤造成的统计偏差误当成真实方向尺度。Filter-aware correction 能补偿这类偏差，但依赖过滤器和噪声模型被准确记录；模型失配时，保守的 DP-SGD 或重新校准仍是必要 fallback，而不能因为 loss 下降就假定隐私与收敛同时成立。
+在差分隐私训练中，梯度先经过裁剪与加噪得到 privatized gradient，再进入 temporal filter；过滤后的 DP noise 随后参与 AdamW 的一阶、二阶矩估计。若二阶矩仍直接扣除未经过滤的 DP noise variance，优化器就会错误校正 filter 已经改写的噪声贡献。Filter-aware innovation bias correction 针对这一 filtered-noise contribution 做校准，但依赖过滤器与噪声模型被准确记录；模型失配时，保守的 DP-SGD 或重新校准仍是必要 fallback，而不能因为 loss 下降就假定隐私与收敛同时成立。
 
 <!-- source-family:SF-2026-ARXIV-2605-03425 -->
 
@@ -888,7 +1082,7 @@ LoRA         parameterize a cheaper task-specific update
 
 <!-- source-family:SF-2026-ARXIV-2605-03667 -->
 
-最后，非平稳目标会暴露 optimizer memory 的差异：Adam 的自适应矩帮助快速跟踪，却也会把旧阶段统计带入新阶段；SGD 忘得更快，但在噪声和尺度不均衡时适应较慢。因此 optimizer 选择不是“谁普遍更好”，而是 drift rate、投影约束、阶段边界与状态重置策略的联合决定。[受限证据：arXiv:2605.03425v1、2605.03667v1、2605.04269v1]
+最后，非平稳目标会暴露 optimizer memory 的差异：Adam 的自适应矩帮助快速跟踪，却也会把旧阶段统计带入新阶段；SGD 忘得更快，但在噪声和尺度不均衡时适应较慢。因此 optimizer 选择不是“谁普遍更好”，而是 drift rate、投影约束、阶段边界与状态重置策略的联合决定。[受限证据：arXiv:2605.04269v1]
 
 <!-- source-family:SF-2026-ARXIV-2605-04269 -->
 
@@ -896,7 +1090,9 @@ LoRA         parameterize a cheaper task-specific update
 
 当激活尺度和更新方向只靠 clipping、normalization 等经验规则约束时，训练稳定性往往表现为“换一组超参数就失效”。更可解释的分支是把 activation scale 与 update geometry 写成显式 manifold constraint，使允许的参数移动、数值范围和恢复条件都能被测量。它以额外投影、约束计算和可能受限的可达解空间，换取更清楚的稳定边界；约束与真实 loss geometry 不匹配时必须回退到未约束优化并重新校准，而不是把低 loss 当作约束正确的证明。
 
-同理，optimizer configuration 不应永远是静态配方。给定 wall-clock、memory、energy 或 trial budget，系统可以把 optimizer、学习率和正则组合当作有成本的控制选择，通过小规模测量更新 cost/performance model，再决定是否扩大训练。收益是把调参预算显式化；代价是代理 workload 与完整训练之间可能错配。预算太小、phase 转移或数据分布变化时，保守的已验证 recipe 仍是合理 fallback。
+同一 optimizer 与同一精度覆盖所有参数块，配置简单、状态迁移清楚，在显存充足或各层梯度统计相近时仍是合理配方。约束变化来自大模型 optimizer state 的显存成本，以及不同 block 在方向稳定性、尺度各向异性、动量需求和量化敏感度上的差异：昂贵状态并不一定要平均分配。一个可选分支是先在 warmup 中稀疏采样各 block 的 gradient stream，把统计量转换为候选配置的 mismatch risk，再在 memory 与 per-step time budget 下求解 block-wise 配置，例如决定哪些 block 保留 momentum、较高精度或更昂贵的 optimizer state。
+
+这里改变的是 **optimizer state 的逐块资源分配**，不是把 optimizer、learning rate 与 regularization 做一般性的 trial-budget 搜索。它能在给定预算下把昂贵状态留给风险更高的 block，却引入 warmup 代表性、risk model 失配、求解开销、phase drift 与在线重分配时的 state inheritance 问题。`arXiv:2605.04711v1` 只在其 vision、language 与 diffusion workloads 中支持这种 memory–quality trade-off，不证明任意长程 LLM 训练都能保持质量；梯度统计不稳定、预算宽松或重配置证据不足时，全局一致且已验证的 optimizer recipe 仍是更稳妥的回退。
 
 ### Weight Decay 通过全局参数交互改变 Sharpening
 
@@ -935,6 +1131,28 @@ Dense 参数几乎每步都收到梯度，而 routed expert 只在被选中时�
 Dense 参数几乎每步接收更新，routed expert 却只在被选中时产生稀疏、条件化梯度；因此把无状态矩阵归一化直接套到 expert weight，可能把偶发路由尖峰误当稳定方向。减少 optimizer state 时，至少应为 expert gradient 保留跨 step 的一阶 temporal smoothing，并分别观察 router 与 expert 的稳定性。这样能降低 full coordinate-wise state 的内存成本，却引入平滑窗口和冷专家滞后；规模、路由分布或稳定性未覆盖时，应回退 AdamW/dense-style 参考而非宣称普遍替代。
 <!-- source-family: arxiv:2608.04407v1; daily: 2026-08-06; semantic-body-binding: routed-expert-gradient-temporal-state -->
 
+### 不知道训练终点时，Schedule 不能依赖准确 Horizon
+
+Cosine decay 在总 token budget 预先冻结时简单有效；持续训练、资源波动或数据增量让终点变化后，schedule 会因错误 horizon 过早衰减或在续训时产生不连续。horizon-free 分支让当前 step size 由已观察训练状态和预定义无终点规律决定，使停止点变化不必重写完整轨迹。
+
+代价是少了“临近确定终点主动收敛”的先验，噪声、warmup 与 weight decay 仍需联合调节；它也不保证在任意 budget 上优于 tuned cosine。固定预算、可重复大训练继续适合 horizon-aware schedule，开放式 continual pretraining 才更需要该分支。
+
+<!-- source-family:SF-2026-ARXIV-2607-10959 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-19095:start -->
+horizon-free 也不能只删除 decay schedule。当训练可随时停止且 batch 规模改变 gradient norm 时，schedule-free 分支需要把 interpolation、averaged iterate、weight decay 与 adaptive step 一起纳入 optimizer identity；checkpoint 必须保存这些不可由当前权重重算的状态。它获得的是较平滑的 anytime trajectory，而不是“无需调度器”的普适最优性。
+
+代价是平均轨迹、norm weighting 与 checkpoint selection 更复杂，并可能在短 run 或验证域外规模上劣于明确退火。总预算稳定、最终 tail 已知时，WSD、cosine 或显式 tail averaging 仍更容易复现。论文的相对收益只绑定其模型、token/parameter ratio 和披露配置，不能外推到任意架构、数据、硬件或训练预算。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-19095:end -->
+
+### 低精度 block scale 必须在 forward/backward 视图间保持身份
+
+同一矩阵在 forward 与 backward 中常以转置视图参与 GEMM。若 FP4 block partition 随存储视图重新切分，同一数值会得到不同 scale state，训练图便不再拥有一致的量化语义。二维 block scale、稳定的 scale identity 与明确 rounding rule 可以减少这种 transposition mismatch。
+
+这类机制增加 metadata、layout 约束和 kernel 复杂度；有限训练轨迹也不能证明任意模型、optimizer 或原生硬件都稳定。正确性 gate 应成对检查两个 GEMM 视图、gradient/optimizer 误差与 loss stability，超界时回退 FP8/BF16，而不是仅凭低比特 forward 成功批准全链路训练。
+
+<!-- source-family:SF-2026-ARXIV-2607-24953 -->
+
 ## 本章在知识树中的位置
 
 ```text
@@ -956,6 +1174,10 @@ versioned data q(x)
 并不满足这个假设：少数主导奇异方向可能对过大步长非常敏感，大量 bulk directions 却仍可承受更积极的
 更新。逐参数自适应方法、矩阵正交化更新和统一标量步长因此不是简单的“谁更先进”，而是在估计不同粒度的
 可行 update geometry。
+
+loss 与 gradient norm 只能说明“训练正在怎样变化”，不一定能区分表示退化、batch 几何变化与可学习信号不足。把分层 activation covariance 和 per-sample gradient matrix 的奇异谱作为诊断，可观察同一 loss 下 batch size 或深度如何重排有效方向，并在较早阶段提出 token-efficiency 风险；但 spectrum 只是 sensor，不拥有学习率或停止权。它需要额外的 per-sample 统计、SVD 成本与尺度校准，谱形也可能随数据、optimizer、normalization 和 checkpoint 漂移；估计噪声大或训练规模超出校准范围时，应回退 loss、update ratio、held-out quality 与小规模 matched run 的联合基线。exact-v1 只覆盖作者 12/36/48 层受控 NanoGPT 家族及其 early-prediction 实验，不证明谱能跨架构预测最终质量。
+
+<!-- source-family:SF-2026-ARXIV-2605-05683 -->
 
 一个实验性分支先用小规模 probe 估计各层更新谱，再把主导方向与 bulk directions 分开分配 step scale：
 
@@ -1026,6 +1248,73 @@ Teacher-forced SFT、student-prefix DAgger、offline RL 和 on-policy distillati
 Pretraining 用大规模 next-token prediction 把数据分布转化为参数更新。Cross-entropy 定义局部误差，optimizer 与 schedule 决定更新轨迹，参数块对称性限定哪些更新在重参数化后仍应等价；batch、precision、activation memory 和分布式执行决定这条轨迹能否在可接受成本内完成。
 
 固定 recipe 是可复现基线；长程 stress 下可以增加受 safety envelope 约束的控制层，但它只能提出有界动作，不能替代训练目标与人工 override。预训练 checkpoint 是通用能力底座，不是最终产品行为；它是否可靠还需要独立 Evaluation 与后续训练约束。
+
+### Continual Pretraining 可以减少 Replay，但不能宣称消除遗忘
+
+replay buffer 通过重看旧样本维持能力，直观且可验收，却增加数据存储、权限和重复计算。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-15053:start -->
+TFGN 提供的是无 replay、无 task ID/phase boundary 的 internal overlay：forward read 保持 dense，task-driven update signal
+被结构性地导向不同 trainable subspaces。它试图在网络内部减少新任务更新对旧能力的干扰，但 overlay 只拥有 update
+proposal；最终 checkpoint 仍需分别验收 acquisition、retention 与 transfer。代价是额外 capacity/compute、内部状态身份
+和无法独立检查的实现边界，论文还明确说明关键 lever/specification 受 NDA 限制，因此不能把它改写成已公开的“新旧任务
+梯度分量分解器”。旧数据可合法保存、内部机制不可审计或 retention 回归时，replay、regularization 与独立 adapter 仍是
+更稳妥的 fallback。现有证据只覆盖作者任务与实验设置。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-15053:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-09608:start -->
+顺序 fine-tune 或 replay 默认把新更新视为可以直接累积，在任务相容时清楚且可复现；但同一个 update 相对于当前 model state 的 covariance geometry 可能与既有能力方向冲突。Training owner 因而要把 task update、起始 checkpoint、geometry probe 和校正策略一起版本化，merge Gate 只提交已证明相容或经过约束修正的更新；artifact/rollback 仍由第 35 章接手。
+
+Geometry proxy 提供的是干扰诊断，不是遗忘的普适因果证明；barycenter 或投影校正还会增加计算、探测误差和可塑性损失。现有证据限作者披露的模型、task sequence、optimizer 与 evaluator。冲突估计不稳定、任务确需改变旧子空间或审计成本过高时，应回退 replay、独立 adapter，或保留原 checkpoint 作为可恢复分支。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-09608:end -->
+
+### Warmstart 是否节省训练，取决于迁移后的 Optimization Gap
+
+从较小 checkpoint 扩容可以复用已有表示，却会改变宽度、深度、参数映射和 optimizer state。只有 warmstart 后到目标 loss 的剩余计算显著小于从头训练，并且扩容没有形成 symmetry lock 或能力回归，才构成真实节省；迁移方法、旧训练预算和新模型最终质量必须一起核算。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13405 -->
+
+受限 scaling 实验不能保证所有架构和规模都受益。目标结构差异过大、迁移后长期停滞或最终质量低于 scratch baseline 时，应回退从头训练，或只复用数据与训练 recipe，而不是继承权重。
+
+### Low-rank Pretraining 不能只用 Perplexity 验收
+
+低秩参数、梯度或 optimizer state 可显著降低预训练内存，但相同 perplexity 可能对应不同的表示几何和频谱容量。验收应同时观察有效 rank、谱能量、梯度子空间、训练稳定性与 downstream transfer，判断约束是在去除冗余还是切掉后续能力所需方向。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13652 -->
+
+几何指标仍是代理，所测低秩方法与规模也不代表 frontier pretraining。谱容量不足、迁移任务回归或优化不稳定时，应提高 rank、只压缩部分状态，或回退 full-rank training。
+
+### Activation Pattern 可以预警训练状态，但不能单独控制 Optimizer
+
+loss 与 accuracy 从训练外部观察结果，常在层内结构已经恶化后才出现明显信号。逐层 activation statistic 可以作为 label-free early sensor，提前提出 schedule、regularization 或暂停建议；optimizer controller 与 held-out evidence 仍拥有 commit authority。它用统计与校准开销换更早可见性，也可能把坏的稳定点误判为健康，架构变化还会使阈值失效。因此应先 shadow 运行，并与 loss、gradient、checkpoint recovery 和外部任务联合判断。exact-v1 只支持“activation 可补充训练状态”，不支持一个通用阈值、自动调参最优或单指标 early stopping。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11570 -->
+
+### Optimizer 的不变量必须匹配参数块角色
+
+Adam 或 Muon 的 additive update 同时改变矩阵方向与 singular spectrum；若某些参数块的谱应保持，左右 orthogonal transformation 可以只优化几何方向而固定谱。optimizer 只拥有坐标变换 proposal，training objective 和 held-out evidence 决定这个 invariant 是否仍合理。固定谱可提高受限训练稳定性，却增加矩阵变换成本，并可能禁止任务真正需要的 spectrum adaptation；数值近似也会破坏严格正交。出现瓶颈时应回退 AdamW、Muon 或混合 optimizer，按参数角色、梯度谱和 loss trajectory 决策。exact-v1 不证明固定谱普遍最优、超大模型效率或更好泛化。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12492 -->
+
+### Architecture 变化后，Maximal-update Scaling 也必须重推
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-15290:start -->
+把 MHA 改成 GQA 后继续沿用满秩矩阵假设与旧学习率，最容易维持工程连续性，却可能把 head repetition、非满秩投影和深度变化产生的尺度偏移误判为架构收益。一个更严格的参数化先用适配非满秩权重的 modified spectral norm 描述有效 operator scale，再据此导出 GQA repetition、depth 与 weight-decay 的 maximal-update scaling。参数化 owner 只给出可迁移的初始化/学习率 proposal，真实训练曲线仍拥有验收权。
+
+这提高小规模到目标规模 transfer 的可解释性，却依赖模型形状、coordinate checks 与推导假设；公式错误会表现为 activation/update scale 漂移，而不是立即报错。exact-v1 只支持 §3 推导、§4 与 Appendix B 的所测形状，且 Appendix B.2 已给出某类 coordinate check 的失败边界。架构超出校准域、rank 假设不成立或训练信号冲突时，应回退邻近规模 sweep，而不是把 μP 公式当作免调参保证。<!-- source-family:SF-2026-ARXIV-2605-15290 -->
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-15290:end -->
+
+### 多模态大 Batch 的方差冲突需要进入 Optimizer State
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-16165:start -->
+统一 next-token objective 在模态梯度方向相近、batch 较小时可以共用一个优化器统计；大 batch 下，文本与视觉梯度的方差和曲率可能竞争，简单累积会让一方的噪声尺度主导更新。ML-FOP-SOAP 先用 Fisher/曲率近似投影冲突分量，再通过 hierarchical folding 聚合 gradient-accumulation micro-steps，使模态方差校正成为显式 optimizer state，而不是藏在全局 learning rate 中。
+
+projection 只拥有更新方向 proposal，训练 loss、held-out capability 与稳定性 gate 才能提交新 checkpoint。该分支付出 Fisher 与 tensor-preconditioner 近似、额外状态和 folding 误差；模态分布变化时，旧统计也会过期。exact-v1 只支持 §3.1–3.5、Janus/Emu3 与作者 batch/实验，不证明所有多模态模型都受同一冲突支配。小 batch、单模态主导、曲率估计不稳或额外成本超过收益时，应回退标准累积、per-block clipping 或已验证的 first-order optimizer。<!-- source-family:SF-2026-ARXIV-2605-16165 -->
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-16165:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23476:start -->
+只看 update operator 的 eigenvalues 会漏掉 non-normal matrix 在有限步内的 transient amplification：即使渐近
+谱稳定，非正交 eigenvectors 仍可能先放大扰动。Eigenvector conditioning 或 pseudospectrum 因而可作为训练
+sensor，帮助区分“最终会收敛”和“中途已越出数值/质量边界”；它们不拥有学习率或 checkpoint commit。诊断需要
+昂贵矩阵估计且 basis 可能不稳，论文也只给理论构造与小型 two-layer 数值实验，不证明大型 Transformer 收敛或
+墙钟收益。成本或稳定性不满足时，应回退 matched update norm、SVD、loss trajectory 与 optimizer baseline。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23476:end -->
 
 ## Review notes
 
@@ -1128,19 +1417,19 @@ Review note：`SF-2026-ARXIV-2606-29158`；Method `https://arxiv.org/html/2606.2
 ### Daily Books delta trace（2026-06—08）
 
 <!-- daily-books-trace:SF-SPARSE-REPEATED-TRAINING:start -->
-- `SF-SPARSE-REPEATED-TRAINING` — Daily `2026-06-01`；primary `arXiv:2606.01155v1`；Books review `books-review:SF-SPARSE-REPEATED-TRAINING`。
+- `SF-SPARSE-REPEATED-TRAINING` — Daily `2026-06-02`；primary `arXiv:2606.01155v1`；正文锚点“数据受限的 Scaling 必须把 Unique Data 与 Repetition 分账”。
 
   **已吸收的语义增量：** The sparse data-constrained scaling law jointly models unique-token volume, repetition, effective parameters, and sparsity, so repeated-epoch pretraining must choose model size and sparsity against a data-saturation boundary instead of applying dense Chinchilla allocation or sparsity gains independently. 证据边界：The fitted law is empirical over the disclosed scale, corpus diversity, sparsity process, and compute regime; it does not prove the same optimum for frontier-scale mixtures, changing token quality, optimizer changes, or real hardware efficiency, which the paper explicitly separates from theoretical FLOPs.
 <!-- daily-books-trace:SF-SPARSE-REPEATED-TRAINING:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-06888:start -->
-- `SF-2026-ARXIV-2606-06888` — Daily `2026-06-06`；primary `arXiv:2606.06888v1`；Books review `books-review:SF-2026-ARXIV-2606-06888`。
+- `SF-2026-ARXIV-2606-06888` — Daily `2026-06-08`；primary `arXiv:2606.06888v1`；Books review `books-review:SF-2026-ARXIV-2606-06888`。
 
   **已吸收的语义增量：** Exact-v1 adds a source-specific mechanism and evaluation boundary not fully represented by the current owner proposition. The delta remains bounded by exact-v1 and does not transfer commit authority to an adjacent owner.
 <!-- daily-books-trace:SF-2026-ARXIV-2606-06888:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-11387:start -->
-- `SF-2026-ARXIV-2606-11387` — Daily `2026-06-10`；primary `arXiv:2606.11387v1`；Books review `books-review:SF-2026-ARXIV-2606-11387`。
+- `SF-2026-ARXIV-2606-11387` — Daily `2026-06-11`；primary `arXiv:2606.11387v1`；Books review `books-review:SF-2026-ARXIV-2606-11387`。
 
   **已吸收的语义增量：** 在 Pretraining 章节补一段 staged promotion：小实验是扩容决策 receipt，不是大规模结果的缩小版证明；保留 scale inversion 与 distributed-effects failure。
 <!-- daily-books-trace:SF-2026-ARXIV-2606-11387:end -->
@@ -1176,7 +1465,7 @@ Review note：`SF-2026-ARXIV-2606-29158`；Method `https://arxiv.org/html/2606.2
 <!-- daily-books-trace:SF-2026-ARXIV-2607-20757:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-25063:start -->
-- `SF-2026-ARXIV-2607-25063` — Daily `2026-07-28`；primary `arXiv:2607.25063v1`；Books review `books-review:SF-2026-ARXIV-2607-25063`。
+- `SF-2026-ARXIV-2607-25063` — Daily `2026-07-29`；primary `arXiv:2607.25063v1`；Books review `books-review:SF-2026-ARXIV-2607-25063`。
 
   **已吸收的语义增量：** 新增证据边界：Direct Evolution: checkpoint identity by weights/loss -> stage endpoint evaluation -> ordered data-window lineage -> matched downstream update and erosion response as part of artifact suitability. 该 delta 已进入 `books/part-04-training-system/28-pretraining.md#L527`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-25063:end -->

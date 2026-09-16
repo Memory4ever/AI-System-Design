@@ -77,6 +77,11 @@ HTTP headers 可传播 trace context；queue、batch、PD handoff 和 tool workf
 
 单机或时钟误差远小于阶段间隔时，按 wall-clock timestamp 排序最简单，也足以定位大多数延迟问题。流水线跨越多个节点后，系统可以在吞吐与输出都正常的同时，让 clock skew 把后发生的事件排到前面；此时 trace 仍“看起来完整”，因果解释却已经错误。
 
+同一原则也适用于跨 profiler 归因：framework operator、compiler fusion、kernel invocation 与 hardware counter 应由稳定 semantic region 和 invocation order 连接，而不是事后按近似 timestamp 拼接。互相干扰的 sensors 可以分轮采集，但必须保存 measurement-plan provenance；无法归属的 library 区间是一等证据，不能平均摊给附近算子。收益是可解释 join，代价是多轮执行与 instrumentation drift，必须保留 reference run。
+
+<!-- source-family:SF-2026-ARXIV-2609-11938 -->
+<!-- source-family:SF-2026-ARXIV-2609-12299 -->
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2604-21361:start -->
 因此 span 不能只保存时间值，还要保存 clock domain、同步方式、误差/新鲜度界限以及可验证的依赖边。能够携带 request sequence、message ID、queue handoff 或逻辑时钟时，应优先用这些关系重建 happens-before；无法证明顺序的事件要明确标为不可排序，而不是强制拼成时间线。这样把可观测状态从“一个 timestamp”扩展为“时间读数 + 因果约束”，代价是更多 metadata、同步开销与不完全排序。受控多节点实验只显示作者流水线在数毫秒级偏移下出现因果违例，不提供生产通用阈值；在单机、已验证同步或只关心聚合吞吐时，普通 timestamp trace 仍是合理旧路径。
 <!-- semantic-body-binding:SF-2026-ARXIV-2604-21361:end -->
@@ -125,6 +130,23 @@ Instrumentation overhead 应被度量：serialization、context propagation、co
 该结构为后续 root-cause graph 提供可追溯 observation，而不是直接宣称因果。作者 519 样本协议支持其 attack/honest separation 与 separation-of-duties 结果，不证明开放生产环境的安全率。
 
 <!-- source-family:SF-2026-ARXIV-2604-03968 -->
+
+### 验证状态必须是带授权者的单调 Promotion
+
+在单一可信 reviewer、低风险 artifact 中，给 claim 维护一个可覆写的 `verified=true/false` 足够直接；当作者、AI auditor、工具和人工共同参与时，同一个布尔值会抹掉“谁依据什么把状态提高到哪里”，也允许后来的低权限动作静默覆盖更严格的判断。Trace 因而不只记录 claim 与 source，还应把每次验证提升保存为不可变事件：
+
+```text
+claim + generating activity
+→ evidence/access state
+→ promotion event(grantor, authority, policy revision, evidence pointer)
+→ current verification level
+```
+
+Promotion 必须单调并受 authority ceiling 约束。例如，AI 可以完成结构检查、来源定位或给出待审判断，却不能自行授予 human-confirmed 状态；vendor/source 被保存、artifact hash 匹配，也只证明字节身份和可访问性，不证明内容真的支持 claim。Validator 应拒绝没有生成 activity 的 claim、越权 promotion 和缺少 evidence pointer 的高等级状态，而不是在 dashboard 上补一个看似完整的标签。
+
+这种状态机提高了 provenance 的可追责性，却增加 schema、身份/密钥、CI、存储和人工 promotion 成本；它仍依赖 producer 如实记录，无法从图结构本身得到真值。缺少独立 reviewer、provider-signed witness 或可复核 source 时，应保留未验证 gap，并回退人工审阅或更低验证等级。单人、短生命周期且不触发发布决策的草稿可以继续使用简单状态，但不能把它复用于高风险 release gate。Exact-v1 的单仓库自举案例只证明其 schema/validator 能执行这些结构与权限不变量，不证明遥测诚实、跨团队适用或 claim 为真。
+
+<!-- source-family:SF-2026-ARXIV-2607-25637 -->
 
 分布式请求与 Agent workflow 往往包含并行 branch、共享 tool、retry 和异步回调。按时间读取完整 trace 能恢复
 “发生过什么”，却容易把靠近失败的 span 误认成原因；只让 LLM 总结所有日志又会把噪声、Prompt 长度和不可
@@ -188,6 +210,12 @@ raw trace search
 
 ### Trace Optimization 必须把成本与规则决策写入同一证据对象
 
+### 动态模型路由需要独立 Route Receipt
+
+只记录最终模型名，在静态单模型服务中足够；动态路由会让候选集、策略版本、预算、租户约束和健康状态共同决定选择。每次路由应生成 receipt，保存候选快照、约束、策略 revision、选择结果、fallback 与可披露 provenance。Router 拥有选择动作，receipt 只记录事实，release/cost owner 决定是否接受该路径。
+
+完整 receipt 增加存储、隐私与延迟，并不能证明被选模型最好；低风险固定路由可保留简化日志。字段缺失或策略不可重放时，只能诊断最终调用，不能声称重构了决策。现有 exact-v1 只支持作者的动态路由设定。<!-- semantic-body-binding:SF-2026-ARXIV-2605-01710 -->
+
 当结论会驱动真实 action 时，线性 trace 还要升级为 claim-centered evidence graph：每个 claim 指向所用 observation、变换和 policy revision，再连接 action proposal、实际 artifact 与独立 validation。Trace owner 保存“发生了什么”，graph view 表达“哪个证据支持哪个决定”，validator 只确认声明的后置条件；任一边缺失都不能由最终成功反推补齐。它增加 lineage 与 join 成本，却使局部证据撤销可以精确失效下游决定。<!-- semantic-body-binding:SF-2026-ARXIV-2608-18398 -->
 
 完整保存原始 trajectory 在规则少、成本低或审计风险高时最可靠；当 Agent run 变长后，仅凭最终成功与总成本去删除步骤，会混淆“补回缺失依赖的必要 repair”和“对结果无影响的昂贵绕路”。一种受限演进是把 child trace、逐步 billed cost 与 rule type 固化为同一 TraceCard，再让 preserve、prune 与 repair rule 对这个版本化对象提出变换：
@@ -219,12 +247,12 @@ agent telemetry 必须把 authority graph 与 causal execution graph 分离，�
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-10937:end -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-14805:start -->
-长Multi-Agent trace应编译成event knowledge graph，并用校准predictor分配稀缺counterfactual replay budget；预测只排序证据，不替代replay oracle。
-<!-- semantic-body-binding:SF-2026-ARXIV-2606-14805:end -->
+#### 预测器只能分配 Replay Budget，不能确认因果
 
-<!-- semantic-body-binding:SF-2026-ARXIV-2606-15811:start -->
-software supply-chain runtime evidence应按统一event-time组成temporal heterogeneous provenance graph，并将anomaly detection与attack-stage reconstruction解耦。
-<!-- semantic-body-binding:SF-2026-ARXIV-2606-15811:end -->
+长 Multi-Agent trace 中，逐条重放所有 branch 最可靠，却会让 counterfactual replay 成本随参与者和分支数增长。诊断层可以先把 immutable events 编译成保留数据/控制依赖、agent/tool identity 与 commit boundary 的 knowledge graph，再用经过校准的 predictor 为最可能改变归因的节点分配 replay budget。Graph 与 predictor 只拥有证据排序权，真实 replay、环境回执或人工调查仍拥有因果确认权。
+
+这种两阶段路径降低平均重放成本，却可能因图缺边、训练分布漂移或 predictor 过度自信错过根因；“预测 replay 会失败”不是零重放证明。作者结果只覆盖其 trace 与 oracle 设置，关键安全事故、低置信候选或依赖不可见时应回退 full replay/人工审计，并保留未检查 branch，而不能把预算优化写成因果结论。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-14805:end -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-26449:start -->
 让证据生产者写入 provenance 链，消费者据此追踪而不把来源等同于真值；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。
@@ -235,6 +263,17 @@ software supply-chain runtime evidence应按统一event-time组成temporal heter
 不确定或被污染的 evidence 未必直接出现在最终答案，它可能先改变 decomposition、routing、tool choice 或 retry path。因而 provenance 不能只跟随文本片段，还要穿过 artifact transformation 与 workflow edge，记录相同输入下控制流何处首次分叉。该图能定位传播链，却受 synthetic corruption model 与 trace completeness 限制；缺少因果 intervention 时只能报告关联，不能把 divergence 自动解释成根因。
 
 <!-- source-family:SF-2026-ARXIV-2604-27586 -->
+
+### Failure Attribution 必须从阶段定位升级到可证伪的因果候选
+
+终局 task failure 只说明某处出错，不能指出是 perception、planning、tool、environment 还是 recovery。先把 trajectory 分解为带输入、状态、动作、observation 与 commit 的 stages，可以定位最早异常阶段；但“与失败同时出现”仍只是相关。
+
+当失败标签稀缺时，可以只用成功轨迹拟合连续时间 reference flow，再以失败轨迹偏离该流的位置生成 anomaly candidates。这个 one-class 路径避免先编造失败 taxonomy，却依赖成功样本覆盖、表征与时间对齐；conformal threshold 只校准检测率，不证明偏离步骤是根因。高风险诊断必须用 replay、干预或 counterfactual 验证，证据不足时保留 multiple candidates。
+
+CLI coding-agent 与受控 benchmark 的结果只支持各自轨迹和模型，不能外推为通用 failure prevalence。低成本 final-only metric 仍适合回归总览，但不能承担修复归因。
+
+<!-- source-family:SF-2026-ARXIV-2607-09510 -->
+<!-- source-family:SF-2026-ARXIV-2607-12747 -->
 
 ## 本章在知识树中的位置
 
@@ -268,6 +307,12 @@ Trace 从请求 spans 演进到跨 model、tool、workflow 和 environment 的�
 
 Trace 让请求经过多个控制面和数据面时仍保留 causal context。好的 tracing 记录关键边界与决策，而不是最大化 span 数量。下一章将可观测事实转换为成本归因与优化约束。
 
+### Trace 需要行为 Taxonomy，不能只有自由文本摘要
+
+运行时日志若只保存 tool call 和自然语言说明，很难跨任务比较 Agent 如何探索、恢复和提交。Grounded behavior taxonomy 可以把行动分类、上下文、前后依赖和结果编码成可聚合 trace，使 evaluation 与 incident analysis 共享同一行为坐标。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13625 -->
+
+Taxonomy 会压平边界行为，自动分类器也可能错标；现有大规模描述分析不能证明分类完备。未覆盖行为应保留原始事件并允许 taxonomy 演进，分类不确定时回退 raw trace 而非强行归类。
+
 ## Review notes
 
 - `SF-2026-ARXIV-2604-21361`（Status: Experimental）：exact-v1 支持“功能与吞吐正常而 timestamp 因果顺序已错误”的受控多节点案例；作者观察到的具体 skew 转折绑定其 pipeline、同步与 instrumentation，不是生产告警常数。https://arxiv.org/abs/2604.21361v1
@@ -295,6 +340,10 @@ Trace 让请求经过多个控制面和数据面时仍保留 causal context。�
 
 ### Daily integration evidence trace
 
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25637:start -->
+- `SF-2026-ARXIV-2607-25637` — Daily [2026-07-29](../../papers/2026/07/29/README.md)；primary `arXiv:2607.25637v1`；正文锚点“验证状态必须是带授权者的单调 Promotion”。本章吸收 grantor、authority ceiling、单调 promotion event 与“artifact 可访问性不等于 claim truth”的边界；单仓库自举案例不证明跨组织 truth verification。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25637:end -->
+
 #### Source-specific Review notes
 
 - SF-2026-ARXIV-2606-24626: `arXiv:2606.24626v1`; exact-v1 URL=`https://arxiv.org/html/2606.24626v1`; Method=`https://arxiv.org/html/2606.24626v1 — §2 Methodology: SAFARI`; Evaluation=`https://arxiv.org/html/2606.24626v1 — §3 Experimental Setup; 4 Results; A/B/C appendices`; Non-proof=`Who&When/TRAIL GAIA、1M/25K token budget 与给定 toolbox 不证明生产 trace schema、并发因果或根因真实性；缺证据时返回 unknown 并交给人工 trace drill-down。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
@@ -302,26 +351,6 @@ Trace 让请求经过多个控制面和数据面时仍保留 causal context。�
 #### 2026-06-25 source-specific Review notes
 
 - **SF-2026-ARXIV-2606-26449**：Primary `arXiv:2606.26449v1`；Method `https://arxiv.org/html/2606.26449v1 — §ProvenAI provenance-native trace schema and evidence links`；Evaluation `https://arxiv.org/html/2606.26449v1 — §Generated-answer trace/evidence evaluation`；未证明边界 `https://arxiv.org/html/2606.26449v1 — §Trace completeness depends on instrumented producers; provenance does not imply source truth`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-
-### Source-family integration record
-
-<!-- recovered-daily-20260624:PLATFORM-TRACE:start -->
-### 2026-06-24 evidence integration — PLATFORM-TRACE
-
-相邻章 `books/part-06-ai-infrastructure/67-monitoring.md` 只接收 handoff，不重复拥有机制。
-
-### Owner-merged minimal text
-
-- **SF-2026-ARXIV-2606-24626**：故障诊断不再把全 trajectory 填入一个 context；investigator 用 segment search/read tools 主动取证，并用 persistent STM 保存跨轮 hypothesis/evidence，使 attribution 与原始 trace 长度解耦。 Who&When/TRAIL GAIA、1M/25K token budget 与给定 toolbox 不证明生产 trace schema、并发因果或根因真实性；缺证据时返回 unknown 并交给人工 trace drill-down。
-
-<!-- recovered-daily-20260624:PLATFORM-TRACE:end -->
-
-<!-- recovered-daily-20260625:PLATFORM-TRACE:start -->
-### 2026-06-25 evidence integration — PLATFORM-TRACE
-
-- **SF-2026-ARXIV-2606-26449**：`ProvenAI provenance-native trace schema and evidence links` 所定义的源特定机制用于让证据生产者写入 provenance 链，消费者据此追踪而不把来源等同于真值；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Trace completeness depends on instrumented producers; provenance does not imply source truth` 是 `ProvenAI: Provenance-Native Traces of Evidence in Generated Answers` 的 source-specific 反例/局限边界；若运行条件离开 `Generated-answer trace/evidence evaluation` 的验证域，`PLATFORM-TRACE` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-<!-- recovered-daily-20260625:PLATFORM-TRACE:end -->
 
 ### Daily Books delta trace（2026-06—08）
 
@@ -342,12 +371,6 @@ Trace 让请求经过多个控制面和数据面时仍保留 causal context。�
 
   **已吸收的语义增量：** 长Multi-Agent trace应编译成event knowledge graph，并用校准predictor分配稀缺counterfactual replay budget；预测只排序证据，不替代replay oracle
 <!-- daily-books-trace:SF-2026-ARXIV-2606-14805:end -->
-
-<!-- daily-books-trace:SF-2026-ARXIV-2606-15811:start -->
-- `SF-2026-ARXIV-2606-15811` — Daily `2026-06-15`；primary `arXiv:2606.15811v1`；Books review `books-review:SF-2026-ARXIV-2606-15811`。
-
-  **已吸收的语义增量：** software supply-chain runtime evidence应按统一event-time组成temporal heterogeneous provenance graph，并将anomaly detection与attack-stage reconstruction解耦
-<!-- daily-books-trace:SF-2026-ARXIV-2606-15811:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-20374:start -->
 - `SF-2026-ARXIV-2606-20374` — Daily `2026-06-19`；primary `arXiv:2606.20374v1`；Books review `books-review:SF-2026-ARXIV-2606-20374`。

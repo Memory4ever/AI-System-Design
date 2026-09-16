@@ -116,6 +116,16 @@ cost_per_good_request
 
 只看 output token 会忽略 Prefill；只看 request 会忽略长度。应同时保留 prompt/output lengths、cache hit、model/quantization、hardware、concurrency 与 SLO。
 
+### Utilization 应由实际负载推出，而不是由计算器假定
+
+用满载吞吐除以 GPU 单价，可以得到清晰的理论下界；在容量规划早期、持续满载或批处理可任意排队时，这个旧口径仍有用。在线服务的 offered load 较低或到达呈 burst 时，固定填写 `100% utilization` 会把空闲资源时间从账本里消失，使同一硬件看起来拥有并不存在的低 token 成本。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-11690:start -->
+成本模型应从到达率 `lambda`、服务时间分布和请求长度推导 in-flight concurrency，再用实测 batching、queue 与 device busy time 得到有效利用率。稳定区间可用 Little's Law 的 `L = lambda * W` 作为一致性检查，但它不是容量真值：接近饱和时，排队会抬高 `W`，不同 Prefill/Decode mix、cache hit 和 SLO admission 也会改变一次请求消耗的资源。于是 `hardware + model + precision + lambda + length/SLO distribution` 共同定义 cost point，而 utilization 是被观测和校准的结果，不是随意输入。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-11690:end -->
+
+这会让自托管与 API 成本比较更诚实，却需要真实流量、尾延迟和 idle allocation 数据；用短 benchmark 外推全天流量仍可能误判。负载不稳定时应报告多档 arrival-rate curve、goodput 与置信区间，并保留 on-demand、共享池或批处理作为低利用率 fallback。任何特定模型、量化或硬件上的饱和收益都只是该 workload 的测量结果，不能取代重新校准。
+
 ### Agent 能耗的分母应是 Successful Goal
 
 Per-token/per-request 适合单轮、边界明确的调用；Agent 为同一目标触发多次模型、tool、retry、idle 与失败 run 时，它们必须进入同一 goal lineage。Cost owner 记录所有资源事件，evaluation owner 版本化 success predicate，只有满足该谓词的 goal 才进入 `energy_per_successful_goal` 分母；失败成本不能被静默丢弃。
@@ -229,10 +239,6 @@ exact-v1 中的攻击幅度只绑定论文使用的三种 audit framework、模�
 训练能耗不能只按参数量或 GPU-hours 估算；roofline 风格模型应把 model size、parallelism、hardware operating point、利用率与 wall-clock 联合到同一 measurement contract，并与质量边界一起报告。解析模型适合做规划 proxy，真实发布仍需设备功耗与端到端测量校准。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-23546:end -->
 
-<!-- semantic-body-binding:SF-2026-ARXIV-2606-27841:start -->
-把 inference energy estimation 从整模型 proxy 拆成可跨任务/架构迁移的 layer-wise measurement contract。
-<!-- semantic-body-binding:SF-2026-ARXIV-2606-27841:end -->
-
 ### Installed Power 不是可部署 AI Capacity
 
 只用 datacenter 总兆瓦规划容量，在机架功率密度单一、网络和冗余结构稳定时足够粗略；多代 accelerator 共存后，rack limit、busway/UPS hierarchy、网络拓扑、冷却和冗余会让一部分电力无法分配给目标 workload。成本模型应从 installed power 进一步计算可部署容量和 stranded capacity：
@@ -272,6 +278,22 @@ break-even 依赖模型价格、对话分布和正确率目标，不能把某个
 更可审计的路线是先离线重放请求子集，建立边际能耗或 Shapley-style reference，再用可在线取得的长度、phase 与资源特征拟合估计器。reference 负责校准，不等于唯一公平政策；在线 estimator 还要携带误差预算，误差过大时只用于容量规划而不用于 chargeback。该方法增加重放成本，但把测量模型与业务定价规则分开。
 <!-- source-family: arxiv:2608.00026v1; daily: 2026-08-04; semantic-body-binding: request-marginal-energy-attribution -->
 
+### RAG 成本必须沿 Request 与 Tenant 穿过整条 Pipeline
+
+只按生成 token 计费最简单，却把 indexing、embedding、retrieval、rerank、shared cache 与 failed retry 的资源藏在平台总账。更完整的 cost identity 让一次请求在各阶段携带同一 tenant/request tag，并把共享索引、缓存和后台更新按公开规则分摊；chargeback owner 保存原始 usage、allocation policy 与可争议回执。
+
+精细归因增加 instrumentation、标签基数与 shared-cost policy 争议，也不保证云账单与内部计量完全一致。单租户或索引成本可忽略时粗粒度 showback 仍够用；多租户 RAG 的 quota、SLO 与价格决策则不能只看 generation cost。作者原型只支持其 pipeline 与计量设置。
+
+<!-- source-family:SF-2026-ARXIV-2607-12188 -->
+
+### GPU Power Budget 应按组件与阶段分配
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21847:start -->
+整卡 power cap 容易部署，也在缺少细粒度 actuator 时保持最清楚的安全边界；但它把 core、memory 与 workload phase 的瓶颈压成一个总数。只有 telemetry 和 actuator 能分别观测并控制这些 owner 时，平台才应按组件与阶段分配 power budget，并把 policy revision、阶段分类、热约束与 SLO 一起记录。
+
+细粒度控制可能把压力从 core 移到 memory，或因阶段误判恶化尾延迟，还会增加传感、控制与稳定性成本。现有 exact-v1 的效率数字只属于受测 GPU 和操作，不能外推为通用节能比例。组件可观测性、actuator isolation 或阶段识别不足时，应回退经过验证的整卡 power cap，并保留 thermal/SLO guard。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21847:end -->
+
 ## 本章在知识树中的位置
 
 Cost 消费第 67～69 章 evidence，并反馈到 scheduler、autoscaling、model selection 和 lifecycle policy。下一章进入多租户：只有 identity 与 isolation 完整，成本归因和公平政策才可执行。
@@ -295,6 +317,10 @@ Cost 消费第 67～69 章 evidence，并反馈到 scheduler、autoscaling、mod
 
 按 `input_tokens + output_tokens` 估算能耗在窄长度区间容易复算，却隐藏了 prefill 与 autoregressive decode 对计算、内存访存和固定启动成本的不同叠加。更精确的模型应保留 input/output length 二维曲面与 model/runtime/hardware identity，先找到单位有效 token 的局部 operating point，再评估截断、摘要或 generation budget 是否真正降低 `energy_per_successful_goal`。
 
+On-device 与 server 也不能只按一次推理能耗比较。本地路径还要结算 prefill、量化 operating point、电池循环和设备 embodied cost；server 路径则依赖 batching、利用率与网络。Local-first 可能改善隐私或离线可用性，却不天然更绿色；任何结论都应绑定设备、模型、precision、batch、长度、生命周期假设和成功任务分母，条件改变时重新选择 placement。
+
+<!-- source-family:SF-2026-ARXIV-2609-11940 -->
+
 所谓 sweet spot 会随 batch、KV cache、quantization、clock/power cap 和硬件改变，摘要还可能增加额外请求并降低质量。因而分析式模型只用于 proposal/what-if，必须用当前 runtime 能耗与质量/SLO 回执校准；稳定窄负载仍可使用线性模型。公开结果只支持披露的 H100、TensorRT-LLM、模型和长度网格，不可外推跨硬件节能倍数。<!-- source-family:SF-2026-ARXIV-2602-05695 -->
 
 ### 节能控制前先证明 Actuator Authority
@@ -305,6 +331,17 @@ Cost 消费第 67～69 章 evidence，并反馈到 scheduler、autoscaling、mod
 ## 小结
 
 成本是资源时间、结果与约束的关系。平台应优化满足质量和 SLO 的有效结果，而不是孤立追求 GPU busy 或最低 token 单价。下一章为这些归因和政策建立租户边界。
+
+### 成本分母要覆盖优化链，而不只看最终服务
+
+蒸馏后的 student serving 可能更省电，但 teacher generation、logit/materialization、student training 与 evaluation 已在
+上线前支付资源。如果只比较 student 单次请求，就会把成本转移误写成节能。Cost owner 应以同一 workload 和寿命假设记录
+完整 distillation lifecycle，并分别报告一次性与随请求增长的成本。它增加计量与摊销假设；teacher 产物可跨多个 student
+复用时必须声明分摊方式。lifetime、allocation 或 reuse 假设失效，或 upstream cost 无法取得时，lifecycle total 应标为
+Unknown 并分项报告，不能用缺失项补成一个精确总数；若问题明确限定为已经部署、上游投入已成为 sunk cost 的 student，
+marginal per-request serving cost 仍是合法的共存基线。现有证据限作者模型、任务和能耗仪器，不能外推为所有蒸馏都节能。
+
+<!-- source-family:SF-2026-ARXIV-2605-13981 -->
 
 ## Review notes
 
@@ -325,35 +362,9 @@ Primary-source 与实践入口：
 
 #### Source-specific exact-v1 Review notes
 
-- SF-2026-ARXIV-2606-27841 — primary arXiv:2606.27841v1; exact-v1 URL=https://arxiv.org/html/2606.27841v1; Method=https://arxiv.org/html/2606.27841v1 — §3 Methodology and Experimental Set-up; 3.2 Layer-Wise Energy Estimation Framework; Evaluation=https://arxiv.org/html/2606.27841v1 — §3 Methodology and Experimental Set-up; 3.1 Experimental Protocol; 4 Results; Non-proof=https://arxiv.org/html/2606.27841v1 — §5 Discussion; 6 Conclusion。
-
 #### Source-specific exact-v1 Review notes
 
 - `SF-2026-ARXIV-2606-23546` — primary `arXiv:2606.23546v1`; Method=`arXiv:2606.23546v1 — §2.2 Scale, Architecture, and Efficiency; §3.1 Tasks, Models and Training Protocol; §3.2 Compute, Parameter and Memory Proxies`; Evaluation=`arXiv:2606.23546v1 — §3.5 Hardware Efficiency via Empirical Speedup Models; §Appendix A Pre-Modeling Exploratory Data Analysis`; non-proof=`arXiv:2606.23546v1 — §7 Discussion; §8 Conclusion`; fallback=该 family 的 failure pressure 是：Transformer-based models underpin modern natural language processing but incur rapidly growing computational and energy costs. 披露的 evaluation signal 是：We derive a scaling law model that accurately predicts training energy across heterogeneous configurations. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-### Source-family integration record
-
-<!-- daily-20260627:PLATFORM-COST:start -->
-### Owner-merged minimal durable delta
-
-能耗归因应先把一次 model run 拆成 layer/operator measurement，再拟合 architecture-level proxy。可复用 cost model 必须把每次测量绑定到 device、precision、batch/shape 与 utilization regime，然后针对目标 graph 重组；否则 whole-model estimate 会隐藏究竟是哪类 layer 改变 operating point。
-
-### Trade-off、failure、fallback 与 coexistence
-
-Layer recomposition 可能遗漏 fusion、memory hierarchy 与 concurrency interaction；生产真值仍由 whole-run meter 持有，漂移时重校 layer model。
-
-<!-- daily-20260627:PLATFORM-COST:end -->
-
-<!-- recovered-daily-20260623:PLATFORM-COST:start -->
-### 2026-06-23 evidence integration — PLATFORM-COST
-
-相邻章 `books/part-06-ai-infrastructure/71-multi-tenant.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-23546**：The Energy Consumption of Transformer Fine-Tuning: A Roofline-Inspired Scaling Model 的 exact-v1 机制为：As training scales in both model size and parallelism, accurately predicting energy consumption has become critical for sustainable and cost-aware system design. 因此 把训练/推理能耗模型、硬件 operating point 与质量边界联合报告。 该 family 的 failure pressure 是：Transformer-based models underpin modern natural language processing but incur rapidly growing computational and energy costs. 披露的 evaluation signal 是：We derive a scaling law model that accurately predicts training energy across heterogeneous configurations. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-<!-- recovered-daily-20260623:PLATFORM-COST:end -->
 
 ### Daily Books delta trace（2026-06—08）
 

@@ -233,7 +233,11 @@ recovery 全部显式化。它减少重复 Prefill，却增加长寿命显存、
 主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-15070:start -->
-用 attention-state 判断推理是否收敛，再在 exit、logit injection 与 jump intervention 之间切换，把 overthinking 从固定 token budget 演进为 request-local control。
+#### Request-local Stop Sensor 不能取得最终停止权
+
+固定 token budget 在请求难度稳定、停止条件可由 EOS 或协议边界表达时最简单；reasoning workload 的新约束是，继续生成可能只重复既有推理，却持续占用 KV、batch slot 和 deadline。Runtime 因而可以把 attention-state 或其他经过校准的中间信号当作 request-local sensor，在普通继续、提前退出、logit intervention 与受限 jump 之间提出切换，并把信号版本、阈值和已消耗预算写入 Decode state。最终停止权仍属于服务策略与输出协议，模型内部信号不能自行突破预算或宣称答案正确。
+
+这条分支用减少无效 token 换取 monitor 开销、误停和分布漂移风险；作者实验只支持其受测 reasoning model、任务和干预方式，不证明 attention-state 是普适“思考完成”真值。信号离开校准分布、结构化输出尚未闭合或高风险答案仍需验证时，应回退 hard budget、标准 EOS 或显式 verifier；短回答与固定格式任务继续适合旧路径。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-15070:end -->
 
 ### Output Length 是随机工作量，不是固定配置
@@ -243,6 +247,23 @@ recovery 全部显式化。它减少重复 Prefill，却增加长寿命显存、
 收益是把不可控的生成尾部变成可观测、可调度的 workload；代价是截断风险、预测误差和更复杂的用户契约。当长度估计不可靠时，系统应回退到保守预算、分段生成或显式续写，而不是用平均值承诺 SLO。固定上限在短回答、严格协议输出中仍然是更简单的选择。
 
 <!-- source-family:SF-LONG-FORM-LENGTH-VOLATILITY -->
+
+### 结构约束与退化监测都必须拥有显式 Runtime State
+
+CPU 维护 trie/parser、GPU 只计算 logits 的 constrained decoding 在词表小、beam 少时足够；beam、grammar 与候选集合扩大后，host round-trip 和候选 materialization 会进入每步 critical path。GPU-native 分支把 parser state、trie transition 与候选扩展合并到设备 kernel，但必须保持每个 beam 的独立状态、dead-end fallback 与与 CPU reference 的等价检查。它用更高显存与实现复杂度换取更少同步，开放生成或小约束集仍适合旧路径。
+
+类似地，token log-probability 便宜，却不一定能检测量化或近似执行引起的 reasoning degeneration。序贯 monitor 可以对经校准的行为信号积累 evidence，并在越过阈值时回退高精度路径；monitor 只拥有切换 proposal，不拥有正确性真值。校准分布、false alarm budget 与检测延迟必须进入版本身份，否则一个漂亮的 e-CUSUM 曲线不能成为通用安全阈值。
+
+<!-- source-family:SF-2026-ARXIV-2607-10044 -->
+<!-- source-family:SF-2026-ARXIV-2607-11317 -->
+
+### 可枚举动作可把推理从事件关键路径前移
+
+交互式 decode 通常在 observation 到达后才规划动作；在短暂 GUI event 或严格 deadline 下，即使最终 action 正确，也可能因 reasoning 太晚而失败。若候选 action 可预枚举，可在空闲期生成 bounded policy tree，为每个 branch 绑定 observation guard、deadline、权限范围与 invalidation condition；事件发生后在线路径只做轻量匹配和已授权提交。
+
+这不是通用的“预生成答案”。它用额外预计算、状态监测、tree invalidation 和误路由风险换低 decision latency，且预授权只能覆盖明确 effect boundary。开放 action space、环境快速漂移或 guard 无法可靠观测时，reactive decode 仍是必要分支；任何 guard 失败或树版本过期都应回退在线推理而非强行提交。
+
+<!-- source-family:SF-2026-ARXIV-2607-28399 -->
 
 ## 本章在知识树中的位置
 
@@ -283,6 +304,14 @@ Decode 从逐 token kernel loop 演进成长期驻留的状态推进器后，故
 
 <!-- source-family:SF-2026-ARXIV-2605-08913 -->
 
+### 端侧融合必须围绕真实 Tile / Dataflow Contract
+
+把量化 GEMM、GEMV、反量化与 layout conversion 作为一串通用 kernel，在算子覆盖面优先、shape 稳定时最容易维护；端侧 NPU 的 tile、片上存储和数据流约束更强后，逐算子往返和重复布局转换可能反而成为 Decode 主成本。此时可以围绕目标 NPU 的 tile contract 融合混合精度算子，让中间值尽量留在片上，并把量化格式、tile shape、layout 与 fallback kernel 一起编入 execution identity。
+
+这条分支减少 launch 与搬运，却以平台专用代码、受限 shape、量化误差复验和更大的编译/运行时测试矩阵为代价；模型级正确性仍由完整推理回归拥有，kernel library 不能凭局部吞吐越权提交模型结果。目标算子或 shape 不受支持、热状态变化、量化质量未过 Gate 时，应回退通用 kernel 或更高精度路径。`arXiv:2606.11357v1` 只支持作者在所列 AMD NPU、模型和 workload 上的 TileFuse 机制与实验，不构成跨 SoC 或生产 SLO 保证。
+
+<!-- source-family:SF-2026-ARXIV-2606-11357 -->
+
 ### Decode-only Compute Branch 仍必须尊重单一 KV Owner
 
 某些额外计算只在 decode 阶段有价值，可以绕开 prefill 以降低总成本；但它不能暗中维护第二份不一致的历史状态。主模型 KV 或等价 recurrent state 应有唯一 owner，decode branch 只读取版本化快照并产出可验证的增量。这样保留 phase-specific 优化，同时避免 prefill/decode 分叉后出现无法解释的状态漂移。
@@ -293,6 +322,20 @@ Decode 从逐 token kernel loop 演进成长期驻留的状态推进器后，故
 Decode 把模型推理变成持续的状态推进问题。每个请求内部必须按 token 顺序执行，但多个请求可以共享每轮模型执行。性能不只取决于 kernel，还取决于谁进入这一轮、携带多长历史以及何时再次获得资格。
 
 下一章聚焦最重要的持久状态：KV Cache 为什么正确、节省了什么，以及它怎样把计算优化转化为显存管理问题。
+
+### Stateful Session 把 History Advance 与 Query 分开
+
+每次查询重放完整历史，计算随会话长度增长，却保持实现简单和状态可回收。持久 session KV 可以在新事件到来时提前 advance history，查询只追加短 query 并直接 decode，使关键路径不再与累计 context 成正比；代价是 cache revision、权限、失效和恢复都成为长期状态。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13784 -->
+
+预先 advance 可能对永不发生的查询浪费计算，模型或 prompt 更新也会使缓存失效。受限原型结果不代表生产 workload；session identity 不确定、缓存过期或恢复校验失败时，应回退重放原始 history，由原始事件日志保留真值。
+
+### Reflection Marker 只能提出局部 Decode 干预
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23074:start -->
+固定采样策略在 reasoning path 稳定时最容易复算；当反思、回溯或确认类 marker 表示局部路径竞争发生变化时，可以把 marker type 与附近分支分数作为一次 logit-adjustment proposal。这个分支只改变下一步方向，最终是否启用仍由质量、长度与任务回归 Gate 决定，不能把“出现反思词”当作推理正确的证明。
+
+状态感知干预可能减少无效延伸，也会引入 marker 误判、长度偏置和不同模型间的校准漂移。现有证据只支持作者披露的 marker、模型与 evaluation；类型未知、局部竞争不稳定或质量回归时，应回退原始 sampling policy，并保留未干预 trace 供诊断。arXiv:2605.23074v1
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23074:end -->
 
 ## Review notes
 
@@ -323,30 +366,6 @@ Primary-source entry points：
 #### Source-specific exact-v1 Review notes
 
 - `SF-2026-ARXIV-2606-23521` — primary `arXiv:2606.23521v1`; Method=`arXiv:2606.23521v1 — §3. Design; §Host-mapped memory.; §4.3. Optional Cross-Architecture Execution and GPU-Initiated Networking`; Evaluation=`arXiv:2606.23521v1 — §2.4. Motivating Experiment: Host-Side Dirty Detection; §5. Evaluation`; non-proof=`arXiv:2606.23521v1 — §7. Discussion; §7.5. Limitations and Future Work; §8. Conclusion`; fallback=该 family 的 failure pressure 是：Losing this state after a GPU or communicator failure can discard minutes to hours of work, yet existing recovery mechanisms either restart the whole serving stack or require application-specific checkpoint logic inside every attention and runtime component. 披露的 evaluation signal 是：The persistent kernel consumes a lock-free ring buffer of compute, checkpoint, append-log, and recovery tasks, so the same always-on executor triggers dirty-page detection, stages deltas, and appends committed records to a CPU-visible log in CXL memory or host DRAM. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-### Source-family integration record
-
-<!-- daily-20260628:INFER-DECODE:start -->
-### Owner-merged minimal durable delta
-
-Masked-diffusion decode 不必把每一步压成 token-or-mask。Request 可以为每个位置持有连续 x-prediction mixture、异步 progress 与 bounded re-edit state；只有通过 commit rule 的离散 token 才进入 visible frontier。这样 refinement 信息可跨 step 延续，而 cache、step policy 与 commit identity 仍可审计。
-
-### Trade-off、failure、fallback 与 coexistence
-
-连续 mixture 是否被 pretrained MDLM 正确解释只在两组模型/代码任务中验证；它增加 request state、alignment 与 kernel burden，质量或硬件不支持时回退标准 mask/unmask decoder。
-
-<!-- daily-20260628:INFER-DECODE:end -->
-
-<!-- recovered-daily-20260623:INFER-DECODE:start -->
-### 2026-06-23 evidence integration — INFER-DECODE
-
-相邻章 `books/part-05-inference-system/45-why-kv-cache-speeds-up.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-23521**：Concordia: JIT-Compiled Persistent-Kernel Checkpointing for Fault-Tolerant LLM Inference 的 exact-v1 机制为：We present Concordia, a runtime that uses a device-resident persistent kernel as the substrate for fault-tolerant LLM inference. 因此 把 persistent-kernel checkpoint、恢复位置和重复 token/side-effect 防护绑定。 该 family 的 failure pressure 是：Losing this state after a GPU or communicator failure can discard minutes to hours of work, yet existing recovery mechanisms either restart the whole serving stack or require application-specific checkpoint logic inside every attention and runtime component. 披露的 evaluation signal 是：The persistent kernel consumes a lock-free ring buffer of compute, checkpoint, append-log, and recovery tasks, so the same always-on executor triggers dirty-page detection, stages deltas, and appends committed records to a CPU-visible log in CXL memory or host DRAM. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-<!-- recovered-daily-20260623:INFER-DECODE:end -->
 
 ### Daily Books delta trace（2026-06—08）
 

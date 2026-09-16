@@ -155,6 +155,10 @@ validation leakage、oscillation、distributed-state access 和恢复问题。�
 teacher 与 student 的 observation modality、action abstraction、browser/environment revision、verifier 和
 side-effect policy；否则 privileged structural teacher 编译出的 screenshot-only 行为会失去关键 lineage。
 
+蒸馏数据还可能在表面答案之外传递 teacher 的稳定行为倾向。即使样本被标为“良性”、输出文本没有直接暴露目标特征，student 的条件分布仍可能继承 teacher 的偏好；因此不能只用 output match 宣称数据安全。更完整的 contract 要绑定 teacher checkpoint、生成条件、采样策略和 student response，并用独立 behavioral canary 测量特定倾向在蒸馏前后的 transfer ratio。这个比例是模型与任务相关的诊断，不是因果特征定位器；canary 覆盖不足或 evaluator 偏置时，仍需数据 lineage、对照 teacher 与人工审计。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-11270 -->
+
 当 control plane 接受的不是整版 mixture，而是一次 bounded data patch 时，验收对象也不能只写成“新增了多少
 examples”。Patch proposal 至少应同时绑定 fixed checkpoint/compute、实际替换的 mixture 份额与数据 identity、
 `accepted supervision / teacher token`、独立 held-out transfer 和 regression gate；否则 additive 与 replacement
@@ -227,6 +231,15 @@ TTFT 与 KV 成本。数据系统因此应把 `source image -> transformation ->
 
 因此过滤策略需要同时报告 retention rate 和分布变化，而不能只报告“删除了多少低质量数据”。删除前后各语言、领域、长度和来源发生了什么，才决定模型看见了什么。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22651:start -->
+当 image-caption pair 已处于高全局 alignment 区间，继续用同一个分数排序无法说明 object、attribute 或 relation
+phrase 是否真正影响 scorer。一个两阶段分支先保留 coarse filter，再以保持 subtoken count、lexical removal 与
+surface form 的 controlled substitution 测 phrase sensitivity；该信号只拥有相对 selection proposal，不是视觉
+grounding、localization 或因果证明。它增加 parser 与多次 scorer pass，并继承 scorer/tokenizer 偏差、nonce artifact
+与高阶交互遗漏；replacement invariance、跨 scorer transfer 或 held-out composition 不成立时，应回退 coarse
+alignment、随机/coverage control，并保留人工或 region-grounded evidence。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22651:end -->
+
 ### Filter Threshold 必须绑定 Compute-to-Unique-Data Regime
 
 在 compute 少、原始数据多时，高阈值过滤可以减少明显低质 token；当 compute 已能多次覆盖稀缺 corpus 时，继续追求更纯的小集合会同时提高重复率并丢失长尾。Filter owner 因而要把 retained unique tokens、expected passes、model/compute scale 与 domain coverage 绑定到同一 manifest，再用 held-out capability 验证，而不是复用固定 quality score。
@@ -259,6 +272,59 @@ Probe 未校准、目标 checkpoint 不同或误拒绝成本过高时，保留�
 最直接的 synthetic-data pipeline 是让模型生成任务、回答或 Agent trajectory，再由另一个 model judge
 过滤。它便宜、覆盖开放语义，在 verifier 难以形式化的任务中仍然合理；但 generator 和 judge 可能共享
 事实错误、风格偏好与同源 blind spot，语言上自洽不等于环境中可执行。
+
+表面无害也不等于行为中性。叙事、角色设定或虚构事件中的隐含偏好，会把“某类角色在某种条件下怎样行动”编码为
+条件监督；模型随后可能在非叙事对话中复现该行为，即使训练 row 没有显式危险指令。Data owner 因而不能只保存
+topic/safety label，还应保存生成模型、角色与 persona 条件、叙事立场、mixture ratio、采样参数和 row provenance，
+并在固定 checkpoint/recipe 下用独立的非叙事 behavioral canary 比较训练前后变化。Trainer 只消费已准入 manifest，
+Evaluation 才拥有 transfer verdict。
+
+这种检测会增加 persona slice、对照集与训练 canary 成本，也可能把语气、角色相似度或 evaluator 偏差误判为隐含机制；
+样本稀少、mixture 被大量真实数据稀释时，单篇叙事的影响可能不可测。回退不是禁止故事，而是限制未知生成来源、降低
+mixture 权重、使用中性/反向角色对照，并在 canary 失败时撤回对应 partition。`arXiv:2609.10883v1` 只证明其合成故事、
+模型和微调设置中存在条件行为与偏好转移；角色亲和度对学习率敏感，实验也不能证明某种隐藏表示或生产模型的普遍风险。
+
+<!-- source-family:SF-2026-ARXIV-2609-10883 -->
+
+### 递归合成语料要先分清 Corpus Recursion 与 Parameter Recursion
+
+一次 synthetic-data 更新只需要回答“这批样本会把当前 checkpoint 推向哪里”；当模型输出继续成为下一代训练语料时，
+数据系统还要回答“变化究竟由语料分布反复自举，还是由权重、优化器与训练状态跨代累积造成”。如果每一代直接继承上一代
+checkpoint，两条因果路径会缠在一起：坏结果不能唯一归因于 corpus contamination，好结果也可能只是旧参数保留。一个更可辨识的
+实验分支，是每代都从同一 clean base weights 重新训练，只让共享语料池随代际变化；这样牺牲了对真实 continual-training
+流水线的还原度，换来对 corpus recursion 的隔离。生产系统不能二选一，而应在 lineage 中分别保存
+`base checkpoint / optimizer state / supplier mixture / human-text fraction / generation / seed`，让数据链与参数链都可回放。
+
+在这种语料链里，最大的 supplier share 也不能自动解释整体漂移。单一供应者的占比、各生成模型对目标方向的 susceptibility、
+pool composition 与 human anchor 是不同控制轴；只改变其中一个，再用 aggregate drift 解释全部机制，会把相关性误写成控制权。
+更稳健的 Gate 是固定训练 recipe，分别对比 supplier identity、mixture、人工语料比例和随机种子，并同时记录方向、距离、
+perplexity、多样性与下游行为。其代价是实验矩阵迅速膨胀，测量几何也可能依赖 encoder；当 clean-base reset 不代表部署流程时，
+仍须回到真实 checkpoint inheritance、去重、过滤和 replay 条件重新验证。
+
+`arXiv:2609.11146v1` 只在 1–4B 模型、最多 13 个参与者、五代与三组 paired seeds 的受控设置中支持：所测有限集中度
+对终点和速度的影响小于共同递归漂移，增加人工文本会减慢漂移但没有明显改变方向。自然实验中的最高集中度只有 28%；90%
+属于三模型注入 probe，7–8B probe 又未充分收敛，代码与逐 arm 测量尚未发布。因此这不是“集中度无害”的一般规律，也不能
+形成产业政策结论；它改变的是数据系统的 evaluation contract——先把 corpus state、parameter state 和 mixture control
+拆开，再讨论谁在驱动 model collapse。若这些变量无法隔离，回退到 provenance-preserving mixture、固定 human anchor、
+周期性 clean-base canary 与人工审核，比给单一集中度指标赋予因果含义更可靠。
+
+<!-- source-family:SF-2026-ARXIV-2609-11146 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20602:start -->
+递归 self-training 的退化也可能先出现在结构而不是 aggregate score：表层标记被反复放大时，句法深度与组合
+关系可能逐代丢失，即使整体可读性或单一复杂度指标变化不大。数据 Gate 因而要保存 generation、supplier、
+parser 与结构 slice，并分别测表层频率和深层 retention。作者十一代受控实验不证明所有生成模型都会按同一路径
+退化；结构测量不稳时，应回退人工语料 anchor、真实 held-out corpus 与多种独立 parser，而不是让一个 aggregate
+指标拥有放行权。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20602:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20876:start -->
+当训练目标包含可执行任务时，synthetic pipeline 可以把 agent skill 作为生成原语，同时编码任务、适用前置状态
+与执行步骤，再共同派生 instruction、sandbox 和 teacher trajectory。这比只生成最终答案更容易保持状态一致，
+却会把 skill ontology、环境模拟器和 teacher 的共享盲点复制到整批数据。自动产生不等于真实 effect 已验证；
+precondition、tool schema、environment revision 与 outcome receipt 必须成为 row lineage。开放环境、未编码安全条件
+或 teacher 轨迹不可复算时，应回退真实执行日志、人工 spec 与独立 verifier。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20876:end -->
 
 当 task schema、sandbox state 和 tool effects 可形式化时，可以使用更强的编译式路线：
 
@@ -310,6 +376,14 @@ adversarial generator 与人工审计补 coverage。
 annotation 与 verifier 共享错误时，“可验证”仍只相对于该 pipeline 成立。结构简单、人工 gold evidence
 充足的领域继续适合 curated QA；graph-grounded synthesis 是补充 coverage 的分支，不是替代人工数据。
 
+搜索任务还需要把“答案正确”和“搜索过程可追溯”同时写进数据 Gate。只从网页合成问答，容易得到偶然可答却
+没有稳定证据路径的样本；只保留成功轨迹，又可能让冗余搜索和错误证据混入训练。更完整的 lineage 是先生成
+`question / answer / evidence graph / search trajectory`，再分别检查 QA 一致性、证据相关性和轨迹质量，只有联合
+通过的样本才进入后续 SFT 或 RL。它提高 grounding，却会继承网页时效、合成器和 verifier 的共同偏差，并显著
+增加生成与审核成本；开放网页无法重放或 evidence graph 不可信时，应回退人工 gold、真实搜索日志或拒绝样本。
+
+<!-- source-family:SF-2026-ARXIV-2607-24850; daily-trace:papers/2026/07/29/README.md -->
+
 #### 没有真实后端时，Synthetic API State 只能是派生训练状态
 
 当 API specification 存在而 executable backend 尚未部署时，可以让 teacher 提议调用、由 history-conditioned simulator 生成 response，再用 schema/argument checks、语义一致性 judge 与 trajectory vote 筛选 SFT trace。这比 single-call 合成更能覆盖 stateful transition，却不能把 simulator response 升格为环境事实。
@@ -323,6 +397,13 @@ Lineage 必须保存 specification revision、task proposal、simulator identity
 
 因此一条训练 row 的 identity 至少绑定 `environment revision / initial database / tool schema / task / verifier code / judge version / reward policy / rollout / final state`。step-level format reward 可以尽早终止无效轨迹，却也可能把“总要调用工具”的偏好写进 policy，不能替代 task outcome。generator、environment、verifier 与 judge 还可能共享 ontology blind spot；runtime self-correction 只能修复启动或执行错误，不能证明业务语义正确。公开结果只覆盖作者生成的环境、实际进入训练的子集、Qwen3 模型与披露 benchmark；它不证明 synthetic side effect 等于真实世界，也不证明环境数量继续增长一定带来收益。高风险任务仍需真实环境、人工 gold 或独立 oracle，静态样本在无状态、边界清楚的任务中也仍更便宜可靠。
 <!-- semantic-body-binding:SF-2026-ARXIV-2602-10090:end -->
+
+#### 可验证环境可以组合，但组合器不拥有正确性
+
+逐个手写 environment 在数量少、接口独立时最容易审计；当 curriculum 需要系统扩展任务结构，可把 base environments 暴露为 typed domain/codomain，只在接口兼容时用 sequential、parallel、sort 或 select operator 生成候选环境。Compiler 拥有 composition proposal，verifier 必须重新检查终止性、reward、答案可判定性与跨组件 state transition。
+
+组合提高复用和难度覆盖，却会放大接口误配、隐藏状态、奖励漏洞与 verifier 相关错误。组合深度、难度分布或验证可靠性越界时，应回退独立 base environment 或人工构造。现有结果只证明作者 operators 和任务范围内的 reasoning generalization，不证明可验证组件任意组合后仍可验证。
+<!-- source-family:SF-2026-ARXIV-2606-12373 -->
 
 ### Failure-driven Curriculum：难例必须来自可重放失败，而不是模型自信
 
@@ -366,6 +447,16 @@ incompleteness 和 agent bug 会混入同一 failure label。诊断结果可以�
 `failure attribution → bounded mixture proposal → regenerated executable rows → independent validation`，并保留
 固定人工/历史数据作为分布锚。Terminal-capability data engineering、SWE-rebench V2 与 DPE 分别为数据对象、
 environment diagnostics 和 diagnostic-driven mixture 提供了实验性证据；它们没有证明某个数据量或失败比例是通用配方。
+
+#### 真实设备 Transition 是训练数据的一部分
+
+固定轨迹可重放、便于比较，在设备状态稳定且任务副作用低时仍是最小方案；但 GUI policy 会改变自己访问的页面、账户状态与后续 observation，离线记录未必覆盖当前 policy 真正到达的 state distribution。此时数据对象必须把 `device / account / app / network revision`、`reset / step / observation / effect`、policy 与 judge revision 一并纳入 lineage。数据生产器只能提出任务和修订轨迹，真实环境拥有 transition 与 side effect，outcome verifier 判定结果，privacy / finance / prohibited-action gate 则在执行前拥有准入否决权。
+
+更完整的 flywheel 是在真实设备上运行完整 trajectory，先定位失败层级，再保留仍有效的 prefix，分别生成 step correction、query adjustment 或 counterfactual task；通过独立验证的结果才回流数据池。由同一 SFT 起点做固定离线轨迹与在线真实环境的 paired control，可以检验旧数据是否覆盖当前 policy 状态，而不能把在线指标自动归因给某个 judge 或 curriculum 组件。
+
+这种 state coverage 以设备池、登录账号、网络漂移、不可逆副作用、隐私风险、重放困难和 judge 成本为代价；诊断器的 blind spot 还可能让 curriculum 追逐伪难例。缺少安全隔离、effect oracle 或稳定 reset 时，应回退静态可重放数据、沙箱或人工任务。exact-v1 证据只支持作者的移动 GUI 栈和披露对照，不证明商业设备外泛化，也不构成生产安全保证。
+
+<!-- source-family:SF-2026-ARXIV-2609-12394 -->
 
 Repository 与 GUI 任务还要求 specification 保留跨步 state。只把单个函数、截图或最终 patch 当作样本，会丢掉依赖图、工具返回值、文件版本和 action side effect。更完整的数据对象应是：
 
@@ -441,6 +532,16 @@ policy checkpoint、environment、tool schema、composition recipe 与 verifier 
 reward leakage 与环境模拟偏差。固定人工数据在需要长期可比、语义开放或现实副作用不可重放时仍是合理基线；闭环
 合成只在 coverage signal 可解释、task 可执行、verifier 相对独立且 held-out distribution 未被同一控制器消费时成立。
 
+任务成功只能说明 synthetic trajectory 可执行，不说明它与目标 policy 的行为分布相容。对机器人数据还要分别检查 joint/state density、trajectory style 与 execution timing；尤其 timing mismatch 会让同一几何路径在真实 controller 上失败。对齐这些分布提高 transfer，却可能过拟合一种 embodiment 或人类风格，因而需保存生成器、目标平台、动作频率与对齐器版本，并保留原始 task-valid 数据作对照。
+
+<!-- source-family:SF-2026-ARXIV-2609-12316 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23482:start -->
+当多模态训练受 expert 标注和合成预算限制时，只在单一模态内做 dataset distillation 会保留各自局部结构，却可能破坏图文之间的联合分布。一条条件路线是在 joint image-text embedding geometry 中匹配真实集与合成集，使 distilled set 同时覆盖跨模态邻域；但 distilled-data identity 必须连同 expert revision、synthetic-set identity、modality balance 与 downstream evaluator 一起版本化，几何距离只能提出样本，目标任务的 held-out evaluator 才拥有接受权。
+
+这条路线用更小训练集换取更高的 expert-training、embedding 选择和跨模态校验成本。现有结果绑定作者使用的表示空间、数据集、IPC/trajectory baseline 与 expert pool；joint-space 距离可能遗漏细粒度视觉证据或文本歧义，也不能证明规模扩大后成本仍占优。几何覆盖与 downstream slice 不一致时，应回退原始 data mixture、分模态校验和可重放的 trajectory matching，而不是把 embedding proximity 当成语义充分性的证明。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23482:end -->
+
 ### 从 Trajectory Count 到 Primitive × Transition Coverage
 
 机器人数据若只按 trajectory 数量计费，会把大量重复直线段和少量关键接触转移视为等价。更有诊断力的预算单位
@@ -477,6 +578,21 @@ human hand pose + scene observation
 它没有消除 sim-to-real，而是把 gap 移到生成 fidelity、pose/depth reconstruction、retargeting 与 per-embodiment
 adaptation。派生 row 必须绑定生成模型、revision、输入来源、robot schema 与 verifier；现实接触、calibration 和
 安全尾部仍需真实 teleoperation。作者设置中的 policy gain 或 synthetic-only feasibility 不能证明生成视频是物理真值。
+
+### Verifier-backed Synthetic Curriculum 需要双重权威
+
+只由 generator 产生样本并自评难度，流程简单却会把生成偏差和验证偏差合并。更稳健的数据行绑定 generator、solver snapshot、verifier type/version、filter funnel 与 reward policy：确定性或外部 verifier 只判断 validity，独立 curriculum controller 决定 difficulty 和采样权重，setter 不能自证。软 verifier 只能提供 pipeline evidence，不能把高分升级成真值。
+
+这用额外求解、过滤和 lineage 成本换更可审计的 synthetic data，也可能因 verifier 盲区形成系统性假阳性。规则可判定任务适合 deterministic checker；开放任务应回退人工 gold、交叉验证或 abstention。现有 exact-v1 只支持作者的生成任务、verifier 与训练设置。<!-- semantic-body-binding:SF-2026-ARXIV-2605-06660 -->
+
+
+#### Construction Artifact 可以派生 Partial Credit，但不能拥有真值
+
+合成多跳任务时，构造过程中的知识图谱 path 原本只是生成中间物；若将其版本化，它既可供 data admission 检查题目是否连通，也可让 reward owner 派生 waypoint partial credit。两条消费路径必须引用同一 construction revision，terminal verifier 继续拥有最终正确性，避免图谱路径同时扮演题目来源、奖励和真值而形成循环自证。
+
+共享 artifact 能密化稀疏 reward，却会把图谱缺口、外部 LLM 抽取错误和答案泄漏同时传播到数据与奖励。path 不可信、含目标泄漏或不能覆盖任务时，应回退 outcome-only reward、固定 curriculum 与独立 terminal verification。`arXiv:2605.05702v1` 只覆盖 Wikidata factoid multi-hop 和近似 waypoint/correctness，不证明开放搜索 Agent 普遍受益。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-05702 -->
 
 ## 去重为什么改变梯度而不只是节省磁盘
 
@@ -526,6 +642,13 @@ semantic or transformed overlap
 - 不把一次扫描结果写成永久“无污染”证明。
 
 污染治理属于 Evaluation correctness，而不只是数据清洁度。
+
+### Code Memorization 要验证功能，而不只验证文本
+
+文本 overlap 能发现逐字复制，却会漏掉变量重命名、控制流重构后仍复现同一行为的代码。Functional memorization 审计应比较接触目标代码的 target model 与未接触的 reference model，并由独立 coding agent 生成 tests、用可执行结果验证行为等价；只有 target 特有且可执行的复现，才支持更强的 counterfactual 归因。
+
+执行式审计提高语义覆盖，却增加 test incompleteness、reference contamination、corpus duplicate 和 agent bias。LLM judge 只能作为经 TPR/FPR 校准的低成本 sensor，不能拥有泄漏 verdict；无法执行、reference 暴露未知或数据谱系不完整时，只能报告疑似相似并回退人工/静态 provenance review。现有比例只属于作者数据与模型，不能外推为通用代码泄漏率。
+<!-- source-family:SF-2026-ARXIV-2606-12764 -->
 
 ## Tokenizer、切分与 Packing 的边界
 
@@ -608,6 +731,10 @@ source artifact
 edge authenticity、storage/cardinality 与敏感 source disclosure 问题。小型人工数据或单阶段 pipeline 仍可用
 manifest + content hash；typed graph 只在跨版本、多 derivation 和治理查询中值得。Tracing the Roots 的作者方法
 提供 Experimental lineage evidence，不证明自动抽取的所有边都真实完整。
+
+模型资产的 lineage 还必须递归穿过“生成、过滤、judge、selection 与蒸馏”操作。只在 model card 写一个 base model 名称，会漏掉 synthetic-data generator、reward/judge model 和中间 checkpoint 对最终行为的依赖；更可审计的表示以 artifact identity 为节点、以 operation-centered relation 为边，递归解析每次派生。自动发现能暴露未声明依赖，却受公开文档缺失、同名实体和不完整 artifact 约束，因而是待人工确认的 provenance evidence，不是完整 SBOM 保证。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-12385 -->
 
 ### 长交互历史需要把 Event Time 与物化边界分开
 
@@ -702,6 +829,10 @@ physical sample / simulation state
 
 大规模数据常无法先完全 shuffle 到单机文件。系统会在 shards、workers 和局部 buffer 上执行多级随机化。
 
+当数据压缩与 worker 分配同时发生时，只做语义聚类或只做均衡切分都可能改变实际 exposure。更稳健的路径是先以可审计 proxy 建 coverage clusters，再在保留稀有/安全样本的前提下约简，随后按 DP worker 容量分配并记录加权更新；cluster coverage 与 worker exposure 必须分别验收。它以近似原分布换吞吐和存储，proxy 漂移或长尾不可识别时应回退较弱压缩或原始采样。
+
+<!-- source-family:SF-2026-ARXIV-2609-12584 -->
+
 这里要区分：
 
 ```text
@@ -721,6 +852,16 @@ Shuffle buffer 太小可能产生 source clustering；不同 worker 重复读取
 按时间组织能改善事实绑定和时序评估，却削弱 i.i.d. 假设、降低混合随机性并可能放大短期偏差；非时间任务或数据稀疏时，shuffle 仍是更稳健的基线。arXiv:2605.22769v1 的实验只支持其 corpus、ordering 与评估协议，不证明所有预训练任务都应采用时间顺序。
 
 <!-- source-family:SF-2026-ARXIV-2605-22769 -->
+
+### 时间边界必须由执行环境逐轮拥有
+
+给搜索轨迹附上一句“不要使用截止时间之后的信息”，在工具可信、单轮查询且所有结果都带可靠时间戳时实现最简单；一旦 Agent 会改写查询、连续搜索或打开新页面，prompt 只表达意图，不能限制后端实际返回什么。事后删除明显越界的完整轨迹也不够，因为未来信息可能已经改变了前续 query、停止条件或证据选择。
+
+更严格的数据生成分支把 cutoff 变成版本化的 environment policy，在每一次 tool transition 上执行：查询进入只读的时间截断后端，结果只有在 publication time 可解析且不晚于 cutoff 时才能成为 observation；缺失或不可解析的时间戳按 fail-closed 处理。这样生成的 trajectory 还应同时保存 cutoff revision、query/result identity、被拒原因和最终训练样本 lineage，使“当时能看见什么”成为可重放的数据合同，而不是 prompt 中无法审计的愿望。
+
+这条路径用较低的 teacher 即时准确率、更多搜索调用与召回损失，换取不会借用未来证据的监督。它也没有消除网页时间戳错误、搜索索引缓存或 teacher 偏差；来源时间无法核验时应拒绝样本或进入人工 provenance review。任务本来就要求消费当前信息、事实没有历史 cutoff，或可信 snapshot 已冻结时，普通实时检索与离线 snapshot 仍是更合适的旧路径。Exact-v1 的 forecasting/search 实验只证明 hard environment restriction 在其数据、搜索后端和 Qwen3-8B/32B 训练设置中优于 prompt-only 控制，不能外推为任意工具环境都已消除 temporal leakage。
+
+<!-- source-family:SF-2026-ARXIV-2607-25554 -->
 
 ## 数据质量不能只看 validation loss
 
@@ -751,18 +892,37 @@ DataComp-LM 一类 controlled data benchmark 的价值也在这里：保持模�
 <!-- semantic-body-binding:SF-FOLD-ONLINE-DEDUP:end -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-13873:start -->
-source-level unlearning若是硬需求，应在训练时把shared backbone与source-addressable sparse sinks分离，并把disable-sink作为部署revoke动作。
+训练完成后再从共享 backbone 中精确移除某个来源，代价接近反事实重训且很难证明无残留。若 source-level revoke 是设计期硬需求，可以在训练时把共享表示与 source-addressable sparse sinks 分开，让 source identity、路由和 sink revision 成为模型资产；部署时禁用 sink 只撤销该可寻址分支，不宣称 backbone 从未接触信息。它用额外参数、路由与严格 lineage 换快速撤销，来源重叠、标签错误或信息泄入共享表示时仍须重训或隔离。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-13873:end -->
+
+另一分支把可撤销表示封装在带 passport 的 adapter / LoRA 中，由独立 authority 验证生效配置与 credential 状态。它增强的是“当前部署是否加载被授权分支”的可审计性，不是 information deletion proof；密钥、hypernetwork 或 verification tolerance 失效时必须冻结资产并回退重训/隔离。两条路线都说明：可撤销性应在训练结构中预留，停用凭证不能静默改写成法定遗忘。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-17122 -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-16110:start -->
 machine-unlearning 验收需要无需 scratch retrain/shadow fleet 的 proof-of-ignorance audit，并显式保存攻击面与误判边界。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-16110:end -->
 
+### 通用数据可以从 Sampling Pool 演进为 Update Constraint
+
+现有 data selection 主要决定哪些样本被消费；在目标数据稀缺、又必须保留通用能力时，通用数据还可以定义当前更新的 feasible set。目标数据产生拟更新，general-data gradients 只约束该方向不得越过已声明的能力保持边界，trainer/optimizer 仍拥有参数 commit。数据由此从 sampling weight 演进为 update constraint，而不是直接拥有 objective。<!-- semantic-body-binding:SF-2026-ARXIV-2605-07063 -->
+
+投影约束可抑制小样本过拟合，却增加额外梯度、投影成本、通用数据偏置和约束过强导致的欠适配。general set 与部署目标失配或目标数据已充分时，应回退普通 mixture、selection 或无投影更新。exact-v1 的 SFT、RLHF、RLVR 设置只支持作者构造，不证明 feasible set 对任意目标域正确或投影普遍最优。
+
 ### Post-training Data Selection 是当前 Policy 的在线控制环
 
 静态 difficulty sampling 在 policy 固定时可重放且易审计；RL 过程中模型能力移动后，长期保留已学会或完全不可学的样本会浪费 rollout。在线 selector 可以依据当前 policy 的 reward/gradient frontier 估计 active learning zone，再决定采样、降权或延后。
 
+同一约束也出现在预训练与指令微调的数据清洗中。离线去重、质量分类和固定 mixture 在 checkpoint 尚未变化时最容易复算，但它们默认“样本价值与当前 learner 无关”；训练推进后，原本困难的样本可能已被学会，原本相似的样本也可能对当前误差面提供不同方向。一个受限分支让 data controller 读取当前 checkpoint 的 loss、相似度或质量 proxy，对样本做在线重加权，而 trainer 仍拥有 objective 与 optimizer commit。它把数据选择从一次性清洗演进为 checkpoint-coupled control loop，可能以相同 FLOPs 改善有效样本利用，却新增 feedback bias、selector drift、数据分布收缩与重放困难；proxy 与 held-out outcome 不一致时应回退冻结 mixture，并保留每次权重、checkpoint revision 与抽样概率。exact-v1 的 instruction-tuning/pretraining 实验只证明作者模型、语料与 proxy 下的相对结果，不给出通用样本价值函数。
+
+<!-- source-family:SF-2026-ARXIV-2605-05227 -->
+
 Selector 只拥有数据 admission，不拥有 objective；它用更高数据效率换 policy-dependent feedback、分布收缩和额外观测成本。frontier 估计不稳或需要严格复现实验时，回退冻结 mixture，并保留所有采样概率与 policy revision。
+
+当每次调用完整 solver 或目标模型判断样本难度过于昂贵时，可以先用一次带 solver label 的 pool 训练 activation probe，把目标 solve-rate 作为生成器的近似 reward；或用 proxy trajectory 上动态 reference 的一阶 influence 近似更新 selector。两者都把昂贵内环判断摊销成控制信号，却把 probe/target drift、proxy transfer、mode collapse 与 penalty calibration 引入数据状态。Probe 和 selector 只负责候选排序，held-out solver 与目标模型训练结果仍拥有最终 admission；漂移或泛化失败时回退周期性完整求解与冻结 mixture。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-18284 -->
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-18650 -->
 
 <!-- source-family:SF-2026-ARXIV-2605-17003 -->
 
@@ -795,6 +955,22 @@ problem + verified solution forks
 
 把去重写成“找到重复便只留一份”，会让 shard 边界和处理顺序静默改变训练分布。检测层应先以稳定内容身份生成跨 shard 的 duplicate group；策略层再依据 frequency、length、来源权重与污染风险决定每组保留几份，并把决定写入 dataset revision。全局聚合提高语义稳定性，却增加 shuffle、索引与治理成本；在可证明 shard-local 且重复极少的数据上，局部检测仍可作为低成本分支，但不能冒充全局 exact dedup。
 <!-- source-family: arxiv:2608.03089v1; daily: 2026-08-05; semantic-body-binding: duplicate-identity-before-retention-policy -->
+
+### Provenance 必须追踪到派生记录与 token，而不只停在数据集版本
+
+只给 dataset artifact 标一个版本号，足以回答“训练用了哪一批文件”，却无法回答某条训练记录经过了哪些过滤、改写、拼接或 tokenization，也无法在删除、纠错或重训时确定影响边界。更完整的 lineage 应把 source record、每次 transformation、derived record、token span 与消费它的 checkpoint 连接起来：
+
+```text
+source record
+-> transformation identity + parameters
+-> derived record / token span
+-> shard and mixture revision
+-> training step / checkpoint consumption
+```
+
+这种细粒度 lineage 把删除和归因从“猜测相似样本”推进为可查询的影响传播；代价是更大的 metadata、稳定 identity 设计以及跨流水线保存开销。论文原型证明了 record/token 级追踪可以建立，但没有证明它在任意超大语料、所有 transformation 或长期在线更新中都具备可接受成本。因此，小规模或低风险数据仍可采用 dataset-level manifest；只有当许可撤回、隐私删除、污染定位或审计要求需要精确影响范围时，才应承担细粒度 lineage 的成本。
+
+<!-- source-family:SF-2026-ARXIV-2607-13037 -->
 
 ## 本章在知识树中的位置
 
@@ -854,7 +1030,72 @@ Raw sources
 更可靠的数据系统必须同时管理采集协议、质量、覆盖、partition ownership、许可与 consent、重复、污染、
 provenance、合规和可复现性。数据决定能力生产的上游边界，也决定后续任何 loss 下降究竟代表什么。
 
+### Synthetic Data 过滤可以前移，但早停也会改变数据分布
+
+先完整生成再统一判废最容易审计，却会为注定失败的长样本支付全部 token。multi-stage in-flight rejection 在生成过程中
+运行逐级过滤器，低价值轨迹提前停止；过滤器拥有 early-stop proposal，最终数据 owner 仍以完整验证决定是否入库。
+它节省 compute，也会误杀晚期可修复样本、让不同阶段阈值难校准，并形成 selection shift。低置信、高价值长尾或过滤器
+漂移时，应回退完整生成后评估并保留未截断对照。exact-v1 仅支持作者的实验设置和限制。
+
+<!-- source-family:SF-2026-ARXIV-2605-14062 -->
+
+### Data Selection 要从单点评分演进为 Recipe Search
+
+给每个样本一个独立 quality score 简单且可缓存，但不能表达筛选算子的顺序、组合效应和预算约束。更完整的 data-recipe search 在固定原始池上物化候选 subset，用廉价 warmup probe 和缓存信号提出局部修改，再由昂贵的完整 SFT evaluation 决定 recipe；data owner 因而要版本化原始池、算子、顺序、预算与 realized subset。<!-- semantic-body-binding:SF-2026-ARXIV-2605-12944 -->
+
+搜索会增加训练次数并可能过拟合 evaluator 或代理 probe。论文只支持所测任务、模型和搜索空间；预算不足或排名不稳定时，应回退可解释的单项规则、固定配方和独立 held-out 验收。
+
+### VLA 采样要保留 Action-critical Transition
+
+均匀抽帧降低存储和训练成本，却会丢掉短暂的抓取、接触和状态切换。按 action variation、visual-action coherence、task progress 与 gripper transition 评分，可以在目标 retention ratio 下把时间预算移向控制关键帧；被选择的 frame index 和原 trajectory 时间轴必须成为 data provenance。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13757 -->
+
+选择器可能偏爱剧烈但无关的运动，或漏掉缓慢形成的先决状态。现有 VLA 任务结果不构成通用采样法；trajectory coverage 或 downstream success 退化时，应提高保留率、混入均匀帧或回退完整序列。
+
+### Truth-state 不能只靠自然语言否定词携带
+
+把“该命题为假”写进训练文本，看似已经标注 truth state；但 fine-tuning 可能学习命题内容而忽略否定或 fiction wrapper，使模型随后更相信被否定的 claim。数据合同需要把 proposition、truth label、scope 与监督目标结构化分离，并用训练前后 behavioral canary 验证否定信息是否真的改变预测。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13829 -->
+
+现有证据来自特定模型、语料和问法，不能证明所有否定文本都会反向强化。结构化标签和对比样本也增加数据构建成本；canary 不能稳定复现时，应降低该数据分区权重、加入正反对照，或不把自然语言 wrapper 当成可靠 truth annotation。
+
+### Supervision Granularity 应跟随可验证的状态边界
+
+逐 tactic 监督定位精确，在单步验证便宜时合理；整条 proof 监督保持长程结构，却把局部正确与后续失败绑在一起。
+当证明状态由一组 open goals 定义时，可以按 goal boundary 把轨迹切成 locally coherent segments，并让训练数据与
+goal-aware rollout 使用同一分段规则。这样 supervision unit 对齐到 verifier 可观察的 state transition，而不是固定
+token 数或任意文本段落。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11905:start -->
+边界选择器只提出 segment，proof checker 才拥有正确性 verdict。该分支增加 open-goal 估计、segment sampling、
+数据版本与验证成本；自动化 tactic 很短或 goal count 只是粗糙代理时，分段可能没有收益。此时应回退逐 tactic、
+整轨迹或完整 proof verification。现有 exact-v1 证据限于所测 Qwen2.5-Math-7B、Lean 数据、miniF2F、共同 search
+budget 与五次运行，不能证明跨 theorem prover 或通用 Agent trajectory 的优势。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11905:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23883:start -->
+增加样本数量无法区分细粒度视觉错误究竟来自 supervision 缺口，还是架构、分辨率与视觉编码能力不足。一个可诊断的分支把可验证的几何 primitive overlay 到真实图像，在保持 sample count 可比的条件下，单独改变监督粒度；overlay recipe、原始图像、真实语义 slice 与 instruction-tuning 配方必须共同版本化，只有独立 slice 的行为变化才能把问题暂时归因到数据控制面。
+
+这种干预用额外标注管线和可能的视觉 clutter 换取更清楚的 failure attribution。现有收益只覆盖作者的 geometric overlays、MLLM、训练配方与 11 个 benchmark，不能证明所有空间错误都来自数据；任务饱和、合成 primitive 偏差或 overlay 与真实语义冲突时，迁移反而会退化。此时应回退原始 mixture、将 synthetic set 独立保留，或采用真实图像人工标注，而不是继续堆叠几何提示。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23883:end -->
+
+### Data Mixture 可以随模型状态更新，但 Proposal 不能冒充最优配方
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-15220:start -->
+固定 mixture 在模型、阶段与数据域稳定时最容易复现；从 pretraining 进入 continual midtraining 或 instruction tuning 后，各域的边际收益会随 checkpoint 改变，离线一次搜索就可能过期。一个 on-policy 分支在当前 checkpoint 上训练低秩 adapters，用它们的插值近似候选 mixture 的短期更新，再由 controller 在固定 proxy budget 内提名下一阶段配方。Data owner 仍保存真实语料、采样权重与阶段身份，adapter 只拥有低成本 proposal，最终配方必须由完整训练或 held-out gate 提交。
+
+该路径减少为每个候选 mixture 训练完整模型的成本，却把 adapter 近似误差、候选域集合、阶段切换与 scale transfer 写入控制状态。exact-v1 只支持 §3 的 OP-Mix、§4 所测 lifecycle 和 performance-efficiency frontier，不证明任意模型规模或新数据域都可由低秩 proxy 排序。候选空间很小、阶段不变、proxy 与完整训练排序失配或预算允许直接消融时，固定 mixture 与小规模真实 sweep 仍是更可靠的基线。<!-- source-family:SF-2026-ARXIV-2605-15220 -->
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-15220:end -->
+
+### 双语词汇干预是可版本化的数据控制分支
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23885:start -->
+直接混合多语言语料在资源充足、token 对齐自然形成时最简单；低资源迁移中，可以用词典驱动 replacement 或 mix 作为受控数据干预。词典 revision、替换比例、混合比例、语言对与 domain slice 必须进入 dataset identity，使收益可以与普通语料扩充区分。
+
+显式 lexical bridge 能集中跨语言信号，也会引入多义词、语序破坏和领域偏差。exact-v1 只支持作者语言、语料和评估，不能推出词典替换普遍优于平行数据；语义噪声、目标语言退化或分布外漂移时，应回退原语料、经过验证的平行数据或更保守的混合比例。arXiv:2605.23885v1
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23885:end -->
+
 ## Review notes
+
+- `SF-2026-ARXIV-2605-07063`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2605.07063v1) 支持在作者 SFT、RLHF、RLVR 设置中由 general data 构造 update constraint；不证明 feasible set 对任意目标域正确，也不提供生产训练成本或普遍最优投影。
 
 - Agent World Model / executable synthetic environments for Agent RL（Status: Experimental）:
   https://arxiv.org/abs/2602.10090
@@ -915,6 +1156,10 @@ Primary-source 校验入口：
 
 ### Daily integration evidence trace
 
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25554:start -->
+- `SF-2026-ARXIV-2607-25554` — Daily [2026-07-29](../../papers/2026/07/29/README.md)；primary `arXiv:2607.25554v1`；正文锚点“时间边界必须由执行环境逐轮拥有”。本章吸收 time-truncation harness 对逐轮 observation visibility 的 ownership、fail-closed 时间戳规则与实时/快照 fallback；作者实验不证明任意搜索后端已经消除 temporal leakage。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25554:end -->
+
 #### Source-specific exact-v1 Review notes
 
 - SF-2026-ARXIV-2606-28772 — primary arXiv:2606.28772v1; exact-v1 URL=https://arxiv.org/html/2606.28772v1; Method=https://arxiv.org/html/2606.28772v1 — §3 Methods; Evaluation=https://arxiv.org/html/2606.28772v1 — §3.3 Statistical Analysis; 4 Results; Non-proof=https://arxiv.org/html/2606.28772v1 — §Majority Vote Silences Minority Values: Annotator Disagreement at the Hate/Offensive Boundary in HateXplain; 4.1 Disagreement Concentrates at the Value Boundary; 4.5 Boundary Disagreement Is Not Driven by Annotation Error；该 exact-v1 只证明论文所述 workload、model/runtime 与 evaluator 范围内的结果，未证明跨模型族、硬件、数据分布、未测 failure mode 或生产 SLO 的普遍成立。。
@@ -941,49 +1186,9 @@ Review note：`SF-2026-ARXIV-2606-29171`；Method `https://arxiv.org/html/2606.2
 
 ### Source-family integration record
 
-<!-- daily-20260628:TRAIN-DATA:start -->
-### Owner-merged minimal durable delta
 
-标注聚合不能静默删除价值分歧。Data owner 应保存 per-annotator label、annotator/threshold identity、disagreement 与 aggregation revision；majority 或 soft label 只是可重建的 materialized view。训练可消费聚合结果，但 evaluation 与 policy review 必须能恢复 contested boundary。
 
-### Trade-off、failure、fallback 与 coexistence
 
-三位 annotator 和单一 HateXplain/BERT slice 不能区分稳定价值阈值与标注噪声；高分歧时保留多视图或转人工，不把 minority label 自动升级为真值。
-
-<!-- daily-20260628:TRAIN-DATA:end -->
-
-<!-- recovered-daily-20260623:TRAIN-DATA:start -->
-### 2026-06-23 evidence integration — TRAIN-DATA
-
-相邻章 `books/part-04-training-system/28-pretraining.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-22883**：CLI-Universe: Towards Verifiable Task Synthesis Engine for Terminal Agents 的 exact-v1 机制为：To overcome this, we introduce CLI-Universe, a principled synthesis engine that constructs terminal-agent tasks. 因此 把任务/样本生成、可执行验证、过滤与训练 lineage 绑定。 该 family 的 failure pressure 是：While recent LLM-based terminal agents have demonstrated promising capabilities, the scarcity of high-quality, executable training data remains a critical bottleneck. 披露的 evaluation signal 是：Remarkably, fine-tuning Qwen3-32B on CLI-Universe-6K achieves 33.4% on Terminal-Bench 2.0. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-28386**：Data Provenance for Image Auto-Regressive Generation 的 exact-v1 机制为：Leveraging this, we present a post-hoc framework that enables the robust detection of such patterns for provenance tracing. 因此 把任务/样本生成、可执行验证、过滤与训练 lineage 绑定。 该 family 的 failure pressure 是：Image autoregressive models (IARs) have recently demonstrated remarkable capabilities in visual content generation, achieving photorealistic quality and rapid synthesis through the next-token prediction paradigm adapted from large language models. 披露的 evaluation signal 是：Image autoregressive models (IARs) have recently demonstrated remarkable capabilities in visual content generation, achieving photorealistic quality and rapid synthesis through the next-token prediction paradigm adapted from large language models. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-<!-- recovered-daily-20260623:TRAIN-DATA:end -->
-
-<!-- recovered-daily-20260624:TRAIN-DATA:start -->
-### 2026-06-24 evidence integration — TRAIN-DATA
-
-相邻章 `books/part-04-training-system/28-pretraining.md` 只接收 handoff，不重复拥有机制。
-
-### Owner-merged minimal text
-
-- **SF-2026-ARXIV-2606-24133**：把固定或单目标 data mixture 改为 SAC controller：state 汇聚 domain loss/lexical diversity/weight-norm，action 写回下一训练阶段的 domain weights，多目标 reward 决定调度。 The Pile、给定 16-layer/2048-dim recipe 与 reward sensitivity 不证明跨 tokenizer、optimizer、数据污染或超大规模 pretraining 仍有相同收益。
-- **SF-2026-ARXIV-2606-24998**：数据去重从 hygiene 建议升级为 compute allocation contract：相同样本的 internal repetition 先改善后破坏 eval loss，data owner 应记录 repeat count、unique pool 与 model-size-dependent peak。 结论绑定 synthetic repeated pools、模型尺度与 loss-floor fit；自然语料的语义近重复、curriculum 与 downstream contamination 未证明，不能由单一 repeat threshold 自动删除。
-
-<!-- recovered-daily-20260624:TRAIN-DATA:end -->
-
-<!-- recovered-daily-20260625:TRAIN-DATA:start -->
-### 2026-06-25 evidence integration — TRAIN-DATA
-
-- **SF-2026-ARXIV-2606-25388**：`III System Overview; IV Methodology; IV-F Execution-Guided Validation and Control` 所定义的源特定机制用于把数据选择、校准或验证结果变成训练前可审计的数据控制状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `VII Discussion and Future Work` 是 `TabClean: Reusable LLM-Synthesized Programs for Tabular Data Cleaning` 的 source-specific 反例/局限边界；若运行条件离开 `V Experimental Evaluation; V-A Experimental Setup` 的验证域，`TRAIN-DATA` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-25871**：`3 Our Approach; 3.1 System Architecture; 3.3 Per-Class Isotonic Calibration; 3.4 Cascade Decision Logic` 所定义的源特定机制用于把数据选择、校准或验证结果变成训练前可审计的数据控制状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `5 Production Deployment and Discussion; sponsored-search relevance boundary` 是 `AutoRelAnnotator: Calibrated Model Cascades for Cost-Efficient Relevance Evaluation in Sponsored Search` 的 source-specific 反例/局限边界；若运行条件离开 `4 Experiments and Evaluation; 4.2 Dataset and Setup; 4.5 Cascade Performance` 的验证域，`TRAIN-DATA` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-25996**：`2 Autodata; 2.1 Agentic Self-Instruct; 4 Meta Optimization of the Data Scientist` 所定义的源特定机制用于把数据选择、校准或验证结果变成训练前可审计的数据控制状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `6 Conclusion and Discussion; Hacking & limitations; A Token Efficiency and Truncation` 是 `Autodata: An agentic data scientist to create high quality synthetic data` 的 source-specific 反例/局限边界；若运行条件离开 `3 Experiments; CS, legal, and scientific reasoning tasks` 的验证域，`TRAIN-DATA` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-<!-- recovered-daily-20260625:TRAIN-DATA:end -->
 
 <!-- june29-owner:TRAIN-DATA:start -->
 ### 2026-06-29 约束变化与机制增量
@@ -1007,13 +1212,13 @@ Review note：`SF-2026-ARXIV-2606-29171`；Method `https://arxiv.org/html/2606.2
 <!-- daily-books-trace:SF-2026-ARXIV-2606-11127:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-12385:start -->
-- `SF-2026-ARXIV-2606-12385` — Daily `2026-06-11`；primary `arXiv:2606.12385v1`；Books review `books-review:SF-2026-ARXIV-2606-12385`。
+- `SF-2026-ARXIV-2606-12385` — Daily `2026-06-12`；primary `arXiv:2606.12385v1`；Books review `books-review:SF-2026-ARXIV-2606-12385`。
 
   **已吸收的语义增量：** 模型卡不足以表达递归 training dependencies；provenance 应以 artifact identity 和 operation-centered edges 递归解析生成、过滤、judge 与 selection 关系。
 <!-- daily-books-trace:SF-2026-ARXIV-2606-12385:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-12764:start -->
-- `SF-2026-ARXIV-2606-12764` — Daily `2026-06-11`；primary `arXiv:2606.12764v1`；Books review `books-review:SF-2026-ARXIV-2606-12764`。
+- `SF-2026-ARXIV-2606-12764` — Daily `2026-06-12`；primary `arXiv:2606.12764v1`；Books review `books-review:SF-2026-ARXIV-2606-12764`。
 
   **已吸收的语义增量：** Code training-data audit 必须检测 functional equivalence，而不能只依赖文本 overlap；应以 exposed target 对未 exposed reference 做 counterfactual execution comparison。
 <!-- daily-books-trace:SF-2026-ARXIV-2606-12764:end -->
@@ -1036,11 +1241,6 @@ Review note：`SF-2026-ARXIV-2606-29171`；Method `https://arxiv.org/html/2606.2
   **已吸收的语义增量：** source-level unlearning若是硬需求，应在训练时把shared backbone与source-addressable sparse sinks分离，并把disable-sink作为部署revoke动作
 <!-- daily-books-trace:SF-2026-ARXIV-2606-13873:end -->
 
-<!-- daily-books-trace:SF-2026-ARXIV-2606-15216:start -->
-- `SF-2026-ARXIV-2606-15216` — Daily `2026-06-14`；primary `arXiv:2606.15216v1`；Books review `books-review:SF-2026-ARXIV-2606-15216`。
-
-  **已吸收的语义增量：** pretraining subset selection 应在 gradient space 以 set-level diversity 与 quality 联合优化，而不是逐样本 top-score。
-<!-- daily-books-trace:SF-2026-ARXIV-2606-15216:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-15367:start -->
 - `SF-2026-ARXIV-2606-15367` — Daily `2026-06-14`；primary `arXiv:2606.15367v1`；Books review `books-review:SF-2026-ARXIV-2606-15367`。

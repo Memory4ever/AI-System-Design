@@ -35,6 +35,20 @@ long-running events
 
 请求完成不再等于任务完成。一个 Agent run 可能持续数分钟、数天，被暂停、等待用户、跨多个模型与工具后再恢复。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20704:start -->
+长期 delegation 还会使 credential 生命周期超过一次模型请求。Heartbeat-bound hierarchical credential 把 child
+credential 的有效性绑定到 parent 周期性 liveness proof，使父任务失联后授权自动衰减；它用持续签名、时钟与
+层级恢复复杂度换更短的悬挂权限窗口。heartbeat delay、partition 或 parent compromise 仍会造成误撤销或错误续期，
+作者协议与评测不证明所有身份系统安全；高风险 effect 应保留短期 token、中央 revoke 与人工审批 fallback。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20704:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20874:start -->
+Policy-as-code 运行时可以在 proposal、tool admission、effect execution 与 state commit 等关键阶段执行 intervention，
+避免只在 prompt 或最终答案处做一次过滤。每个 policy decision 必须绑定 agent/run、输入、规则 revision、effect 与
+receipt；模型和工具都不能自行跳过。更细粒度 enforcement 增加延迟、策略冲突和 availability 风险，demo 结果也不
+证明开放环境安全。policy engine 不可用或规则冲突时，应 fail closed、降级到只读能力或转人工，而不是继续执行。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20874:end -->
+
 ## Serving 结束不等于 Agent 任务结束
 
 Model Serving 的一次成功通常以 token stream 正常结束、请求状态释放为边界：
@@ -388,6 +402,25 @@ incumbent/candidate paired outcomes
 evaluator drift、重复 candidate 与长期 alpha allocation 仍需治理。样本固定且评估次数预先确定时，普通 held-out
 test 更简单。
 
+### 长任务的人类边界应前移到目标与结构性 Commit
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-05170:start -->
+让人逐步审批每个 Agent action 最容易理解，却会在长程设计中把吞吐压到 review queue；完全放开又会让模型把简单 backend 修复升级为高风险结构改写，或自行选择过激目标。`arXiv:2605.05170v1` 的 §2–§4 在一个 RTL、verification 与 timing-closure 案例中实际观察到 human-review bottleneck、过度复杂修复和过激 goal setting，但没有实现通用的 constraint-revision 或 milestone-commit 协议。
+
+基于本章既有的平台治理合同，可以进一步推导：run 开始前应冻结由人类或 release owner 持有的目标约束、资源边界和 acceptance tests，让模型拥有分析与实现 proposal；只有改变 PPA/安全目标、体系结构或不可逆 artifact 的 milestone 才重新请求 commit。平台保存 constraint revision、验证证据与 rejected alternatives，不能用“任务最终完成”覆盖中途越权。这个协议是本书的工程推论，不是该论文已经验证的系统实现。
+
+前移约束减少逐步等待，却要求目标足够完备，也可能压制合法探索；约束缺失、验证能力弱或变更不可逆时，细粒度人工 review 仍是正确回退。论文报告的相对 token/80 小时结果也不证明其他 Agent、组织或硬件流程可以同等自治。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-05170:end -->
+
+
+#### Agency 与 Autonomy 要拆成两个部署旋钮
+
+让 Agent 自行规划但所有 effect 都经人工确认，可以提高 agency 而保持较低 autonomy；反过来，固定流程中的自动执行可能 autonomy 高却几乎没有目标选择权。平台应分别版本化 goal/plan discretion 与 effect authority，并用 checkpoint、escalation、tool fencing、write staging 和 rollback 调节二者，而不是给任务贴一个统一“自治等级”。
+
+拆分后能按风险配置控制面，却增加 policy 组合、审计和用户心智成本，错误 checkpoint 也会制造形式审批。低风险、可逆的固定流程可保留高自动执行；目标模糊或 effect 不可逆时应收紧两轴并前移人工 commit。`arXiv:2605.12105v1` 的 §III–§V 只提供架构维度与案例，后续章节没有把它证明为合规认证或生产有效性保证。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12105 -->
+
 ### Workspace 是长期行动的隔离单元
 
 一次 model call 可以在无状态 sandbox 中结束；长期 Agent run 却会持续持有文件、进程、服务、凭据代理、审批
@@ -423,6 +456,32 @@ Evidence Plane
 
 Control plane 不应阻塞每个 token，却必须控制每个高风险 transition。Execution plane 不能自行修改 policy。Evidence plane 提供 replay、incident 和 improvement 所需 observed state。
 
+### 快速演进的 Skill / Tool Layer 不能拥有 Primitive Effect Authority
+
+把 tool wrapper、prompt policy 和权限检查写在同一应用进程里，适合能力少、单用户且影响面有限的原型；Agent 可以自生成 tool、修改 skill 或跨 workspace 运行后，这一层本身已成为可变且可能受 prompt injection 影响的对象。稳定的 runtime boundary 应把模型输出解释为 operation proposal，再将它解析成 typed primitive，由独立 capability、resource 和 information-flow policy 决定是否执行：
+
+```text
+model / evolving skill proposes operation
+-> resolve typed primitive and target object
+-> capability + path/object scope check
+-> resource budget + information-flow check
+-> human approval when policy requires
+-> execute effect and append immutable receipt
+```
+
+Skill catalog 中“存在某个 tool”不等于当前 principal 对外部文件、网络、人或对象拥有权限；fork 也不能默认继承全部 capability。这个 runtime 分权用更小 blast radius、统一 audit 和可撤销 authority，换取 primitive schema、policy lookup、approval latency 与兼容层维护。它仍不能阻止恶意内容说服模型提出危险操作，只能确保 proposal 在 effect commit 前经过同一 enforcement；语义风险无法被 policy 表达、primitive mapping 不确定或审计链断裂时，应拒绝、请求人工确认或回退只读 sandbox。
+
+当治理规则还要约束可组合程序时，逐调用 if/else policy 会遗漏 handler 组合后的间接 effect。更强的分支
+为程序携带 capability-indexed effect type，并要求每个 handler 的解释保持 effect algebra 与边界条件，
+使 admission 能检查“这段程序最多可表达什么副作用”，而不只检查某次字符串调用。它用类型标注、证明
+义务和较窄表达能力换组合性；动态目标、外部服务语义或 handler 不受信时，静态证明必须与运行时 reference
+monitor 并存。形式定理只在论文 interaction-tree 语义内成立，不证明真实 Agent、工具和云服务已被完整建模。
+<!-- source-family:SF-2026-ARXIV-2605-01032 -->
+
+`arXiv:2606.03895v1` 的系统证据覆盖其 prototype 与 123-test regression suite，支持 primitive-level capability enforcement 的架构边界；它不证明开放世界 prompt injection 已被解决，也不证明该实现可直接满足任意生产 SLO。
+
+<!-- semantic-body-binding:SF-AGENT-LIBOS -->
+
 ### Agent Discovery 是可修复的路由状态，不是身份真值
 
 中心 registry 在规模可控、网络稳定且需要强一致权限时最清楚；节点和 Agent 都频繁上下线后，单一目录会成为可用性与扩展瓶颈。去中心化 discovery 可以用结构化 overlay 获得可预测 lookup，也可以用 gossip 让成员与邻近关系逐步收敛。
@@ -457,6 +516,21 @@ Created
 ```
 
 具体 workflow 可增加 domain states。关键是每次 transition 都可恢复、可审计，并绑定 actor、policy、budget 和 side-effect evidence。
+
+### Observation Interface 必须独立于 Action Clock
+
+一次动作配一张截图，在静态网页、低交互频率任务中最简单；持续媒体、动画、语音和短暂 UI 事件出现后，
+这个采样节奏会让 Agent 在两次动作之间失去环境变化。平台因此需要把 observation 从 action response 中拆出，
+形成版本化接口：按 gate 选择 keyframe，独立保存 audio transcript 与 persistent narration，并把每个 observation
+和随后的 action receipt 绑定到同一 run、environment revision 与时间线。Capture policy 只拥有 observation proposal，
+Tool/Environment 仍拥有真实状态，Agent 不能把未观察到的变化补写成事实。
+
+更高频、多模态观察能减少盲区，却会增加 token、带宽、隐私保留和时间同步成本；keyframe 过密还可能通过 image-token
+dilution 降低模型表现。漏帧、转写不可靠、权限变化或 observation identity 无法对齐时，应回退高保真 capture、重新观察
+或人工确认。现有浏览器任务实验只证明该接口在所测 computer-use 模型和环境中的条件收益，不证明桌面系统、会议或
+高权限副作用场景可以无人监督运行。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-29472 -->
 
 ## Scheduling 不只是 GPU
 
@@ -528,6 +602,14 @@ current run state + evidence + remaining budget
 模型自报“已经完成”不能成为 stop evidence；hard safety limit、用户 deadline 和不可逆动作审批也不受 utility 覆盖。价值估计失准会过早放弃困难任务，能耗模型漂移则会把节省写成虚假收益，因此 controller 必须有固定 cap/floor、shadow calibration 和按 task slice 的 outcome 复核。证据不足时回退固定预算或人工，而不是让局部成本最小化接管任务正确性。
 
 <!-- source-family:SF-AGENTSTOP-ENERGY-AWARE-TERMINATION -->
+
+Provider 还可能把内部推理拆成可读 summary 与只能原样回放的加密 continuation state。Host 可以展示、压缩或
+丢弃 summary，却不能据此重建 opaque state；多轮请求必须按 provider contract 保留 segment index、顺序、版本和
+ciphertext，并在中断时只提交已经取得完整 continuation token 的前缀。这个状态属于对话 runtime 的可恢复协议，
+不是可解释性证据，也不能授权 action。原样回放降低了跨轮失败，却增加 vendor coupling、存储敏感性和过期风险；
+provider 不要求连续状态或会话可安全重启时，普通文本 history 仍是更可移植的 fallback。
+
+<!-- source-family:SF-2026-KIMI-CODE-3492 -->
 
 Agent workload 还改变了“资源需求何时可见”。普通 serving request 通常主要经过模型 runtime；
 Agent request 会展开为 LLM inference、host orchestration、tool execution 和等待事件，反复跨越
@@ -640,11 +722,17 @@ Derived tree 只是索引和解释，不得覆盖原始日志；parallel tool ca
 causal links 都正确。平台应保存 transformer/model revision、node-to-event pointers、uncertainty 与人工修订，
 并允许删除/rebuild derived view。低风险短 run 直接读取 flat trace 更简单，高风险 diagnosis 才值得承担构图成本。
 
-<!-- source-family:SF-2026-ARXIV-2605-29082 -->
+审计链本身也必须与 action commit 同时成立。只有“允许时才执行”不足以防止执行后漏记；只有 append log
+又不能阻止未授权 effect。biconditional gate 将两者绑定：effect 被授权且能够写入 hash-chained receipt 才可
+提交，egress guard 限制外发通道，signing root 绑定 policy 与 artifact revision。它用可用性、密钥管理和
+日志写入延迟换 non-repudiation；审计服务故障时高风险动作应 fail closed，低风险路径也只能显式降级。
+作者对 primitives 与 failure modes 的验证支持架构可行性，不证明实现可抵抗所有 runtime compromise。
+<!-- source-family:SF-2026-ARXIV-2605-01740 -->
 
 若 tenant scope、policy signal 或 audit receipt 与普通 prompt/message 共用同一通道，Agent 就可能读取、重写或在转述中丢失控制信息。平台应提供 infrastructure-owned out-of-band envelope：data plane 携带任务内容，control plane 携带不可由 Agent 扩大的 scope/policy，evidence plane 接收 effect owner 的不可变 receipt。Agent 只提出工作，gateway/runtime 在每次 transition 上验证 envelope 并记录结果。
 
 分离通道提高可审计性，却要求跨组件传播身份、处理丢失/过期 envelope，并可能限制通用消息中间件；低风险单租户原型可继续使用简化 metadata。任何回退都必须 fail closed 或显式降级，不能把缺失控制字段当默认授权。exact-v1 只支持披露架构中的机制与测量，不证明所有 Agent 平台采用同一 wire format。
+<!-- source-family:SF-2026-ARXIV-2605-29082 -->
 
 ## Release、Canary 与 Rollback
 
@@ -665,9 +753,22 @@ Agent definition 更新可能改变 tool path 和长期 state，rollout 比模�
 
 只累积成功 trajectory 在环境稳定时能快速扩库；工具、policy 与任务变化后，旧 skill 会成为隐性兼容债。平台需记录来源、适用条件、依赖 revision、复验结果与退役状态，让 lifecycle owner 决定 promote、revalidate、quarantine 或 delete。收益是避免陈旧技能被静默复用，代价是持续评测与覆盖缺口；无可复验 artifact 时应回退基础 workflow。<!-- source-family:SF-2026-ARXIV-2605-19576 --> exact-v1 §3–5 支持生命周期机制，§6–7 的 drift 结果不证明其库可跨环境自动演化。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24785:start -->
+静态 skill catalog 在任务与工具稳定时最易审计；在线复用开始跨任务积累后，仅记录“成功过”会让错误 skill 以 cache 命中形式被放大。平台需要把每个 skill 视为可升降级的 versioned state，同时记录 success、steps、tokens、cache reuse、适用 slice 和最近复验；lifecycle controller 可以提议 promote、demote 或 blacklist，但执行权仍受发布 gate 和版本 pinning 约束。
+
+在线蒸馏减少重复规划与多模态处理成本，却会支付探索、评估污染和错误复用的风险，平均成功率也可能掩盖 token/step 成本或少数 slice 回归。独立 canary、held-out task 或 provenance 不完整时，不应自动 promotion；出现 drift、成本反弹或失败聚类时，应 demote/blacklist 并回退无技能单次执行。现有证据只支持论文披露的 cost decomposition、框架、实验和残余失败，不证明任意在线 skill library 都能安全自演化。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24785:end -->
+<!-- source-family:SF-2026-ARXIV-2605-24785 -->
+
 ### Skill 既有能力供应链，也有版本维护债务
 
 云端强模型可以把能力蒸馏成可在本地小模型执行的 skill，以减少原始数据上送和在线依赖；它交换的是能力差距、残余泄漏、schema 兼容和本地验证成本。Skill artifact 必须绑定 teacher/model、输入披露策略、适用任务、评测证据与撤销条件，不能把“数据没有原样上传”写成隐私保证。
+
+跨用户演进时，这一边界还要求把 private episode 与 shared skill revision 分开。Client 在本地 trajectory 上形成的候选改进，应先压缩为带 base version、适用条件、变更范围与 validation receipt 的 semantic patch；server 只能聚合已通过隐私和冲突检查的 patch，产生 shared evolution plan，各 client 再按本地 policy、personalized library 与回归结果决定是否 commit。raw trajectory、local memory 和用户数据仍由 client 持有，patch 没有自动获得共享执行权。
+
+这减少原始交互上送并允许个性化 skill library，却不构成 formal privacy：semantic diff 仍可能泄漏行为或数据，恶意 client 也能投毒共享计划。平台必须保留 patch provenance、secure aggregation/访问边界、cross-client conflict canary、per-client rollback 和“不参与 federation”的本地路径；无法证明 patch 安全、重构攻击超过阈值或客户端 contract 不兼容时，应拒绝 shared commit，回退本地人工维护或发布者签名的固定 skill。`arXiv:2606.03143v1` 只在其模型、CLI、模拟 client、server LLM 与 PII/reconstruction audit 范围内支持该机制，不证明生产隐私或恶意 patch 鲁棒性。
+
+<!-- semantic-body-binding:SF-FEDERATEDSKILL -->
 
 Repository 或 API 演进后，旧 skill 还可能在没有报错的情况下过期。维护流程应把 release diff 转为 bounded update task，同时检查删除失效指导与保留仍有效约束两类对立错误：
 
@@ -680,6 +781,12 @@ source/version provenance + skill contract
 ```
 
 自动维护能降低规模成本，却不能替代 authoritative changelog、artifact diff 和 executable regression。低频、高风险或缺少测试 oracle 的 skill 仍应人工审阅或直接调用原始工具文档。
+
+隐藏 skill 文件并不等于隐藏了 procedure。Agent 的 action sequence、参数选择、失败恢复与中间观察会形成可重复的行为 signature；外部观察者即使拿不到 proprietary artifact，也可能从 matched trajectories 推断并合成近似能力。平台因此要把 trajectory 当作可分级的能力侧信道：按受众和用途决定字段、精度与留存期，对敏感 procedure 做 redaction/aggregation，限制 probe budget，并把发布日志与 skill revision 绑定。
+
+减少轨迹细节会削弱调试、评估和事故取证，保留完整轨迹则扩大可复制面；这不是“一律不记录”的选择。内部受控环境可保留加密原始 trace，并向低权限观察者发布最小 receipt；无法证明 redaction 不泄漏时，限制访问而不是声称 skill 已保密。公开实验只说明五类受测场景中程序知识可从 benign trajectories 泄漏，不证明任意 skill 可完整重建或现实攻击率。
+
+<!-- source-family:SF-2026-ARXIV-2607-25560 -->
 
 平台闭环：
 
@@ -774,8 +881,78 @@ Agent 空闲时什么都不做最安全；在下一需求可预测且 memory 可
 
 后台 coding Agent 会跨多次模型调用、工具执行和进程重启。append-only event log 应记录实际 dispatch、effect、workspace revision 与验证结果，模型 context 只是从日志构造的派生视图。恢复时要重新核对外部状态和 authorization，不能重放已经发生的副作用，也不能假设旧 context 仍代表当前仓库。
 
+恢复后的科学状态与 normalized execution trace 是两种验收对象。系统可能正确恢复最终 state，却重复一次 pre-commit planner call；因此 policy hash、prefix budget、effect receipt 与 authoritative state 都要进入 run contract，local atomic commit 不能被宣称为外部 exactly-once。需要强副作用语义时，仍要依赖幂等 key、事务或补偿协议。
+
+<!-- source-family:SF-2026-ARXIV-2609-12216 -->
+
+Multi-Agent 还需把 principal、run、thread/container、episode、external revision、read exposure、write receipt、termination、feedback 与 outcome 分开记录。共享 board 上出现相同词汇或时间聚集，只证明共同 substrate 或启动波次，缺少 read log 时不能推断信息传播，缺少 outcome 时不能推断协作效用。更细 event schema 增加存储与 join 成本，却防止把可见性、消费和因果混成一件事。
+
+<!-- source-family:SF-2026-ARXIV-2609-12748 -->
+
+Event log 只有在写入顺序与状态投影契约明确时才是 authority。可维护的 dispatch 先把输入 event append 到 journal，
+再按确定 fold 计算新 state，最后向订阅者发布 committed projection；若先更新内存状态、随后异步补日志，就会在崩溃、
+late join 或双写竞争时产生无法重放的中间态。Snapshot 只能加速从某个已提交 offset 开始的 fold，不能替代原始 journal；
+reset、undo 与 fork 也应生成带 parent/branch identity 的事件，而不是静默改写历史。
+
+这条路径以 journal IO、schema evolution、snapshot compaction 和 replay latency 换取可恢复的一致状态；短会话、无副作用且
+进程寿命内即可完成的 Agent 仍可使用简单内存状态机。Kimi Code #3662、#3678、#3691 的连续重构把 turn/step ID
+生产权收回状态机边界，删除 shadow activity view，并引入 append-before-resolve、fold-first dispatch、周期 snapshot 与
+branch-aware session store；公开 PR 同时说明 production disk path 尚未接入，因此这里只吸收状态所有权与提交顺序，
+不声称其已提供 durable exactly-once recovery。
+
+<!-- source-family:SF-2026-KIMI-AGENT-STATE-AUTHORITY -->
+
 当模型与 harness 通过轨迹共同训练时，两者也构成配对 artifact：model version、tool schema、prompt/compiler 与 verifier 都应一起登记。联合训练可能提高长程执行，却会扩大版本耦合和回滚面；平台必须允许回退到已验证的 model–harness 组合，而不是只替换权重。官方博客只支持其公开的后台执行、event log 与联合训练设计，不证明 exactly-once、副作用隔离、权限延续或跨仓库普适性。
 <!-- source-family: https://research.meta.ai/blog/introducing-muse-code-and-muse-spark-1-2; daily: 2026-08-05; semantic-body-binding: event-sourced-long-running-agent-harness -->
+
+### Model 与 data-generating harness 是共同演进的配对 artifact
+
+Agent 能力不仅由 weights 决定，也由生成任务、环境状态、tool feedback 和评分证据的 harness 塑造。只优化模型会过拟合旧 harness，只升级 harness 又会让既有 checkpoint 失去可比性。平台应把 model revision 与 harness revision 成对注册，交替优化时保留 cross-product regression：新模型跑旧/新 harness，旧模型也跑新 harness。
+
+联合演进扩大探索空间，却增加版本组合和 benchmark overfitting。有限实验不证明某种 co-evolution schedule 最优；生产 release 仍需冻结独立 holdout/environment，无法解释回归时回退上一对已验证 artifact。
+
+<!-- source-family:SF-2026-ARXIV-2607-22688 -->
+
+### Harness Controller 是版本化策略，不是模型的隐式习惯
+
+冻结模型并把 context assembly、tool routing、verification 与 reward decomposition 交给外部 controller，可以在不改 weights 的情况下适配领域；这条路径在 domain 相对稳定、控制变量可观察时比反复微调 backbone 更容易回滚。平台应把 controller policy、dataset lineage、model/provider、tool schema、reward/evaluator 与成本预算登记为配对 artifact，并让 policy engine 对每次 proposed action 重新执行授权；执行结果只有携带 effect receipt 才能成为下一轮训练或发布证据。
+
+可训练 harness 把能力转移到可替换控制面，也引入在线探索、reward misspecification、provider drift 与 controller/model 版本耦合。训练分布、授权范围或成本上限不满足时，应停用 adaptive controller，回退到已验证的静态 context/tool workflow；高风险 effect 继续要求人工或确定性 policy gate。exact-v1 只覆盖三个 domain 与两个 provider，不能证明 controller 跨组织迁移、在线探索安全或任意 reward decomposition 有效。
+
+<!-- source-family:SF-2026-ARXIV-2607-25415 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24539:start -->
+只用最终 reward 搜索 harness，在环境便宜、反馈密集时实现简单；反馈稀疏后，搜索器知道“这版更差”，却不知道应该修改 context、tool binding 还是 state transition。Demonstration-guided evolution 把成功或失败轨迹作为 edit-localization evidence，让控制器先定位 harness program 中与行为相关的区域，再提出受限修改；demonstration 只提供诊断线索，release owner 仍以 paired evaluation 决定是否提交。
+
+这提高稀疏反馈下的可诊断性，却引入示范偏差、trajectory 隐私与额外审计成本。示范覆盖错误时，局部化会稳定地修改错误位置；单一 seed 或同源 evaluator 还可能制造虚假改进。因此 model、harness、demonstration set、seed 和 evaluator 必须共同版本化，并在固定种子 paired gate、独立 holdout 与成本预算下比较；任一 gate 失败时回退人工 harness 或上一版不变基线。现有证据只覆盖论文披露的两个环境、信息制度与限制，不证明 demonstration-guided search 可安全用于高风险生产动作。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24539:end -->
+<!-- source-family:SF-2026-ARXIV-2605-24539 -->
+
+#### Context Assembly 的 Selection Probability 不是 Outcome Confidence
+
+外部 controller 可以把 prompt style、tool/retrieval、memory、planning、verification 与 step budget 组成有限、版本化的 context configuration，并依据 task 与 history 选择 \(C_t\)，同时保持模型参数 \(\theta\) 冻结。与把这些选择藏在 prompt 惯例里相比，这使 context assembly 成为可审计、可替换和可回滚的 control action；但配置空间一旦扩大，在线 controller 会进入高样本复杂度的探索问题，短期 reward 上升不能自动证明策略稳定。
+
+更重要的是，controller 选择某配置的 softmax probability 只描述 action distribution，不是该次任务成功或 evidence 充分的概率。在大量配置尚未充分区分时，最高 action probability 会受候选数归一化而接近 (1/M)，即使任务成功率并不低；用它触发人工升级会把几乎所有 episode 都误判为低置信。平台必须另设在 held-out episodes 上校准的 outcome/evidence sensor，并让风险策略消费该信号，而不是消费 selection probability。
+
+这条分离增加 calibration 数据、漂移监测和双信号维护成本。outcome sensor 未校准、配置空间欠采样或部署 slice 改变时，应回退到已验证的静态 context/tool workflow 与人工升级。`arXiv:2607.25408v1` 的 729 个配置、单一 tool-use domain、Qwen2.5-7B 和 240 episodes 只证明原始 selection softmax 与成功率在该欠采样设置中严重失配；论文未验证提出的 temperature scaling 或 value-margin 修复，也未证明经验稳定性或跨模型迁移。
+
+<!-- source-family:SF-2026-ARXIV-2607-25408 -->
+
+### 自适应 Harness 只能提交保持成功约束的干预
+
+按固定 workflow 执行最容易复现，却无法利用当前长程 trajectory 暴露的瓶颈；直接让 controller 频繁改写 orchestration 又会把短期 reward 波动变成控制面震荡。较稳健的分支是把每次调整保留为 intervention proposal，估计它相对当前 workflow 的 counterfactual advantage，只有超过预设 margin、未突破成本预算，并通过 success-preserving constraint 时才由外部 release owner 提交。
+
+这种 gate 把“看起来更高效”与“允许替换当前路径”分开，但反事实估计会受环境漂移、未观测 confounder 与稀疏成功样本影响；置信区间过宽可能冻结真正有益的变化，过窄则放行退化。平台应保留 shadow/canary、旧策略 checkpoint 与即时 rollback；估计不稳、任务高风险或样本不足时继续使用静态 workflow。exact-v1 的长程任务结果不构成无偏因果证明，也不允许 learned controller 自授发布权。
+
+<!-- source-family:SF-2026-ARXIV-2607-25825 -->
+
+### Sandbox 预热只能由 Tool Intent 生成 proposal
+
+按真实 tool call 才创建 sandbox 最易保证权限，却把启动延迟放进 Agent critical path。runtime 可根据生成中的 tool intent 预测 sandbox/image/resource，提前创建可取消的低权限实例；canonical tool call 到达后，policy 再校验 identity、权限和参数并提交绑定，预测错误则回收。
+
+预热以资源浪费、side-channel 和 stale environment 风险换 latency。模型预测不拥有创建高权限环境的 authority，预热实例不得执行 effect；低调用概率、启动很快或隔离成本高时按需创建仍是合理基线。
+
+<!-- source-family:SF-2026-ARXIV-2607-23933 -->
 
 ## 本章在知识树中的位置：全书知识树收束
 
@@ -824,10 +1001,12 @@ Agent Platform 把模型调用扩展为有状态、可行动的生命周期控�
 
 单次优化只比较更新前后的目标任务，在任务分布稳定、能力维度少时足够直观；Agent 开始同时修改 workflow、skill、model 与 memory 后，新任务上的提升可能伴随旧能力静默退化。平台不能把“self-evolution 完成”定义为最后一个 snapshot 分数更高，而要把每次变化物化为带 parent、channel、training/evidence input 和回滚点的候选 capability revision。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-09315:start -->
 <!-- source-family:SF-DO-SELF-EVOLVING-AGENTS-FORGET-CAPABILITY-DEGRADATION-AND-PRESERVATION-I -->
 Promotion Gate 应冻结一组 capability vector：新目标任务、历史核心任务、关键安全约束、成本和 failure slices。候选 revision 先证明目标增益，再通过 preservation replay；只有两者都满足策略才替换 active revision。任一 channel 的 owner 不完整、旧任务 evidence 丢失或回归超阈值时，平台保留旧 snapshot、缩小更新范围或按 channel 回滚。这个合同用存储、回放计算和更慢的发布速度换取非单调退化的可见性；探索性 workspace 可以允许未经 promotion 的分支，但不能把它升级为共享 capability。[受限证据：arXiv:2605.09315v1]
 
 这不是要求能力永远单调，也不证明固定 replay suite 覆盖未来任务。它只把“获得新能力”和“保留旧能力”分成两个可追责证据对象，使不可避免的 trade-off 由 policy 明确接受，而不是被最终平均分隐藏。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-09315:end -->
 
 ### Self-modification 只有在 Recovery 可表达且可验证时才允许提交
 
@@ -844,6 +1023,37 @@ Skill 被写入或检索命中，只说明它成为候选能力；执行前仍�
 Agent Platform 不是另起一套基础设施，而是在 AI Platform 上增加有状态、可行动、可恢复的 runtime。它让 Prompt、Context、RAG、Memory、Tools、Planning、Reflection、Workflow、Multi-Agent 和 MCP 进入同一 identity、policy 和 evidence graph。
 
 到此，七个 Part 形成完整 Draft：从第一性原理理解模型能力，经多模态表示、环境预测与物理行动，再到能力生产、在线交付、平台治理和受控 Agent 行动。后续 refinement 应由 papers、真实系统证据和跨章 Review 驱动，而不是为了扩写而增加内容。
+
+### Intermediate Artifact 是工作流状态，不是日志附件
+
+长工作流若只保存最终答案，重试时无法判断哪些推导仍有效、哪个下游依赖已失效。把 intermediate artifact 定义为 typed、
+versioned、addressable 且 dependency-aware 的 durable state，并声明 authoritative producer 与 consumers，平台才可以做增量
+重算、恢复和 provenance。代价是 schema migration、存储、访问控制与 stale dependency；任务短小或中间态敏感时可只保存
+最小 checkpoint/哈希并重新执行。artifact 可持久化不代表其语义正确，仍需相应 verifier 后才能被下游提交。
+
+<!-- source-family:SF-INTERMEDIATE-ARTIFACTS-AS-FIRST-CLASS-CITIZENS-A-DATA-MODEL-FOR-DURABLE- -->
+
+### 系统级 Reward 必须拆成可验证的组件 Credit
+
+只把同一个终局分数广播给所有 Agent，结构简单，却无法区分哪个 prompt、role 或连接真正改变结果，也会让无效组件随整体偶然成功被强化。平台可以在同一 query 上比较多个 joint configuration，用对照 rollout 生成 per-agent credit proposal，再交给局部 optimizer 更新对应 artifact；system evaluator 仍拥有最终 outcome，attributor 不能自证归因正确。这样 topology、组件版本和 reward lineage 都成为可回放实验状态。
+
+对照归因需要更多 rollout，仍受交互效应、估计偏差和 evaluator 质量限制；在拓扑本身错误时，prompt-level 优化空间也可能很小。环境不可复现、预算不足或 credit 与 held-out outcome 不一致时，应冻结组件、回退全局调参或人工结构修改。exact-v1 的 benchmark 与所报增益只支持作者设置，不证明归因具有因果完备性或生产成本更低。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-13295 -->
+
+### Skill Library 是需要双时间尺度维护的软件资产
+
+把 skill 当静态文本集合，在规模小且依赖稳定时足够；长期复用后会积累重复、失效前置条件、依赖冲突和局部修补。平台应分开 task-time 与 library-time：前者按 typed precondition、dependency 和 compatibility 组装计划并插入 validator/adapter，后者读取执行 trace 与 health signal，只提出 merge、repair、retire 等版本化维护动作，经回归和 promotion gate 后更新共享库。正在执行的 run 继续绑定旧 revision，不能被后台维护原地改变。
+
+图和规则维护降低部分在线 LLM 调用，却增加 schema、风险传播误判和与 Agent 自修复机制冲突；作者实验也显示收益依赖使用方式，而非所有 planner 都改善。技能少、变化慢或没有可靠回归集时，人工维护和固定版本更稳妥。exact-v1 的 ALFWorld 结果不能证明跨领域生产收益、规则近零调用等于总成本更低，或维护动作天然安全。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-13716 -->
+
+### Intermediate Artifact 必须是有 Owner 的 Durable State
+
+短 workflow 把中间输出当临时文件最轻量，但中断恢复、增量复算和多消费者需要 typed、versioned、addressable、dependency-aware 的 artifact。数据模型应记录 authoritative producer、consumers 与 lineage，模型只能提出 materialization，平台验证后提交或替换。持久化增加存储、索引、schema migration、权限和 stale dependency；authority 冲突时应停止物化，回退 append-only event/log state 与人工 reconciliation。可寻址只证明能恢复，不证明 artifact 语义正确，仍需对应 verifier。
+
+<!-- semantic-body-binding:SF-INTERMEDIATE-ARTIFACTS-AS-FIRST-CLASS-CITIZENS-A-DATA-MODEL-FOR-DURABLE- -->
 
 ## Review notes
 
@@ -932,30 +1142,7 @@ Review note：`SF-2026-ARXIV-2606-29472`；Method `https://arxiv.org/pdf/2606.29
 
 ### Source-family integration record
 
-<!-- recovered-daily-20260623:AGENT-PLATFORM:start -->
-### 2026-06-23 evidence integration — AGENT-PLATFORM
 
-相邻章 `books/part-07-agent/83-mcp.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-22902**：Agent-as-a-Router: Agentic Model Routing for Coding Tasks 的 exact-v1 机制为：Motivated by this finding, we propose Agent-as-a-Router, a framework that formalizes routing as a C-A-F loop (Context-&gt;Action-&gt;Feedback-&gt;Context). 因此 把模型/工具/资源路由、OS harness、隔离边界与 outcome receipt 作为平台责任。 该 family 的 failure pressure 是：Consequently, routing each task to the most suitable model becomes critical for both performance and cost. 披露的 evaluation signal 是：We instantiate this framework as ACRouter, composed of an Orchestrator, a Verifier, a Memory module, and introduce CodeRouterBench, an evaluation environment comprising ~10K task instances with verified scores from 8 frontier LLMs, enabling regret-based router comparison on streaming tasks. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-23321**：Tmax: A simple recipe for terminal agents 的 exact-v1 机制为：We present Tmax, the strongest open RL recipe for terminal agents to date, bringing open data recipes closer to the frontier. 因此 把模型/工具/资源路由、OS harness、隔离边界与 outcome receipt 作为平台责任。 该 family 的 failure pressure 是：Terminal-using agents have quickly become the most popular downstream application of language models (LMs). 披露的 evaluation signal 是：While simple, our recipe achieves 27\% on Terminal-Bench 2.0 with only 9B parameters, outperforming much larger models from prior work. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-23449**：AOHP: An Open-Source OS-Level Agent Harness for Personalized, Efficient and Secure Interaction 的 exact-v1 机制为：We present AOHP (Android Open Harness Project), an OS-level agent harness built on the Android Open Source Project (AOSP). 因此 把模型/工具/资源路由、OS harness、隔离边界与 outcome receipt 作为平台责任。 该 family 的 failure pressure 是：Most existing end-user operating systems, however, are designed for application-centric workflows and offer little native support for AI agents. 披露的 evaluation signal 是：Based on preliminary experiments on challenging tasks covering key capabilities of OS agents, AOHP shows clear advantages in task completion (+21.12% completion rate), execution cost (-51.55% token cost), and security-policy compliance. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-23983**：Maestro Order: A Model-Agnostic Orchestration Harness 的 exact-v1 机制为：We present Maestro Order, a model-agnostic orchestration harness that turns unreliable solvers into reliable problem-solving systems by composing them according to four structural primitives (decompose, ensemble, verify, and recurse) and a budget-aware controller that decides where to spend compute. 因此 把模型/工具/资源路由、OS harness、隔离边界与 outcome receipt 作为平台责任。 该 family 的 failure pressure 是：The harness treats any model as a black-box base solver behind a uniform interface, layers a verifier ensemble whose discrimination is measured online, and allocates verification and voting to the stages with the highest marginal reliability per unit cost. 披露的 evaluation signal 是：We then specify an evaluation methodology (reliability at fixed cost, coverage, calibration, and ablations) and report results from a faithful Monte Carlo simulation of the harness over a parameterized solver/verifier model. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-<!-- recovered-daily-20260623:AGENT-PLATFORM:end -->
-
-<!-- recovered-daily-20260624:AGENT-PLATFORM:start -->
-### 2026-06-24 evidence integration — AGENT-PLATFORM
-
-相邻章 `books/part-07-agent/83-mcp.md` 只接收 handoff，不重复拥有机制。
-
-### Owner-merged minimal text
-
-- **SF-2026-ARXIV-2606-24311**：将 model invocation、tool execution、workspace mutation、rule knowledge 与 execution record 收进同一 runtime boundary；剩余时间成为显式 state，用于在探索、实现、验证之间重配预算。 结果主要绑定 GPT-style tool calling 与 Terminal-Bench；其他 model family、长编译/训练、严格中间验证和 workspace 外 side effect 未证明，应保留人工接管与受限 sandbox。
-
-<!-- recovered-daily-20260624:AGENT-PLATFORM:end -->
 
 <!-- june29-owner:AGENT-PLATFORM:start -->
 ### 2026-06-29 约束变化与机制增量
@@ -966,23 +1153,28 @@ Review note：`SF-2026-ARXIV-2606-29472`；Method `https://arxiv.org/pdf/2606.29
 
 ### Daily Books delta trace（2026-06—08）
 
-<!-- daily-books-trace:SF-ADAPTIVE-AUTO-HARNESS:start -->
-- `SF-ADAPTIVE-AUTO-HARNESS` — Daily `2026-06-02`；primary `arXiv:2606.01770v1`；Books review `books-review:SF-ADAPTIVE-AUTO-HARNESS`。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25415:start -->
+- `SF-2026-ARXIV-2607-25415` — Daily `2026-07-29`；primary `arXiv:2607.25415v1`；正文锚点“Harness Controller 是版本化策略，不是模型的隐式习惯”。
+  本章吸收 controller/model/tool/evaluator 的配对版本、effect receipt、授权与成本边界；三个 domain、两个 provider 不证明跨组织迁移或在线适配安全。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25415:end -->
 
-  **已吸收的语义增量：** 单一 harness 在固定 benchmark 上反复优化时合理，但 open-ended task stream 会累积 history、domain shift 与 specialization conflict。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25825:start -->
+- `SF-2026-ARXIV-2607-25825` — Daily `2026-07-29`；primary `arXiv:2607.25825v1`；正文锚点“自适应 Harness 只能提交保持成功约束的干预”。
+  本章吸收 counterfactual advantage、margin 与 success-preserving intervention gate，并保留 shadow/canary、旧策略 rollback 和静态 workflow fallback；作者结果不构成无偏因果证明。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25825:end -->
+
+<!-- daily-books-trace:SF-ADAPTIVE-AUTO-HARNESS:start -->
+- `SF-ADAPTIVE-AUTO-HARNESS` — Daily `2026-06-02`；primary `arXiv:2606.01770v1`；Books Decision=`No Change — Existing Coverage`；命题锚点“Harness Controller 是版本化策略，不是模型的隐式习惯”“自适应 Harness 只能提交保持成功约束的干预”。
+
+  当前正文已把 controller/harness 定义为带版本、验证、授权、成本、干预 gate 和静态 fallback 的控制面，并在章节小结覆盖 open-ended task stream 的 history、specialization route 与 rollback；该 family 不再触发新增正文。
 <!-- daily-books-trace:SF-ADAPTIVE-AUTO-HARNESS:end -->
 
 <!-- daily-books-trace:SF-AGENT-LIBOS:start -->
-- `SF-AGENT-LIBOS` — Daily `2026-06-03`；primary `arXiv:2606.03895v1`；Books review `books-review:SF-AGENT-LIBOS`。
+- `SF-AGENT-LIBOS` — Daily `2026-06-03`；primary `arXiv:2606.03895v1`；正文锚点“快速演进的 Skill / Tool Layer 不能拥有 Primitive Effect Authority”。
 
-  **已吸收的语义增量：** Agent libOS is organized as the layered stack in fig. The model-facing Skills/Tools layer is allowed to evolve rapidly for usability. The libOS runtime layer is the stable authority boundary. Boundary: The prototype targets threats common in agent applications: prompt injection that induces high-risk tools; tool-output injection that changes later decisions; path escape outside a workspace; unauthorized access to files, objects, or humans; capability leakage through fork; generated tools that import dangerous APIs; insufficient approval context; and confusion between tool-table membership and external-resource authority. The prototype does not solve semantic prompt injection: a malicious document may still persuade the model to request a dangerous action. The runtime claim is that such a request still encounters primitive-level capability checks, policy, human approval when required, and audit.
+  正文吸收 operation proposal、typed primitive、capability/resource/information-flow enforcement 与 effect receipt，并明确该 runtime 边界不解决 semantic prompt injection，也不外推生产 SLO。
 <!-- daily-books-trace:SF-AGENT-LIBOS:end -->
 
-<!-- daily-books-trace:SF-2026-ARXIV-2606-11522:start -->
-- `SF-2026-ARXIV-2606-11522` — Daily `2026-06-10`；primary `arXiv:2606.11522v1`；Books review `books-review:SF-2026-ARXIV-2606-11522`。
-
-  **已吸收的语义增量：** 在 Agent Platform 章节补 external acceptance loop：优化 aggregate metric 的 agent 不拥有 commit；controller 必须审计 protected slices 与 noise tolerance。
-<!-- daily-books-trace:SF-2026-ARXIV-2606-11522:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-20657:start -->
 - `SF-2026-ARXIV-2606-20657` — Daily `2026-06-10`；primary `arXiv:2606.20657v1`；Books review `books-review:SF-2026-ARXIV-2606-20657`。
@@ -1025,3 +1217,13 @@ Review note：`SF-2026-ARXIV-2606-29472`；Method `https://arxiv.org/pdf/2606.29
 
   **已吸收的语义增量：** Repo2Skill-Evo 将一次 V1→V2 release patch 变成 skill maintenance task，要求删除失效指导同时保留仍有效内容。57 个 repository、105 次 transition 暴露 incomplete coverage 与 over-editing 的对立错误；它证明 skill 需要 version/provenance/expiry contract，不证明 frontier agent 已能自动维护。
 <!-- daily-books-trace:SF-2026-ARXIV-2608-21964:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25560:start -->
+- `SF-2026-ARXIV-2607-25560` — Daily `2026-07-29`；primary `arXiv:2607.25560v1`；正文锚点“隐藏 skill 文件并不等于隐藏了 procedure”。
+  证据限五类受测场景中的 benign trajectory 泄漏，不证明任意 proprietary skill 可完整重建或现实攻击率。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25560:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25408:start -->
+- `SF-2026-ARXIV-2607-25408` — Daily `2026-07-29`；primary `arXiv:2607.25408v1`；正文锚点“Context Assembly 的 Selection Probability 不是 Outcome Confidence”。
+  exact-v1 只支持 729 个配置、单一 tool-use domain、Qwen2.5-7B 和 240 episodes 中的失配；未验证 proposed recalibration、经验稳定性或跨模型部署安全。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25408:end -->

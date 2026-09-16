@@ -77,6 +77,17 @@ C ~= k * N * D
 
 这与“训练尽可能大的模型”不同。最大的可加载模型可能只看过很少数据；更小但训练 token 更多的模型，可能在同等 compute 下获得更低 loss，也可能在推理阶段更便宜。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20196:start -->
+数据量也不只是公式中的一个标量。对具有可恢复离散状态的受控序列，可以把每个状态相对全局 next-token
+baseline 的 KL 偏离乘以该状态出现质量，得到 predictive-contribution spectrum；随着样本增多，有效截断秩
+`K(N)` 逐步覆盖尾部贡献，剩余谱质量可与 excess loss 联系起来。这提供了“更多数据究竟解锁了哪些预测结构”
+的解释坐标，却不取代参数量、训练 compute 与模型族本身。
+
+这条分支依赖 suffix-automaton state、经验分布和论文给定的尾部对齐假设；真实语料的 latent state 未必可唯一
+恢复，谱估计也会受 tokenizer、长尾采样和有限样本影响。因此它只能作为受控诊断：假设或拟合失效时，仍应
+回退联合 scaling experiment、held-out loss 与能力 slice，而不能把 spectrum 外推成通用 scaling law。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20196:end -->
+
 ## Kaplan 与 Chinchilla 的结论为什么不同
 
 Kaplan 等人在 2020 年对语言模型进行了系统 scaling 实验，观察到模型规模、数据规模和 compute 与 cross-entropy loss 之间存在 power-law 关系，并据其拟合提出 compute-efficient training allocation。该研究的重要贡献，是把“规模通常有效”转成可以用小规模实验外推的定量问题。
@@ -162,6 +173,16 @@ production quality, latency, and cost
 
 同样，训练 compute-optimal 不等于生命周期成本最优。更大的模型即使训练 loss 更低，可能在长期 Serving 中产生更高 GPU、latency 和 energy 成本。若模型要被调用数十亿次，推理成本可能反过来支持“训练更多、部署更小”的选择。
 
+### 扩宽只有在学习方向跨样本对齐时才可能转化为泛化收益
+
+把网络扩宽并以 function-preserving 方式初始化，能够保留旧模型的函数，因此是低风险增加容量的起点；但“训练开始时函数不变”只说明没有立即破坏旧行为，不说明新增自由度会沿着测试分布需要的方向学习。有限训练样本下，训练梯度与独立测试梯度可能失配：参数更多时，模型既拥有更多有用更新方向，也拥有更多只适合当前样本的方向。
+
+因此宽度扩展的 scaling experiment 还应测量新增参数方向在独立样本之间的梯度对齐，而不能只比较训练 loss 或 nominal width。一个受限的统计分支用 train/test gradient inner product 的均值与方差刻画这种有效对齐维度，并在保持函数的 residual expansion 中检验它能否预测 held-out loss 的初始变化。它把“容量增加”推进为“新增更新方向是否可由现有样本可靠估计”的问题，但只覆盖非零 population gradient、有限二阶矩和局部干预；不能推出更宽必然泛化更好，也不能替代完整训练后的 evaluation。
+
+这条检查会增加独立数据切片、梯度采样与统计噪声成本，且局部对齐可能随训练阶段、数据 mixture 和 optimizer 改变。样本不足或置信区间跨过无收益区域时，应保留原宽度或先扩大数据与复验，而不是把 function-preserving expansion 当作自动获益。原有 loss scaling curve 在架构固定、数据充足且对齐假设已验证的范围内仍是更便宜的规划基线。
+
+<!-- source-family:SF-2026-ARXIV-2607-24887 -->
+
 ## 从论文曲线到工程容量规划
 
 Scaling Law 对 AI System 的直接价值，可以落在四类决策上。
@@ -192,6 +213,10 @@ subject to capability >= target
 
 第二，技术变化会造成 regime change。新的数据 mixture、optimizer、架构、tokenizer、precision 或训练目标可能使旧曲线失效。
 
+跨表示或跨 domain 外推时，还要判断 transformation 保留了多少信息。双射变换可在同一统计问题上保留 scaling 关系；非双射变换会因信息分辨率下降而改变可达误差与曲线。experiment owner 因而必须把 transformation、目标域和有效 resolution 纳入外推身份，而不能只比较名义参数量、token 数或 compute。<!-- semantic-body-binding:SF-2026-ARXIV-2605-07546 -->
+
+transformation-aware 判断能减少把表面同尺度误写成同规律，却依赖 resolution 的估计与任务语义是否可比。变换不可辨、留出尺度不支持或任务定义已经改变时，应回退目标域小规模 sweep，而不是搬用原曲线。exact-v1 的理论、语言、视觉、语音和两个跨域案例不构成通用 scaling law。
+
 第三，数据不是无限可扩展的 IID 样本。高价值数据稀缺、重复和许可约束会改变边际收益。
 
 第四，能源、芯片供给、网络、存储和组织执行能力都是 compute 之外的硬约束。
@@ -203,6 +228,14 @@ Scaling Law 最有价值的使用方式，是在明确范围内提供可证伪�
 ### 从单轴经验律到联合可检验外推
 
 只固定参数量、数据量或训练 compute 之一时，用单轴 power law 近似损失趋势是合理的；但训练步数、推理 compute 与关键超参数共同变化后，原曲线不再拥有唯一解释。更稳健的做法，是把这些轴连同拟合区间与外推目标一起交给 scaling experiment owner，联合拟合后再用留出的规模点验证。这样可以减少把某一轴的收益错记到另一轴，却付出更多实验单元、交互项和模型选择风险；若联合模型在留出尺度上失配，应退回局部单轴曲线或重新分区，而不是继续扩大外推。exact-v1 证据只覆盖论文披露的视觉、语言、数学与 RL 实验及其参数域，不能证明统一函数在新架构、数据分布或生产 SLO 下仍成立。<!-- source-family:SF-2026-ARXIV-2605-26248 -->
+
+### Token 的价值不是固定常数：compute-optimal 与 data-optimal 之间还有有效性函数
+
+经典 compute-optimal 推导常把每个训练 token 视为同质新增证据；当数据开始重复、改写或合成扩增时，这个假设失效。可用 token effectiveness 表示 derived token 相对 fresh token 的边际训练价值，并让它随模型规模、tokens-per-parameter、扩增策略与扩增量变化。于是最优点不再只由参数和名义 token 数决定，而由 compute、可获得 fresh data 与边际有效性共同决定。
+
+小规模模型和有限语料实验不能给出 frontier model 的普适 effectiveness 常数，扩增价值也会饱和。这个扩展的意义是要求规划者估计 marginal learning value 并保留不确定性，而不是把 synthetic/repeated tokens 按固定比例换算成新数据；无可靠估计时，经典 scaling law 仍是基线，但必须显式声明同质 token 假设。
+
+<!-- source-family:SF-2026-ARXIV-2607-25271 -->
 
 ## 本章在知识树中的位置
 
@@ -231,6 +264,8 @@ Scaling Law 把“更多资源通常更好”变成了可实验、可拟合、�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2605-07546`（Status: Theoretical / Experimental）：[exact-v1](https://arxiv.org/html/2605.07546v1) 支持在论文条件下区分信息保持变换与分辨率下降对 scaling 的影响；有限模型、任务与 resolution 估计不能外推为跨 domain 通用规律。
+
 本章保留了简化公式用于建立直觉，但不把它们冒充 Kaplan 或 Chinchilla 的完整拟合方程。后续 Review 应在引用具体 exponent、比例或 compute 数字前回到原论文与适用区间，并继续把经验拟合、解释性直觉和工程启发分开。
 
 优先核验入口：
@@ -239,3 +274,8 @@ Scaling Law 把“更多资源通常更好”变成了可实验、可拟合、�
 - Jordan Hoffmann et al., "Training Compute-Optimal Large Language Models", 2022: https://arxiv.org/abs/2203.15556
 - Joel Hestness et al., "Deep Learning Scaling is Predictable, Empirically", 2017: https://arxiv.org/abs/1712.00409
 - Mitchell Wortsman et al., "Small-scale proxies for large-scale Transformer training instabilities", 2023: https://arxiv.org/abs/2309.14322
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-24887:start -->
+- `SF-2026-ARXIV-2607-24887` — Daily `2026-07-29`；primary `arXiv:2607.24887v1`；正文锚点“扩宽只有在学习方向跨样本对齐时才可能转化为泛化收益”。
+  证据只支持论文假设与受控 residual intervention 下的局部梯度对齐条件，不支持宽度增加必然改善长期训练或泛化。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-24887:end -->

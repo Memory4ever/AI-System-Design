@@ -95,6 +95,22 @@ connect
 
 Client 与 Server 必须处理不支持的 version/capability，而不是猜测兼容。Tool/resource identity 还需要 server identity 与 version，否则同名工具在不同 server 上可能有完全不同语义。
 
+### 协议比较必须拆开五类契约
+
+用 transport 或产品名称给 Agent protocol 分类，会把不同层的问题混在一起。更稳定的比较坐标是：counterparty 决定谁与谁通信，payload 定义传递什么，interaction state 描述请求、流式和回调如何推进，discovery 负责能力如何被找到，schema 则约束数据与错误的可解释性。认证、delivery、ordering、backpressure 与 effect semantics 仍是横跨这些维度的独立保证，不能从“同属一种协议”推导互操作。
+
+Protocol adapter 拥有五维映射与 version negotiation，session/runtime owner 持有 delivery、ordering 与 backpressure，policy owner 仍决定 authorization 与 effect commit。
+
+这套 taxonomy 适合定位缺失契约，却不是新标准。实际接入仍需逐协议验证版本协商、session/handle 生命周期、失败重试和授权边界；映射不完整时应使用 adapter 或拒绝连接，而不是猜测相等语义。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606.19135 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22733:start -->
+分别手写 HTTP/SSE/OpenAPI 与 MCP 适配器，在接口很少时最透明；规模扩大后，两套参数、返回值和错误 schema 容易漂移。一个条件分支以同一 typed skill definition 生成两类 adapter，让 schema identity 共享唯一来源。生成层只拥有类型与接口一致性，transport runtime 仍拥有 streaming、cancellation 和 lifecycle，policy owner 继续拥有 authorization 与 effect commit。
+
+共享生成器减少 boilerplate，却增加 generator revision、最低公分母抽象和 transport 特性泄漏风险。exact-v1 只验证作者框架的 boilerplate、feature parity 与有限 compatibility，不证明生产授权或完整生命周期语义。某一 transport 的 streaming、capability 或 failure contract 无法安全表达时，应保留独立 adapter，并用 contract tests 和 schema diff 防漂移，而不是强制共用实现。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22733:end -->
+
 ### Update 2026-07-29 — 从连接会话到显式请求契约
 
 `2026-07-28` 已成为正式稳定规范。它移除了协议级 session、`Mcp-Session-Id` 和
@@ -143,6 +159,12 @@ MCP discovery/result
 ```
 
 Server 自述的 tool annotations 和 descriptions 不能作为唯一信任依据。Host 应限制 server 可见 roots/data、credentials、network 和 sampling content。
+
+协议可连接，不代表 application 已实现安全调用。MCP app 还要分别拥有 configuration、SDK/transport、enable/disable、credential、logging、blocking approval 与 effect commit；使用常见 SDK 或记录调用日志，只能证明连接与观测存在，不能推出执行前有人类监督。Host 负责 principal 与 policy，app/runtime 负责把 approval 放在不可逆 effect 之前，server 只执行收到的已授权调用。
+
+Blocking approval 能缩小误操作，却增加交互延迟、疲劳和无人值守任务的停顿；低风险只读工具可以由 policy 预授权，高风险或跨域写操作在 approval 缺失时必须 fail closed。对公开 GitHub MCPApps 的快照研究只支持 configuration、SDK/client communication、enable/disable、logging 与 blocking approval 这些观察维度经常分离，不代表全部生产生态的采用比例，也不能把 taxonomy 当安全认证；credential 与 effect commit 的责任边界来自本章既有 Host 和执行边界推导，而不是该研究的实证结论。
+
+<!-- source-family:SF-2026-ARXIV-2607-25635 -->
 
 HTTP authorization 解决 client 代表 resource owner 访问 server 的协议流程，但最终 scope design、token storage、confused-deputy defense 与 business authorization 仍由实现负责。Local stdio server 同样是可执行代码，需要 package provenance 和 sandbox。
 
@@ -260,13 +282,19 @@ Agent workflow
 
 记录 server/tool/resource identity、latency、result size、policy decision、error/cancel，同时默认排除 credentials 和敏感 content。MCP 版本、capabilities 和 server trust level 也应进入 evidence。
 
+### 从静态 Endpoint 到受限 Tool Program
+
+单步 endpoint 在副作用边界清楚、调用链短时最容易授权和重试；复杂服务若要求 Agent 往返选择多个 endpoint，会把中间数据不断带回模型，也让 partially committed effects、顺序与补偿散落在自然语言控制流里。把多步意图表达成可组合 program，可以让服务端一次看到依赖、effect type 与资源上界，但这不等于允许模型提交任意代码。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-19992:start -->
+Host/Agent 只拥有 program proposal；服务端或受信 broker 负责 type check、effect admission、sandbox、budget、idempotency 与 commit。执行记录必须绑定 program、tool/service revision、输入 snapshot、已提交 effect 和剩余 continuation，失败后才能选择局部补偿、从 checkpoint 恢复，或降级成逐步 endpoint 调用。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-19992:end -->
+
+该分支减少模型往返和 Context 搬运，却增加验证器复杂度、组合状态空间、资源耗尽与代码注入面；静态分析也不能证明外部服务语义正确。调用很少、权限敏感、补偿不完备或 broker 无法给出确定资源界限时，显式单步调用仍是更安全的基线。MCP 可以运输 program/schema 与结果，但 program 的业务语义和 effect authority 仍由服务与平台拥有。
+
 ### 条件化机制分支与共存边界
 
 主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
-
-<!-- semantic-body-binding:SF-2026-ARXIV-2606-19992:start -->
-Tool Programs 将静态 endpoint 列表变成可组合、带类型与执行语义的服务接口；服务端拥有 program validation/sandbox，agent 只提交受限程序，失败时回落到单步 endpoint。灵活性以验证复杂度、资源上界和更大的代码注入面为代价。
-<!-- semantic-body-binding:SF-2026-ARXIV-2606-19992:end -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-28690:start -->
 把每个 agent protocol lowering 为带 source/type evidence 的有限状态 IR，先做 pairwise composition 与 trace replay，再把 counterexample 编译成可执行回归；未知组合保持隔离。
@@ -289,6 +317,14 @@ Host 把工具加入可调用集合，并不是中性的接口扩展：即使 in
 当 MCP 连接的不是普通软件 API，而是具有时序、噪声、校准和安全包络的异构物理神经设备时，`name + input schema` 不足以表达可执行契约。控制面需要额外声明 capability、观测/执行时钟、精度与漂移、资源占用、校准版本、允许动作和紧急停止路径；调度器才能区分“可调用”与“此刻安全可提交”。统一协议提升发现与组合能力，却不能抹平设备差异，抽象泄漏或 stale calibration 都可能造成物理错误；无法满足 typed contract 时应隔离为人工审批的专用 adapter。[受限证据：arXiv:2605.04256v1]
 
 <!-- source-family:SF-2026-ARXIV-2605-04256 -->
+
+### Server Security 需要 Runtime Corpus Audit，不只需要 Spec Scanner
+
+只检查 manifest、schema 与静态配置成本低，却看不到运行中 server 的动态 capability、wrapper、依赖与实际 effect。MCP admission 应组合 spec-level scanner、受限 sandbox invocation、行为/effect observation 与人工 adjudication，并分别报告 coverage 和 false positive；scanner 只能产生风险证据，不能自己扩大或撤销授权。
+
+动态审计更接近真实行为，也可能触发副作用、受环境漂移影响且无法穷举。高风险 server 应使用隔离 principal、只读或模拟 endpoint、预算和 effect receipts；静态审计仍作为所有 server 的廉价基线。公开 server corpus 只支持论文采样时点和攻击分类，不证明生态总体安全率。
+
+<!-- source-family:SF-2026-ARXIV-2607-11086 -->
 
 ## 本章在知识树中的位置
 
@@ -314,6 +350,17 @@ MCP 把工具和资源发现标准化后，新的压力从“能否连接”转�
 
 MCP 或其他 Agent gateway 不能把连接成功当作统一授权。每次调用应同时绑定 user persona、service persona、credential owner、delegation scope、审计主体与 offboarding 生命周期；服务凭据只能代表被授权的服务能力，不能自动继承用户全部权限。身份分层增加凭据管理和撤销复杂度，却让跨工具调用、人员离职与服务替换仍可追责；任何一层身份不完整时都应拒绝或降级为只读。
 <!-- source-family: arxiv:2608.10760v1; semantic-body-binding: gateway-user-service-persona-and-credential-ownership -->
+
+### Human-readable 与 Structured Result 不能互相替代
+
+协议 adapter 常把 tool result 的短摘要当成完整结果，这在 tool 只返回一种表示时足够；当同一响应同时包含
+`content` 与 `structuredContent`，摘要中的“找到一行”不等于那一行的字段、类型和 provenance 已送达模型。
+adapter 应默认保留两种表示，只有完整文本能解析为与结构化值规范等价的 JSON 时才去重，并把未内联的结构化
+payload 纳入同一 spill/recovery 路径。保守保留会增加 context 与重复信息，精确 canonicalization 又有数字表示、
+字段顺序和转义边界；因此不能用语义相似或解析后的浮点近似证明等价。只有 schema 明确、单一表示完备时，较轻的
+单通道路径仍合理。
+
+<!-- source-family:SF-2026-KIMI-CODE-3654 -->
 
 ## 小结
 
@@ -353,26 +400,6 @@ request contract。协议字段只写稳定抽象；SDK 默认行为与 fleet ad
 
 - **SF-2026-ARXIV-2606-26211**：Primary `arXiv:2606.26211v1`；Method `https://arxiv.org/html/2606.26211v1 — §Data Facts metadata schema; provenance, semantics, constraints and exchange contract`；Evaluation `https://arxiv.org/html/2606.26211v1 — §NANDini multi-agent exchange examples and schema coverage`；未证明边界 `https://arxiv.org/html/2606.26211v1 — §Single ecosystem prototype; no proof of cross-vendor enforcement or semantic completeness`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
 
-### Source-family integration record
-
-<!-- daily-20260628:AGENT-MCP:start -->
-### Owner-merged minimal durable delta
-
-协议连接层要再向下编译成可执行控制状态。每个 protocol 先 lowering 为可回放的有限状态 IR，组合前检查 transition 与 source/type evidence；一次 tool execution 则必须由 grant、handle、policy 与 audit objects 共同标识。Capability 或连接成功只产生 proposal，只有 host-side invariant 与 effect authorization 才能 commit。
-
-### Trade-off、failure、fallback 与 coexistence
-
-Pairwise finite-state composition 与十个 invariant fixtures 不证明任意多协议、生产 runtime 或 proprietary implementation 安全；IR/handle 不完整时隔离协议并回退单工具人工授权。
-
-<!-- daily-20260628:AGENT-MCP:end -->
-
-<!-- recovered-daily-20260625:AGENT-MCP:start -->
-### 2026-06-25 evidence integration — AGENT-MCP
-
-- **SF-2026-ARXIV-2606-26211**：`Data Facts metadata schema; provenance, semantics, constraints and exchange contract` 所定义的源特定机制用于以带 provenance、语义和约束的 Data Facts 作为跨 Agent 交换契约；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Single ecosystem prototype; no proof of cross-vendor enforcement or semantic completeness` 是 `Data Facts: A Metadata Schema for Structured Data Exchange in the NANDini Multi-Agent Ecosystem` 的 source-specific 反例/局限边界；若运行条件离开 `NANDini multi-agent exchange examples and schema coverage` 的验证域，`AGENT-MCP` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-<!-- recovered-daily-20260625:AGENT-MCP:end -->
-
 ### Daily Books delta trace（2026-06—08）
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-19992:start -->
@@ -386,3 +413,8 @@ Pairwise finite-state composition 与十个 invariant fixtures 不证明任意�
 
   **已吸收的语义增量：** 新增 discovery/execution 分离、双重 tenant authorization、index lifecycle 与全量注入 fallback。
 <!-- daily-books-trace:SF-2026-MCP-TOOL-DISCOVERY:end -->
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25635:start -->
+- `SF-2026-ARXIV-2607-25635` — Daily `2026-07-29`；primary `arXiv:2607.25635v1`；正文锚点“协议可连接，不代表 application 已实现安全调用”。
+  证据限 1,723 个公开 GitHub MCPApps 的分类快照；常见 SDK 或日志不能推出 blocking approval，也不代表全部生产生态。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25635:end -->

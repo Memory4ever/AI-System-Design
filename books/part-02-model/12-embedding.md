@@ -119,6 +119,12 @@ sentence embedding     为句子或文档任务构造的整体表示
 
 它们都使用向量，却有不同粒度、训练目标和接口。把 token embedding 与 RAG 使用的 sentence embedding 混为一谈，会把模型内部状态与检索索引错误地归到同一层。
 
+标准 Transformer 只在输入处注入 token identity，后续层只传播 contextual state；rare token 梯度不足与相似上下文表示塌缩时，可把 token identity 作为 context-free memory state 逐层重注入。EmbeddingMemory 用 K 个独立 bank、depth-conditioned router 与 null bank 决定每层注入量；它换来身份可恢复性，却增加参数、路由与缓存成本，也可能压制有益的上下文化。增量收益或路由稳定性不成立时回退一次性 embedding。
+
+exact-v1 给出理论动机和多个 LM/downstream 实验，但不能证明所有 rare-token failure 都来自单次注入，也未证明大规模 serving 下的内存/吞吐收益。MODEL-TRANSFORMER-LAYER 只作结构 handoff；MODEL-EMBEDDING 拥有 token identity representation。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-06216 -->
+
 ## 参数量与 Tokenizer 的联动
 
 Embedding table 参数量为：

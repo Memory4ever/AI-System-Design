@@ -1,125 +1,66 @@
 # Daily Research — 2026-07-08
 
-**Research Date:** 2026-07-08
+**规范：** V3
+**窗口：** 2026-07-07T09:00:00+08:00 ～ 2026-07-08T09:00:00+08:00
+**状态：** 完成
+**Books：** 纳入本次
+**检查时间：** 2026-09-10T16:30:00+08:00
 
-**Timezone:** Asia/Shanghai
+## 1. 结论
 
-**Strict Window:** 2026-07-07 09:00:00 ～ 2026-07-08 09:00:00（北京时间，左闭右开）
+本窗复用并核实 489 个去重 arXiv v1 原始身份，逐条按标题与完整摘要重新判断项目贡献；旧恢复队列 20 项中，17 个材料家族通过当前门槛，3 项因仅是领域应用、局部方法包装、通用 benchmark/Agent 组合或没有改变长期设计判断而转为 pre-denominator closure。关闭结果汇总在本报告的复核结论中，不在正文伪装成候选。
 
-**Contract:** V2.1 Full Replay；SRC-DATACITE 是 SRC-ARXIV 的注册恢复 fallback，只作 identity/date metadata；技术 claim 回到精确 arXiv v1 或可追溯历史全文审阅
+17 项均达到与评分相称的证据审阅深度，并重新检查撤回/纠错信号与首次公开 owner。旧报告标记为 `Integrate` 的机制已经出现在相应 Books 正文，本次统一改为“已有覆盖”；不重复追加，也不以 evidence trace 代替正文承载。独立复核已确认候选准入、证据边界与 body anchor 闭合。
 
-**Status:** In Progress；Coverage=Open、Evidence=Open、Books=Open；最新合同恢复状态见 Coverage 与第 7、13 节
+## 2. 来源覆盖
 
-## Executive Summary
-本窗口枚举到 1185 个唯一 arXiv v1 identity；按合同 category 与 AI-System title route 去重后，候选分母冻结为 21 个。当前路由账目为 18 个 Deep、3 个 Standard、0 个 Closure；route 只是审阅义务，不等于 Review 已完成。
+| 来源 | 检查范围与依据 | 结果 | 缺口 |
+| --- | --- | --- | --- |
+| SRC-OPENAI | 该源在目标历史窗口后才成为每日固定源；本次不作追溯性覆盖断言 | 不适用 | 无 |
+| SRC-ANTHROPIC | 该源在目标历史窗口后才成为每日固定源；本次不作追溯性覆盖断言 | 不适用 | 无 |
+| SRC-GOOGLE-AI | 该源在目标历史窗口后才成为每日固定源；本次不作追溯性覆盖断言 | 不适用 | 无 |
+| SRC-META-AI | 该源在目标历史窗口后才成为每日固定源；本次不作追溯性覆盖断言 | 不适用 | 无 |
+| SRC-QWEN | 该源在目标历史窗口后才成为每日固定源；本次不作追溯性覆盖断言 | 不适用 | 无 |
+| SRC-DEEPSEEK | 该源在目标历史窗口后才成为每日固定源；本次不作追溯性覆盖断言 | 不适用 | 无 |
+| SRC-MOONSHOT | 该源在目标历史窗口后才成为每日固定源；本次不作追溯性覆盖断言 | 不适用 | 无 |
+| SRC-TENCENT-HUNYUAN | 该源在目标历史窗口后才成为每日固定源；本次不作追溯性覆盖断言 | 不适用 | 无 |
+| SRC-ZAI | 该源在目标历史窗口后才成为每日固定源；本次不作追溯性覆盖断言 | 不适用 | 无 |
+| SRC-BYTEDANCE-SEED | 该源在目标历史窗口后才成为每日固定源；本次不作追溯性覆盖断言 | 不适用 | 无 |
+| SRC-BAIDU-ERNIE | 该源在目标历史窗口后才成为每日固定源；本次不作追溯性覆盖断言 | 不适用 | 无 |
+| SRC-XIAOMI-MIMO | 该源在目标历史窗口后才成为每日固定源；本次不作追溯性覆盖断言 | 不适用 | 无 |
+| SRC-MINIMAX | 该源在目标历史窗口后才成为每日固定源；本次不作追溯性覆盖断言 | 不适用 | 无 |
+| SRC-ARXIV | 复核本窗官方公告 owner、489 个去重 v1 身份及旧恢复队列；逐条标题、边界项完整摘要语义筛选后保留 17 项 | 已检查 | 无 |
 
-本轮没有把 DataCite metadata 或旧 Weekly prose 冒充 primary manuscript。旧 Weekly 只提供 identity、owner 与恢复线索；缺少事件时 evidence version、route locator、claim boundary、RP 和 Prior Review Ref 的 family 一律保持 pending/blocked。只有具备精确 primary receipt 的 family 才能完成评分、Selection 与 Books Decision。
+本窗没有触发需要改变候选或结论的按需来源。
 
-## 1. Coverage
+## 3. 候选与判断
 
-<!-- validator:report-metadata-v2 -->
-| Field | Value |
-| --- | --- |
-| Contract Version | V2.1 |
-| Score Schema | V2 |
-| Report Type | Daily |
-| Window Start | 2026-07-08 |
-| Window End | 2026-07-08 |
-| Registry Version | 2026-08-25 |
-| Coverage Mode | Full Replay |
-| Baseline Report | — |
-| Changed Source IDs | — |
-| Previous Denominator ID | — |
-| Denominator ID | daily-2026-07-08-0900-v2.1-july-replay-01 |
-| Denominator Frozen At | 2026-08-27T13:32:27+08:00 |
-| Completion Status | In Progress |
-| Coverage Gate | Open |
-| Evidence Gate | Open |
-| Books Gate | Open |
+| 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
+| --- | --- | --- | --- | --- |
+| [Is Your NPU Ready for LLMs? Dissecting the Hidden Efficiency Bottlenecks in Mobile LLM Inference](https://arxiv.org/html/2607.05475v1) | 2026-07-08T08:00:00+08:00 | Mobile backend choice is phase dependent: prefill exposes large compute-dense shapes that can fit NPU strengths, while single-token decode exposes small dynamic kernels and memo…；`2+3+3=8` | 深入完成 | 已有覆盖：`INFER-TENSORRT-LLM`，[Ch49](../../../../books/part-05-inference-system/49-tensorrt-llm.md) |
+| [Akashic: A Low-Overhead LLM Inference Service with MemAttention](https://arxiv.org/html/2607.05708v1) | 2026-07-08T08:00:00+08:00 | Instead of rewriting full memory or independently summarizing fixed segments, MemAttention compacts one bounded chunk and reconciles it against a small related set before commit…；`3+3+2=8` | 深入完成 | 已有覆盖：`AGENT-MEMORY`，[Ch77](../../../../books/part-07-agent/77-memory.md) |
+| [SpanUQ: Span-Level Uncertainty Quantification for Large Language Model Generation](https://arxiv.org/html/2607.05721v1) | 2026-07-08T08:00:00+08:00 | The paper shows that a model-specific white-box probe can jointly identify semantic spans and rank uncertainty under its factual-English benchmark; it does not turn probe output…；`3+3+3=9` | 深入完成 | 已有覆盖：`PLATFORM-EVALUATION-SYSTEM`，[Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
+| [Think Before You Grid-Search: Floor-First Triage for LLM Serving](https://arxiv.org/html/2607.05876v1) | 2026-07-08T08:00:00+08:00 | Replace immediate grid search with a versioned resource vector for weight/KV bytes, FLOPs, communication bytes/messages and capacity; compute optimistic and no-overlap bounds, i…；`2+3+3=8` | 深入完成 | 已有覆盖：`PLATFORM-EVALUATION-SYSTEM`，[Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
+| [PolicyShiftGuard: Benchmarking and Improving Policy-Adaptive Image Guardrails](https://arxiv.org/html/2607.05910v1) | 2026-07-08T08:00:00+08:00 | Treat moderation as a relation between content evidence and a versioned runtime policy, not an intrinsic image label. Randomize policy presentation to remove slot shortcuts, the…；`3+2+3=8` | 深入完成 | 已有覆盖：`PLATFORM-SECURITY`，[Ch72](../../../../books/part-06-ai-infrastructure/72-security.md) |
+| [MoWorld: A Flash World Model](https://arxiv.org/html/2607.06216v1) | 2026-07-08T08:00:00+08:00 | Authors report a 14B MoE video world model with history selection, few-step causal distillation and NPU execution optimizations under their visual/system benchmark; this does no…；`3+3+2=8` | 深入完成 | 已有覆盖：`MULTIMODAL-WORLD-MODELS`，[Ch25](../../../../books/part-03-multimodal-world-models/25-multimodal-world-models.md) |
+| [Diagnosing Semantic Handoff Failures in Agent-Orchestrated Vision-Language-Action Skill Composition](https://arxiv.org/html/2607.06256v1) | 2026-07-08T08:00:00+08:00 | The authors show a large clean-snapshot versus chained-rollout gap for the same checkpoints and trace failures to readiness/grounding/control under a small BEHAVIOR-1K pilot; th…；`3+3+3=9` | 深入完成 | 已有覆盖：`MULTIMODAL-EMBODIED-VLA`，[Ch26](../../../../books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md) |
+| [AlayaWorld: Long-Horizon and Playable Video World Generation](https://arxiv.org/html/2607.06291v1) | 2026-07-08T08:00:00+08:00 | A proposed full-stack route combines autoregressive video generation with explicit camera/geometry cache, compressed history, rollout-error replay and distilled sampling to purs…；`2+3+2=7` | 深入完成 | 已有覆盖：`MULTIMODAL-WORLD-MODELS`，[Ch25](../../../../books/part-03-multimodal-world-models/25-multimodal-world-models.md) |
+| [Estimating Uncertainty from Reasoning: A Large-Scale Study of Multi- and Crosslingual MCQA Performance in LLMs](https://arxiv.org/html/2607.06327v1) | 2026-07-08T08:00:00+08:00 | The authors report multilingual MCQA correlations under their nine-model/22-language contract; results concern correctness discrimination of elicited reasoning and do not establ…；`2+2+3=7` | 深入完成 | 已有覆盖：`PLATFORM-EVALUATION-SYSTEM`，[Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
+| [ActionCache: Training-Free Acceleration for Vision-Language-Action Models with Action Caching and Refinement](https://arxiv.org/html/2607.06370v1) | 2026-07-08T08:00:00+08:00 | Authors report action-head latency/success trade-offs for pi_0.5 and GR00T-N1.6 on their simulation and real-robot contracts; they do not prove cached actions remain safe under …；`3+2+2=7` | 深入完成 | 已有覆盖：`MULTIMODAL-EMBODIED-VLA`，[Ch26](../../../../books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md) |
+| [SIEVE: Structure-Aware Data Selection for Imitation Learning with VLA Models](https://arxiv.org/html/2607.06442v1) | 2026-07-08T08:00:00+08:00 | Authors report that SIEVE-selected subsets can outperform full-data training in their VLA/simulator contracts; they do not establish that discovered clusters are true skills or …；`3+3+3=9` | 深入完成 | 已有覆盖：`TRAIN-DATA`，[Ch27](../../../../books/part-04-training-system/27-data.md) |
+| [FreqDepthKV: Frequency-Guided Depth Sharing for Robust KV Cache Compression in Long-Context LLM Inference](https://arxiv.org/html/2607.06519v1) | 2026-07-08T08:00:00+08:00 | Exploit adjacent-layer correlation without assuming uniform redundancy: share low-frequency depth components, retain sparse layer-specific residuals, and route each head among s…；`3+2+2=7` | 深入完成 | 已有覆盖：`INFER-KV-CACHE`，[Ch45](../../../../books/part-05-inference-system/45-why-kv-cache-speeds-up.md) |
+| [DepthWeave-KV: Token-Adaptive Cross-Layer Residual Factorization for Long-Context KV Cache Compression](https://arxiv.org/html/2607.06523v1) | 2026-07-08T08:00:00+08:00 | Represent neighboring-layer K/V with shared low-rank bases, then allocate token-specific residual rank from online attention-output error rather than a uniform cache budget; fus…；`3+2+2=7` | 深入完成 | 已有覆盖：`INFER-KV-CACHE`，[Ch45](../../../../books/part-05-inference-system/45-why-kv-cache-speeds-up.md) |
+| [RynnWorld-Teleop: An Action-Conditioned World Model for Digital Teleoperation](https://arxiv.org/html/2607.06558v1) | 2026-07-08T08:00:00+08:00 | Authors report policy gains from mixed real and generated data and feasibility of synthetic-only transfer on their tasks; they do not prove the generated video is a physically v…；`3+3+2=8` | 深入完成 | 已有覆盖：`TRAIN-DATA`，[Ch27](../../../../books/part-04-training-system/27-data.md) |
+| [RynnWorld-4D: 4D Embodied World Models for Robotic Manipulation](https://arxiv.org/html/2607.06559v1) | 2026-07-08T08:00:00+08:00 | Co-generate appearance, depth and optical flow so predictive state carries geometry and motion, then expose internal predictive features to a one-forward policy instead of placi…；`3+2+2=7` | 深入完成 | 已有覆盖：`MULTIMODAL-EMBODIED-VLA`，[Ch26](../../../../books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md) |
+| [Vision as Unified Multimodal Generation](https://arxiv.org/html/2607.06560v1) | 2026-07-08T08:00:00+08:00 | Convert heterogeneous annotations into a shared sample contract—visual inputs, natural-language task/schema instruction, and a text/image/mixed response that can be deterministi…；`3+3+3=9` | 深入完成 | 已有覆盖：`MULTIMODAL-GENERATIVE-PARADIGMS`，[Ch24](../../../../books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md) |
+| [Lift3D-VLA: Lifting VLA Models to 3D Geometry and Dynamics-Aware Manipulation](https://arxiv.org/html/2607.06564v1) | 2026-07-08T08:00:00+08:00 | Authors report simulation, real-task and OOD gains under their sensor/task contract; synthesized point clouds, depth sensors and 25-rollout simulator slices do not prove general…；`2+2+3=7` | 深入完成 | 已有覆盖：`MULTIMODAL-EMBODIED-VLA`，[Ch26](../../../../books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md) |
 
-### Source Coverage Receipt
+## 4. 证据与知识整合
 
-<!-- validator:source-coverage-v2 -->
-| Source ID | Window Start | Window End | Executed At | Endpoint / Filter | Result | Hits | Candidate Source Families | Pagination / Cursor | Window Watermark | Closure Evidence | Gap / Limitation ID |
-| --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- |
-| SRC-ARXIV | 2026-07-07T09:00:00+08:00 | 2026-07-08T09:00:00+08:00 | 2026-08-27T13:32:27+08:00 | arXiv official availability schedule + exact-v1 Atom + DataCite DOI created | incomplete | 489 | SF-2026-ARXIV-2607-05475;SF-2026-ARXIV-2607-05577;SF-2026-ARXIV-2607-05708;SF-2026-ARXIV-2607-05721;SF-2026-ARXIV-2607-05876;SF-2026-ARXIV-2607-05910;SF-2026-ARXIV-2607-06118;SF-2026-ARXIV-2607-06216;SF-2026-ARXIV-2607-06256;SF-2026-ARXIV-2607-06291;SF-2026-ARXIV-2607-06327;SF-2026-ARXIV-2607-06370;SF-2026-ARXIV-2607-06403;SF-2026-ARXIV-2607-06442;SF-2026-ARXIV-2607-06519;SF-2026-ARXIV-2607-06523;SF-2026-ARXIV-2607-06558;SF-2026-ARXIV-2607-06559;SF-2026-ARXIV-2607-06560;SF-2026-ARXIV-2607-06564 | — | 2026-09-03T12:10:00+08:00 | ../_sources/daily-20260708/official-arxiv-first-public-owner-receipt-v1.json; coverage:SRC-ARXIV:20260708; unclosed: canonical candidate redistribution pending | GAP-ARXIV-CANONICAL-REDISTRIBUTION-20260708 |
-| SRC-GITHUB-COMMIT | 2026-07-07T09:00:00+08:00 | 2026-07-08T09:00:00+08:00 | 2026-08-27T13:32:27+08:00 | exact GitHub commit API lookups: agent-lens/agent-lens-bench@d152ae841e61279af6695c66c4a3625f96495199; Robbyant/lingbot-vla-v2@15ca0d850f0ef9d1617957da00245e6ee7d6d672; alibaba-damo-academy/RynnWorld-Teleop@b27d67542a8ce4522d969d2359167a0fa809a63c | checked | 2 | SF-2026-ARXIV-2607-06403;SF-2026-ARXIV-2607-06558 | pages=3; final cursors=d152ae841e61279af6695c66c4a3625f96495199,15ca0d850f0ef9d1617957da00245e6ee7d6d672,b27d67542a8ce4522d969d2359167a0fa809a63c; one bounded commit lookup per family | 2026-07-08T09:00:00+08:00 | coverage:SRC-GITHUB-COMMIT:20260708 | — |
-<!-- coverage:SRC-ARXIV:20260708:start -->Direct arXiv API/OAI reset connections; registered DataCite fallback froze the strict-window denominator. Canonical source: papers/2026/07/_sources/datacite-arxiv-recovery-20260701-26/datacite-candidate-inventory.json; sha256:d9c5e832203e6c3940bbf234cbbb0fff9e69bcdf1964db69b901cd19b8de6e29; 1185 unique identities in this strict window; 21 routed families.<!-- coverage:SRC-ARXIV:20260708:end -->
-<!-- coverage:SRC-GITHUB-COMMIT:20260708:start -->repository=agent-lens/agent-lens-bench, until=2026-07-08T01:00:00Z, full_sha=d152ae841e61279af6695c66c4a3625f96495199, commit_timestamp=2026-07-07T11:47:58Z, url=https://github.com/agent-lens/agent-lens-bench/tree/d152ae841e61279af6695c66c4a3625f96495199; repository=Robbyant/lingbot-vla-v2, until=2026-07-08T01:00:00Z, full_sha=15ca0d850f0ef9d1617957da00245e6ee7d6d672, commit_timestamp=2026-07-07T18:28:01Z, url=https://github.com/Robbyant/lingbot-vla-v2/tree/15ca0d850f0ef9d1617957da00245e6ee7d6d672; repository=alibaba-damo-academy/RynnWorld-Teleop, until=2026-07-08T01:00:00Z, full_sha=b27d67542a8ce4522d969d2359167a0fa809a63c, commit_timestamp=2026-07-08T00:18:14Z, url=https://github.com/alibaba-damo-academy/RynnWorld-Teleop/tree/b27d67542a8ce4522d969d2359167a0fa809a63c; each commit establishes only the event-time public tree and does not independently prove paper claims.<!-- coverage:SRC-GITHUB-COMMIT:20260708:end -->
+### [Is Your NPU Ready for LLMs? Dissecting the Hidden Efficiency Bottlenecks in Mobile LLM Inference](https://arxiv.org/html/2607.05475v1)
 
-### Coverage Limitations
+**系统推理。** 问题是移动 NPU 上 Prefill 与 Decode 的算术强度、内存行为和 kernel 瓶颈不同，不能用单一 tokens/s 判断。论文分阶段测量并揭示 phase-dependent bottleneck；作者数据只覆盖指定 NPU、模型和实现，未证明其他端侧硬件相同。代价是双套优化路径、设备特定 profiling 与更复杂的 runtime 选择。
 
-- DataCite 是 Discovery / Metadata fallback，只证明 identity、v1 timestamp、subject 与 abstract；机制和实验结论不从 metadata 推断。
-- Artifact-boundary routing 覆盖 21 个 family：exact v1 为 13 个 family 披露 artifact/evidence locator，其中 12 个提供外部 repository/project/demo locator，另有 8 个未披露；本日确认 3 个 family、3 个 event-time pinned commit。未确认 pinned commit 的 locator 只进入 Evidence boundary，不冒充 `SRC-GITHUB-COMMIT` coverage hit。
-- 2026-08-25 才生效的机构源与 Hugging Face 不倒推为本历史窗口 Required Daily。工程 release 仍由 Sunday Weekly 承担。
-- 标题路由外的垂直应用、单数据集增量和没有状态/控制权变化的论文在 topic-level closure 中拒绝，不用大量零分行稀释账本。
-
-
-<!-- latest-contract-reopen:2026-07-08:start -->
-### Latest-contract Reopen Notice
-
-2026-09-03 全量复核重新打开本日报。旧 `Complete` 只证明原分母内部的表格算术，不证明当前 V2.1 Coverage：arXiv candidate owner receipt 已恢复；当前仍需按 canonical owner 重分配候选与分母。非空 source packet、原 Source Review 与 Books Comparison 暂作 provenance 保留，不作为最新合同验收结论。2026-08-25 才生效的新增来源不倒推为当日 Required receipt，只按 Source Delta Audit 检查真实 in-window family。当前 finding：`canonical_owner_candidate_redistribution_pending, fresh_context_per_identity_semantic_audit_pending, exact_primary_access_recheck_pending`。
-<!-- latest-contract-reopen:2026-07-08:end -->
-
-### Canonical raw-inventory recovery checkpoint
-
-本轮已从非空官方 DataCite arXiv DOI snapshot 恢复 **489** 条注册类别 identity，并以 immutable DOI `created` 与候选级 announcement owner reconciliation 归档到本日。其中 **20** 条是旧报告 retained provenance，**469** 条已获得逐 family title+abstract closure proposal。这些 proposal 尚未经过 fresh-context false-positive/false-negative audit，旧候选也尚未按 canonical owner 完成重分配；因此 Coverage、Evidence、Books 与 Completion 继续保持 Open。
-
-## 2. Candidate Ledger
-
-<!-- validator:candidate-ledger-v2.1 -->
-| Source Family ID | Primary Identifier | Event Identity | Owner Week | First-public Date | Supporting Source IDs | Design Delta | System Reach | Durability | Total | Candidate State | Review Status | Access Status | Review Override | Review Ref | Owner Report Ref | Prior Review Ref | Reconciliation | Stable Node ID | Books Disposition | Books Review Ref | Benchmark Claim |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-ARXIV-2607-05475 | arXiv:2607.05475v1 | paper-v1:2607.05475 | 2026-W28 | 2026-07-08 | SRC-ARXIV | 2 | 3 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2607-05475 | self | — | new_in_window | INFER-TENSORRT-LLM | Integrate | books-review:SF-2026-ARXIV-2607-05475 | yes |
-| SF-2026-ARXIV-2607-05577 | arXiv:2607.05577v1 | paper-v1:2607.05577 | 2026-W28 | 2026-07-08 | SRC-ARXIV | 1 | 2 | 1 | 4 | closure_only | closure_complete | accessible | none | review:SF-2026-ARXIV-2607-05577 | self | — | new_in_window | MULTIMODAL-WORLD-MODELS | Rejected — Low Durability / Out of Scope | — | no |
-| SF-2026-ARXIV-2607-05708 | arXiv:2607.05708v1 | paper-v1:2607.05708 | 2026-W28 | 2026-07-08 | SRC-ARXIV | 3 | 3 | 2 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2607-05708 | self | — | new_in_window | AGENT-MEMORY | Integrate | books-review:SF-2026-ARXIV-2607-05708 | yes |
-| SF-2026-ARXIV-2607-05721 | arXiv:2607.05721v1 | paper-v1:2607.05721 | 2026-W28 | 2026-07-08 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2607-05721 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | Integrate | books-review:SF-2026-ARXIV-2607-05721 | yes |
-| SF-2026-ARXIV-2607-05876 | arXiv:2607.05876v1 | paper-v1:2607.05876 | 2026-W28 | 2026-07-08 | SRC-ARXIV | 2 | 3 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2607-05876 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | Integrate | books-review:SF-2026-ARXIV-2607-05876 | yes |
-| SF-2026-ARXIV-2607-05910 | arXiv:2607.05910v1 | paper-v1:2607.05910 | 2026-W28 | 2026-07-08 | SRC-ARXIV | 3 | 2 | 3 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2607-05910 | self | — | new_in_window | PLATFORM-SECURITY | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2607-05910 | yes |
-| SF-2026-ARXIV-2607-06118 | arXiv:2607.06118v1 | paper-v1:2607.06118 | 2026-W28 | 2026-07-08 | SRC-ARXIV | 2 | 2 | 2 | 6 | retained | standard_complete | accessible | none | review:SF-2026-ARXIV-2607-06118 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2607-06118 | yes |
-| SF-2026-ARXIV-2607-06216 | arXiv:2607.06216v1 | paper-v1:2607.06216 | 2026-W28 | 2026-07-08 | SRC-ARXIV | 3 | 3 | 2 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2607-06216 | self | — | new_in_window | MULTIMODAL-WORLD-MODELS | Integrate | books-review:SF-2026-ARXIV-2607-06216 | yes |
-| SF-2026-ARXIV-2607-06256 | arXiv:2607.06256v1 | paper-v1:2607.06256 | 2026-W28 | 2026-07-08 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2607-06256 | self | — | new_in_window | MULTIMODAL-EMBODIED-VLA | Integrate | books-review:SF-2026-ARXIV-2607-06256 | yes |
-| SF-2026-ARXIV-2607-06291 | arXiv:2607.06291v1 | paper-v1:2607.06291 | 2026-W28 | 2026-07-08 | SRC-ARXIV | 2 | 3 | 2 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2607-06291 | self | — | new_in_window | MULTIMODAL-WORLD-MODELS | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2607-06291 | yes |
-| SF-2026-ARXIV-2607-06327 | arXiv:2607.06327v1 | paper-v1:2607.06327 | 2026-W28 | 2026-07-08 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2607-06327 | self | — | new_in_window | PLATFORM-EVALUATION-SYSTEM | Integrate | books-review:SF-2026-ARXIV-2607-06327 | yes |
-| SF-2026-ARXIV-2607-06370 | arXiv:2607.06370v1 | paper-v1:2607.06370 | 2026-W28 | 2026-07-08 | SRC-ARXIV | 3 | 2 | 2 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2607-06370 | self | — | new_in_window | MULTIMODAL-EMBODIED-VLA | Integrate | books-review:SF-2026-ARXIV-2607-06370 | yes |
-| SF-2026-ARXIV-2607-06403 | arXiv:2607.06403v1 | paper-v1:2607.06403 | 2026-W28 | 2026-07-08 | SRC-ARXIV; SRC-GITHUB-COMMIT | 3 | 3 | 2 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2607-06403 | self | — | new_in_window | MULTIMODAL-EMBODIED-VLA | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2607-06403 | yes |
-| SF-2026-ARXIV-2607-06442 | arXiv:2607.06442v1 | paper-v1:2607.06442 | 2026-W28 | 2026-07-08 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2607-06442 | self | — | new_in_window | TRAIN-DATA | Integrate | books-review:SF-2026-ARXIV-2607-06442 | yes |
-| SF-2026-ARXIV-2607-06519 | arXiv:2607.06519v1 | paper-v1:2607.06519 | 2026-W28 | 2026-07-08 | SRC-ARXIV | 3 | 2 | 2 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2607-06519 | self | — | new_in_window | INFER-KV-CACHE | Integrate | books-review:SF-2026-ARXIV-2607-06519 | yes |
-| SF-2026-ARXIV-2607-06523 | arXiv:2607.06523v1 | paper-v1:2607.06523 | 2026-W28 | 2026-07-08 | SRC-ARXIV | 3 | 2 | 2 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2607-06523 | self | — | new_in_window | INFER-KV-CACHE | Integrate | books-review:SF-2026-ARXIV-2607-06523 | yes |
-| SF-2026-ARXIV-2607-06558 | arXiv:2607.06558v1 | paper-v1:2607.06558 | 2026-W28 | 2026-07-08 | SRC-ARXIV; SRC-GITHUB-COMMIT | 3 | 3 | 2 | 8 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2607-06558 | self | — | new_in_window | TRAIN-DATA | Integrate | books-review:SF-2026-ARXIV-2607-06558 | yes |
-| SF-2026-ARXIV-2607-06559 | arXiv:2607.06559v1 | paper-v1:2607.06559 | 2026-W28 | 2026-07-08 | SRC-ARXIV | 3 | 2 | 2 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2607-06559 | self | — | new_in_window | MULTIMODAL-EMBODIED-VLA | Integrate | books-review:SF-2026-ARXIV-2607-06559 | yes |
-| SF-2026-ARXIV-2607-06560 | arXiv:2607.06560v1 | paper-v1:2607.06560 | 2026-W28 | 2026-07-08 | SRC-ARXIV | 3 | 3 | 3 | 9 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2607-06560 | self | — | new_in_window | MULTIMODAL-GENERATIVE-PARADIGMS | Integrate | books-review:SF-2026-ARXIV-2607-06560 | yes |
-| SF-2026-ARXIV-2607-06564 | arXiv:2607.06564v1 | paper-v1:2607.06564 | 2026-W28 | 2026-07-08 | SRC-ARXIV | 2 | 2 | 3 | 7 | retained | deep_complete | accessible | none | review:SF-2026-ARXIV-2607-06564 | self | — | new_in_window | MULTIMODAL-EMBODIED-VLA | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2607-06564 | yes |
-## 3. Review Completion Receipt
-
-<!-- validator:review-completion-v1 -->
-| Source Family ID | Review Provenance ID | Review Route | Primary Evidence Version | Reviewed Evidence Versions | Method / Identity Locators | Evaluation Locators | Limitations / Counterevidence Locators | Artifact Locators | Claim Boundary Ref | Completion Result |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-ARXIV-2607-05475 | RP-6fb1a2e97fa35ea3 | deep | arXiv:2607.05475v1 | SRC-ARXIV@arXiv:2607.05475v1 | https://arxiv.org/html/2607.05475v1#S3.SS1; https://arxiv.org/html/2607.05475v1#S3.SS2; https://arxiv.org/html/2607.05475v1#S3.SS3; https://arxiv.org/html/2607.05475v1#S3.SS4 — four-device hardware matrix, throughput/energy method and controlled protocol; https://arxiv.org/html/2607.05475v1#S5; https://arxiv.org/html/2607.05475v1#S6; https://arxiv.org/html/2607.05475v1#S7 — framework gaps, backend optimization and host/backend scheduling mechanisms | https://arxiv.org/html/2607.05475v1#S4 and #S8 — five frameworks, three backends, model/quantization matrix, cross-layer studies and estimated best-practice combination | Not Disclosed — v1 has no dedicated limitations section; bounded by four Qualcomm phones, selected framework versions, closed QNN behavior, author-only measurement and estimated rather than deployed combined optimization | https://arxiv.org/html/2607.05475v1#S3.SS1; https://arxiv.org/html/2607.05475v1#S3.SS4 — PowerBench repository/release is Not Disclosed. The manuscript cites a OnePlus kernel powercap path at commit 6504e3d0385a951de4848bc81ce19ce8f8145dbe and Qualcomm GenAI extensions, but these are dependencies rather than a reproducible PowerBench artifact. | claim:SF-2026-ARXIV-2607-05475 | complete |
-| SF-2026-ARXIV-2607-05577 | RP-a5010a32395c7704 | closure | doi:10.48550/arxiv.2607.05577@v1 | SRC-DATACITE@doi:10.48550/arxiv.2607.05577@v1 | doi:10.48550/arxiv.2607.05577#identity; DataCite Submitted:v1 timestamp | Not Required — closure route makes no mechanism or benchmark claim | Not Required — DataCite abstract is Discovery / Metadata and no technical claim is retained | Not Required — closure route; no artifact claim retained | claim:SF-2026-ARXIV-2607-05577 | complete |
-| SF-2026-ARXIV-2607-05708 | RP-32cd06923f4fbe24 | deep | arXiv:2607.05708v1 | SRC-ARXIV@arXiv:2607.05708v1 | https://arxiv.org/html/2607.05708v1#S3.SS1; https://arxiv.org/html/2607.05708v1#S3.SS2 — heterogeneous context density and semantic/physical locality gap; https://arxiv.org/html/2607.05708v1#S4.SS1; https://arxiv.org/html/2607.05708v1#S4.SS2; https://arxiv.org/html/2607.05708v1#S4.SS3 — chunk-bounded MemAttention, cross-chunk reconciliation, locality-aware Memory Manager and implementation | https://arxiv.org/html/2607.05708v1#S5.SS1; https://arxiv.org/html/2607.05708v1#S5.SS2; https://arxiv.org/html/2607.05708v1#S5.SS3; https://arxiv.org/html/2607.05708v1#S5.SS4; https://arxiv.org/html/2607.05708v1#S5.SS5 — LoCoMo/SWE-bench/BrowseComp/WebArena setup, quality, concurrency, locality/storage and ablation/sensitivity | Not Disclosed — v1 has no dedicated limitations section; claim boundary is constrained by author-only four-benchmark evaluation, absent event-time code, mixed harness/model dependencies, and no crash recovery, privacy/deletion, authorization or production multi-tenancy study | https://github.com/rednote-machine-learning/RedKnot — v1 says Akashic code will later be merged into an alternative branch and artifacts will be released upon acceptance. Therefore the event-time Akashic implementation/reproduction package is Not Disclosed; RedKnot identity alone is not artifact verification. | claim:SF-2026-ARXIV-2607-05708 | complete |
-| SF-2026-ARXIV-2607-05721 | RP-991b5684876c0fe0 | deep | arXiv:2607.05721v1 | SRC-ARXIV@arXiv:2607.05721v1 | https://arxiv.org/html/2607.05721v1#S3 (frozen-LLM multi-layer hidden-state fusion, DETR-style span set prediction, Mixture-of-Beta uncertainty and iterative refinement) | https://arxiv.org/html/2607.05721v1#S4 (20K-prompt/approximately-293K-span benchmark, five backbones, human-checked test labels, calibration/detection metrics and component ablations) | https://arxiv.org/html/2607.05721v1#S5 (white-box hidden-state access, English factuality scope, expensive label construction, confident-wrong risk and external-verification boundary) | https://damon-demon.github.io/SpanUQ.html (project page disclosed in exact v1; no immutable event-time repository/commit is linked in the manuscript) | claim:SF-2026-ARXIV-2607-05721 | complete |
-| SF-2026-ARXIV-2607-05876 | RP-0bfd5363afb889e3 | deep | arXiv:2607.05876v1 | SRC-ARXIV@arXiv:2607.05876v1 | https://arxiv.org/html/2607.05876v1#S3 (five-dimensional resource account; optimistic max and no-overlap sum floors; wall ordering) | https://arxiv.org/html/2607.05876v1#S5 (DeepSeek-V3.2-style 671B MoE/MLA case study on 16 H20; concurrency-dependent TP/DP walls and reconciliation) | https://arxiv.org/html/2607.05876v1#S5.SS6 (physical bounds are not achievable expectations; P50 service time diagnoses residual while P99 validates SLO; queueing is outside the resource floor) | https://arxiv.org/html/2607.05876v1#A1 (zero-dependency Python commands for floor and MBU/MFU calculations) | claim:SF-2026-ARXIV-2607-05876 | complete |
-| SF-2026-ARXIV-2607-05910 | RP-8379117570d4fd5d | deep | arXiv:2607.05910v1 | SRC-ARXIV@arXiv:2607.05910v1 | https://arxiv.org/html/2607.05910v1#S3 (runtime policy bundle, randomized-policy SFT, same-image boundary pairs and pair-margin objective) | https://arxiv.org/html/2607.05910v1#S4 (Adaptive and held-out policy-shift splits, F1/PSS, latency); https://arxiv.org/html/2607.05910v1#A5 (rerun and breakdown details); https://arxiv.org/html/2607.05910v1#S5 (boundary-pair and training-branch ablations) | https://arxiv.org/html/2607.05910v1#A1 (static images, English structured policies, finite seven-category/28-policy catalog) | https://github.com/ssmisya/PolicyShiftGuard/tree/735914206b19e429cfc1c42c70b1b47d4b90def9 (initial open-source release, 2026-07-06T11:44:59Z); https://huggingface.co/datasets/PolicyShiftBench/PolicyShiftBench | claim:SF-2026-ARXIV-2607-05910 | complete |
-| SF-2026-ARXIV-2607-06118 | RP-6a627adeb6b7825d | standard | arXiv:2607.06118v1 | SRC-ARXIV@arXiv:2607.06118v1 | https://arxiv.org/html/2607.06118v1#S3 (1,550 tasks / 800 live sites; three protocols; NavEval inputs task, URLs/requests, actions and final screenshot) | https://arxiv.org/html/2607.06118v1#S4 (controlled Playwright runs, six agent families, human success and judge agreement); https://arxiv.org/html/2607.06118v1#Pt0.A3.SS4 (judge-backbone and request-filtering ablations) | Not Disclosed — exact v1 provides no dedicated limitations section; live-site drift, restricted search, LLM-judge dependence and binary success aggregation bound the claims | https://github.com/Mininglamp-AI/WebRetriever/tree/819f3d466a4ea3e52d70d8e94c36a07b8503652f (event-time commit 2026-07-07T09:39:07Z) | claim:SF-2026-ARXIV-2607-06118 | complete |
-| SF-2026-ARXIV-2607-06216 | RP-de2f17fbbc9fbbe7 | deep | arXiv:2607.06216v1 | SRC-ARXIV@arXiv:2607.06216v1 | https://arxiv.org/html/2607.06216v1#S3 (camera-conditioned long-horizon pretraining and curriculum on NPU clusters); https://arxiv.org/html/2607.06216v1#S4 (recent/initial/camera-related latent history selection, causal flow-matching warmup and self-forcing few-step distillation); https://arxiv.org/html/2607.06216v1#S5 (module residency, pipeline, parallelism and kernel co-design for streaming inference) | https://arxiv.org/html/2607.06216v1#S6 (VBench-I2V and in-house camera-control quality plus system performance/cost measurements) | https://arxiv.org/html/2607.06216v1#S6 (visual/image-to-video metrics do not prove causal dynamics, policy utility or physical correctness); https://arxiv.org/html/2607.06216v1#S8 (headline performance remains tied to the disclosed MoWorld/NPU stack) | https://moxin-tech.github.io/moworld/ (project page linked by exact v1; no immutable source commit is disclosed in the manuscript) | claim:SF-2026-ARXIV-2607-06216 | complete |
-| SF-2026-ARXIV-2607-06256 | RP-f4d5fdbbd12ccfb9 | deep | arXiv:2607.06256v1 | SRC-ARXIV@arXiv:2607.06256v1 | https://arxiv.org/html/2607.06256v1#S2 (next-skill readiness as a typed relation beyond the current skill postcondition); https://arxiv.org/html/2607.06256v1#S3 (typed skill contract, bounded Plan-Act-Verify-Replan and multi-view verification) | https://arxiv.org/html/2607.06256v1#S4 (same checkpoints under clean boundary snapshots versus chained terminal states; progress and failure attribution across ten BEHAVIOR-1K tasks) | https://arxiv.org/html/2607.06256v1#S5 (small pilot traces, verifier/category bias, underspecified object identity and missing no-recovery/oracle-reset ablations) | Not Disclosed — exact v1 provides training/routing details but links no public repository, commit or release artifact | claim:SF-2026-ARXIV-2607-06256 | complete |
-| SF-2026-ARXIV-2607-06291 | RP-d8b03d9097de86ca | deep | arXiv:2607.06291v1 | SRC-ARXIV@arXiv:2607.06291v1 | https://arxiv.org/html/2607.06291v1#S3 (AR-DiT pipeline, prompt switching, camera control/3D cache, history compression, error bank and few-step distillation) | https://arxiv.org/html/2607.06291v1#S4 (reported forward-exploration examples/metrics; incomplete relative to the paper's own release promise) | https://arxiv.org/html/2607.06291v1#S3.SS1 (3D-cache complexity, depth/geometry dependence and dynamic-object limits); https://arxiv.org/html/2607.06291v1#S4 (only qualitative camera/action/loop-closure/long-horizon evidence in event-time v1) | https://alaya-lab.github.io/AlayaWorld/ ; exact v1 states the full codebase would be released later, so no event-time implementation claim is accepted | claim:SF-2026-ARXIV-2607-06291 | complete |
-| SF-2026-ARXIV-2607-06327 | RP-9469f8c0906a246e | deep | arXiv:2607.06327v1 | SRC-ARXIV@arXiv:2607.06327v1 | https://arxiv.org/html/2607.06327v1#S3 (parallel multilingual MCQA with exact answer labels, long-form reasoning, nine uncertainty estimators and scale/language slices) | https://arxiv.org/html/2607.06327v1#S4 (22 languages, model-scale and reasoning-language comparisons, threshold-transfer analysis and 95% confidence intervals) | https://arxiv.org/html/2607.06327v1#S5 (MCQA/elicited-reasoning scope, target-language usability trade-off, training-pipeline confounding and open-ended correctness left open) | Not Disclosed — the exact v1 states that an evaluation framework is released but provides no immutable repository/commit link | claim:SF-2026-ARXIV-2607-06327 | complete |
-| SF-2026-ARXIV-2607-06370 | RP-c7a209d48dbbb8f5 | deep | arXiv:2607.06370v1 | SRC-ARXIV@arXiv:2607.06370v1 | https://arxiv.org/html/2607.06370v1#S3 (external multimodal key, action-chunk value, thresholded hit/miss, zero/few-step refinement and full-generation fallback) | https://arxiv.org/html/2607.06370v1#S4 (VLABench and real-robot success/latency trade-offs, threshold/key/cache/NFE ablations) | https://arxiv.org/html/2607.06370v1#S4 (finite cache and task distributions, similarity proxy, author-selected hit threshold, action-head rather than end-to-end latency); https://arxiv.org/html/2607.06370v1#S5 (claims limited to the evaluated VLA/action spaces) | Not Disclosed — exact v1 links no public implementation repository or immutable cache artifact | claim:SF-2026-ARXIV-2607-06370 | complete |
-| SF-2026-ARXIV-2607-06403 | RP-3835e8f0369f29e9 | deep | arXiv:2607.06403v1 | SRC-ARXIV@arXiv:2607.06403v1 | https://arxiv.org/html/2607.06403v1#S3 (per-embodiment trajectory filtering, video/state alignment and egocentric-to-world hand-trajectory reconstruction); https://arxiv.org/html/2607.06403v1#S4 (loss-free MoE action expert, typed multi-embodiment action space and future-prediction supervision) | https://arxiv.org/html/2607.06403v1#S5 (GM-100 generalist bimanual, mobile long-horizon, cross-embodiment and component comparisons) | https://arxiv.org/html/2607.06403v1#S5 (task/platform disparities, low absolute final success on several tasks, partial-progress versus completion gap and embodiment-specific alignment limits) | https://github.com/Robbyant/lingbot-vla-v2/tree/15ca0d850f0ef9d1617957da00245e6ee7d6d672 (event-time repository commit 2026-07-07T18:28:01Z); https://huggingface.co/collections/robbyant/lingbot-vla-v2 | claim:SF-2026-ARXIV-2607-06403 | complete |
-| SF-2026-ARXIV-2607-06442 | RP-9c0d2423f344f837 | deep | arXiv:2607.06442v1 | SRC-ARXIV@arXiv:2607.06442v1 | https://arxiv.org/html/2607.06442v1#Sx3 (gripper-boundary segmentation, V-JEPA2/PCA primitive clustering, reuse/discriminability criterion, diminishing-return structural exposure and medoid selection) | https://arxiv.org/html/2607.06442v1#Sx4 (Bridge-V2, Fractal and GR00T-X-Sim across two VLA heads; full/random/DemInf/SCIZOR baselines, fixed/proportional steps and component ablations) | https://arxiv.org/html/2607.06442v1#Sx4 (primitive identity depends on segmentation/encoder/clustering; simulator success and medoid centrality do not prove physical diversity or rare-failure coverage); https://arxiv.org/html/2607.06442v1#Sx5 (conclusions remain within imitation-learning data selection) | Not Disclosed — exact v1 links no public repository, selected subset digest or immutable clustering artifact | claim:SF-2026-ARXIV-2607-06442 | complete |
-| SF-2026-ARXIV-2607-06519 | RP-8300faac0fd09422 | deep | arXiv:2607.06519v1 | SRC-ARXIV@arXiv:2607.06519v1 | https://arxiv.org/html/2607.06519v1#S3 (adjacent-layer DCT-style low-frequency sharing, sparse high-frequency residuals, per-head shared/residual/exact routing from prefill probes) | https://arxiv.org/html/2607.06519v1#S4 (32K QA/retrieval/summarization/code metrics plus throughput, TTFT and peak KV memory); https://arxiv.org/html/2607.06519v1#S5 (factorization, residual, routing, reconstruction loss, exact fallback and block-size variants) | Not Disclosed — exact v1 provides no dedicated limitations section; model/checkpoint, hardware, precision, batch/concurrency and production-serving integration are not sufficiently disclosed for portable performance claims | Not Disclosed — no author repository or immutable implementation artifact is linked in exact v1 | claim:SF-2026-ARXIV-2607-06519 | complete |
-| SF-2026-ARXIV-2607-06523 | RP-1b6df8a23bd8f28a | deep | arXiv:2607.06523v1 | SRC-ARXIV@arXiv:2607.06523v1 | https://arxiv.org/html/2607.06523v1#S3 (neighbor-layer low-rank bases, token-conditional residual rank, online attention-output error tracking and fused execution) | https://arxiv.org/html/2607.06523v1#S4 (16K-128K retrieval slices; main 64K greedy-512 protocol; quality, memory, TTFT, throughput, perplexity and reconstruction error); https://arxiv.org/html/2607.06523v1#S5 (basis sharing, token router, residual reconstruction/gates and fused-kernel ablations) | https://arxiv.org/html/2607.06523v1#S7 (single compressed layout; batching, prefix reuse, PD disaggregation and multi-tenant pools left open); no standalone limitations section | Not Disclosed — no author repository or immutable CUDA implementation is linked in exact v1 | claim:SF-2026-ARXIV-2607-06523 | complete |
-| SF-2026-ARXIV-2607-06558 | RP-92d2f28685d2e4d8 | deep | arXiv:2607.06558v1 | SRC-ARXIV@arXiv:2607.06558v1 | https://arxiv.org/html/2607.06558v1#S3 (depth-aware hand-skeleton conditioning, human-to-robot progressive training and causal autoregressive distillation); https://arxiv.org/html/2607.06558v1#S4 (pose-stream capture, retargeting and synthetic state-action trajectory construction) | https://arxiv.org/html/2607.06558v1#S5 (35-trial real-robot tasks, real-only/synthetic-only/mixed policy data, video/world-model comparisons and conditioning/distillation ablations) | https://arxiv.org/html/2607.06558v1#S6 (deformable/liquid physics failures and per-platform fine-tuning); synthetic pixels and pose labels do not establish physical contact truth | https://github.com/alibaba-damo-academy/RynnWorld-Teleop/tree/b27d67542a8ce4522d969d2359167a0fa809a63c (latest event-time commit, 2026-07-08T00:18:14Z); https://huggingface.co/Alibaba-DAMO-Academy/RynnWorld-Teleop | claim:SF-2026-ARXIV-2607-06558 | complete |
-| SF-2026-ARXIV-2607-06559 | RP-d1e74e053a2b81a3 | deep | arXiv:2607.06559v1 | SRC-ARXIV@arXiv:2607.06559v1 | https://arxiv.org/html/2607.06559v1#S3 (projective RGB/depth/flow representation, tri-branch diffusion and single-forward predictive-feature policy) | https://arxiv.org/html/2607.06559v1#S4 (50 held-out video sequences; six real-robot tasks, 35 consecutive trials/task, 120s success bound, TIANJI M6/WUJI HAND/D435i); https://arxiv.org/html/2607.06559v1#S4.SS4 (modality/representation and policy component ablations) | https://arxiv.org/html/2607.06559v1#S5 (about 9Hz on RTX 5090; egocentric optimization; multi-view/multi-robot open) | https://github.com/alibaba-damo-academy/RynnWorld-4D/tree/0e4f3a66f5ade5523b865ae92f7cf0336149e6bf (event-time technical-report commit, 2026-07-06T19:51:29Z) | claim:SF-2026-ARXIV-2607-06559 | complete |
-| SF-2026-ARXIV-2607-06560 | RP-a4aba2c43059516d | deep | arXiv:2607.06560v1 | SRC-ARXIV@arXiv:2607.06560v1 | https://arxiv.org/html/2607.06560v1#S3 (common instruction-response schema for structured vision, dense geometry, segmentation and multi-view geometry); https://arxiv.org/html/2607.06560v1#S4 (native text/image/mixed generation and typed decoding) | https://arxiv.org/html/2607.06560v1#S5 (task-family benchmarks against specialists and multimodal baselines); https://arxiv.org/html/2607.06560v1#S6 (data mixture/capability preservation and task-family analyses) | https://arxiv.org/html/2607.06560v1#S7 (task-specific decoding/evaluation remains; converted/pseudo targets and data mixture bound conclusions) | https://github.com/OpenSenseNova/SenseNova-Vision ; repository created earlier but first populated commit was 4ac2a438ff630bcfd4559eb0e1b6c981d946954d at 2026-07-08T11:39:26Z, after the 09:00 Beijing cutoff, so it is not event-time evidence for this Daily | claim:SF-2026-ARXIV-2607-06560 | complete |
-| SF-2026-ARXIV-2607-06564 | RP-05f8c0b1b1ee5ae6 | deep | arXiv:2607.06564v1 | SRC-ARXIV@arXiv:2607.06564v1 | https://arxiv.org/html/2607.06564v1#S4 (shared 2D/3D encoder with modality-specific tokenization, geometry-centric MAE and layer-wise temporal action modeling) | https://arxiv.org/html/2607.06564v1#S5 (MetaWorld/RLBench, component ablations, 8 real tasks and OOD object/light/background tests) | https://arxiv.org/html/2607.06564v1#S5.SS6 (pour-direction, grasp, contact and depth-related failure cases); https://arxiv.org/html/2607.06564v1#S6 (transparent/reflective depth failure and missing fine contact closed loop) | https://lift3dvla.github.io/ (project page disclosed in exact v1; no immutable event-time code commit is linked) | claim:SF-2026-ARXIV-2607-06564 | complete |
-
-### Source Reviews
-
-<!-- review:SF-2026-ARXIV-2607-05475:start -->
-#### Is Your NPU Ready for LLMs? Dissecting the Hidden Efficiency Bottlenecks in Mobile LLM Inference
 
 <!-- claim:SF-2026-ARXIV-2607-05475:start -->Mobile backend choice is phase dependent: prefill exposes large compute-dense shapes that can fit NPU strengths, while single-token decode exposes small dynamic kernels and memory traffic that can favor CPU. Framework offload coverage, graph/static-shape constraints, quantization support, tensor-layout conversion, host polling, sleep latency, DVFS and affinity determine whether nominal NPU capability becomes end-to-end efficiency. The framework owns operator partition/offload and layout conversions; backend runtimes own executable graph/quantization constraints; host CPU owns polling, wake/sleep and thread scheduling; request phase and KV state determine current shape. A backend switch is therefore a state-transfer/control decision, not a free dispatch choice. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-05475:end -->
 
@@ -132,22 +73,14 @@
 - Score V2：Design Delta 2 / System Reach 3 / Durability 3 = **8/9**。
 - Evolution relation：`Direct Evolution`。
 - Stable owner：`INFER-TENSORRT-LLM`。
-- Books disposition：`Integrate`。
-<!-- review:SF-2026-ARXIV-2607-05475:end -->
+- Books disposition：历史写回已完成；本次判定为 `已有覆盖`。
 
-<!-- review:SF-2026-ARXIV-2607-05577:start -->
-#### Narrative World Model: Narratology-Grounded Writer Memory for Long-Form Fiction
+本次重新定位到 `INFER-TENSORRT-LLM` 的 [Ch49](../../../../books/part-05-inference-system/49-tensorrt-llm.md)；现有正文命题与证据边界已承载该 family，本任务不重复追加，独立复核已确认 body anchor。
 
-<!-- claim:SF-2026-ARXIV-2607-05577:start -->本次只确认唯一 arXiv identity、v1 Submitted timestamp、owner Daily 与主题拒绝；DataCite abstract 不用于建立机制或 benchmark 结论。<!-- claim:SF-2026-ARXIV-2607-05577:end -->
+### [Akashic: A Low-Overhead LLM Inference Service with MemAttention](https://arxiv.org/html/2607.05708v1)
 
-- Identity：`arXiv:2607.05577v1`；first-public（Asia/Shanghai）：`2026-07-08`。
-- Reconciliation：当前严格窗口内首次出现，无同层级 duplicate 或 revision。
-- Closure rationale：标题与摘要触发系统主题路由，但当前证据只支持局部案例、调查或实现线索；在没有形成可验证的跨组件设计变化前，Design Delta / System Reach / Durability 为 `1/2/1`。
-- Disposition：`Rejected — Low Durability / Out of Scope`；若未来 revision、artifact 或独立复现改变证据边界，重开真实 owner Daily。
-<!-- review:SF-2026-ARXIV-2607-05577:end -->
+**系统推理。** 问题是长上下文服务把所有历史常驻会超出显存，把每次都远端取回又受延迟支配。Akashic 以 MemAttention 对有限 chunk 做检索/聚合并把计算靠近 memory tier；作者实验支持其栈内的开销收益，未证明任意 query 都能在有限候选中保真。代价是 chunk identity、索引漂移、tier failure 与一致性。
 
-<!-- review:SF-2026-ARXIV-2607-05708:start -->
-#### Akashic: A Low-Overhead LLM Inference Service with MemAttention
 
 <!-- claim:SF-2026-ARXIV-2607-05708:start -->Instead of rewriting full memory or independently summarizing fixed segments, MemAttention compacts one bounded chunk and reconciles it against a small related set before commit. The Memory Manager then observes co-access and physically co-locates likely co-retrieved chunks, using out-of-place relocation and garbage collection to reduce fragmentation without changing logical memory identity. Logical memory units own semantic identity, provenance and revision; the reconciliation policy owns derived cross-chunk updates; retrieval owns the selected evidence set; the storage manager owns physical placement, relocation and GC. Physical moves must not create a second semantic truth or silently change authorization/deletion state. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-05708:end -->
 
@@ -160,11 +93,14 @@
 - Score V2：Design Delta 3 / System Reach 3 / Durability 2 = **8/9**。
 - Evolution relation：`Direct Evolution`。
 - Stable owner：`AGENT-MEMORY`。
-- Books disposition：`Integrate`。
-<!-- review:SF-2026-ARXIV-2607-05708:end -->
+- Books disposition：历史写回已完成；本次判定为 `已有覆盖`。
 
-<!-- review:SF-2026-ARXIV-2607-05721:start -->
-#### SpanUQ: Span-Level Uncertainty Quantification for Large Language Model Generation
+本次重新定位到 `AGENT-MEMORY` 的 [Ch77](../../../../books/part-07-agent/77-memory.md)；现有正文命题与证据边界已承载该 family，本任务不重复追加，独立复核已确认 body anchor。
+
+### [SpanUQ: Span-Level Uncertainty Quantification for Large Language Model Generation](https://arxiv.org/html/2607.05721v1)
+
+**系统推理。** 问题是 token entropy 或整句单分数无法定位长输出中真正不确定的语义片段。SpanUQ 用多层 hidden state 预测 span 集合及不确定度；作者在英文事实性数据和五个 backbone 上证明检测/排序能力，未把 probe 输出变成真值概率。代价是白盒访问、标注与部署切片校准，外部 evidence 仍是最终 authority。
+
 
 <!-- claim:SF-2026-ARXIV-2607-05721:start -->The paper shows that a model-specific white-box probe can jointly identify semantic spans and rank uncertainty under its factual-English benchmark; it does not turn probe output into truth probability or remove deployment-slice calibration. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-05721:end -->
 
@@ -177,11 +113,14 @@
 - Score V2：Design Delta 3 / System Reach 3 / Durability 3 = **9/9**。
 - Evolution relation：`Direct Evolution`。
 - Stable owner：`PLATFORM-EVALUATION-SYSTEM`。
-- Books disposition：`Integrate`。
-<!-- review:SF-2026-ARXIV-2607-05721:end -->
+- Books disposition：历史写回已完成；本次判定为 `已有覆盖`。
 
-<!-- review:SF-2026-ARXIV-2607-05876:start -->
-#### Think Before You Grid-Search: Floor-First Triage for LLM Serving
+本次重新定位到 `PLATFORM-EVALUATION-SYSTEM` 的 [Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)；现有正文命题与证据边界已承载该 family，本任务不重复追加，独立复核已确认 body anchor。
+
+### [Think Before You Grid-Search: Floor-First Triage for LLM Serving](https://arxiv.org/html/2607.05876v1)
+
+**系统推理。** 问题是 serving 优化直接 grid search 会在尚未识别物理下界时浪费试验并误判瓶颈。方法先建立 weight/KV、FLOPs、通信 bytes/messages 与 capacity 的资源向量，比较 optimistic/no-overlap floor 后才 profiling；案例只证明对所述 671B MoE/H20 配置的诊断价值，未给出可达性能保证。代价是准确建模和版本化 workload，但能区分物理墙与实现残差。
+
 
 <!-- claim:SF-2026-ARXIV-2607-05876:start -->Replace immediate grid search with a versioned resource vector for weight/KV bytes, FLOPs, communication bytes/messages and capacity; compute optimistic and no-overlap bounds, identify the first binding wall as load changes, compare observed steady-state service time against the bound, and open a profiler only when the residual is material. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-05876:end -->
 
@@ -194,11 +133,14 @@
 - Score V2：Design Delta 2 / System Reach 3 / Durability 3 = **8/9**。
 - Evolution relation：`Direct Evolution`。
 - Stable owner：`PLATFORM-EVALUATION-SYSTEM`。
-- Books disposition：`Integrate`。
-<!-- review:SF-2026-ARXIV-2607-05876:end -->
+- Books disposition：历史写回已完成；本次判定为 `已有覆盖`。
 
-<!-- review:SF-2026-ARXIV-2607-05910:start -->
-#### PolicyShiftGuard: Benchmarking and Improving Policy-Adaptive Image Guardrails
+本次重新定位到 `PLATFORM-EVALUATION-SYSTEM` 的 [Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)；现有正文命题与证据边界已承载该 family，本任务不重复追加，独立复核已确认 body anchor。
+
+### [PolicyShiftGuard: Benchmarking and Improving Policy-Adaptive Image Guardrails](https://arxiv.org/html/2607.05910v1)
+
+**系统推理。** 问题是 moderation 不能把图像固有标签与运行时政策混为一谈。PolicyShiftGuard 把决策建模为 content evidence 与 versioned policy 的关系，并用同图不同政策对消除位置捷径；作者只在七类、28项英文静态图像政策上证明适应性。代价是政策版本、配对数据和冲突解释，不能外推到视频或开放政策。
+
 
 <!-- claim:SF-2026-ARXIV-2607-05910:start -->Treat moderation as a relation between content evidence and a versioned runtime policy, not an intrinsic image label. Randomize policy presentation to remove slot shortcuts, then train matched same-image pass/block pairs so the decision must change when the authoritative boundary changes. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-05910:end -->
 
@@ -211,28 +153,14 @@
 - Score V2：Design Delta 3 / System Reach 2 / Durability 3 = **8/9**。
 - Evolution relation：`Layering / Dependency`。
 - Stable owner：`PLATFORM-SECURITY`。
-- Books disposition：`No Change — Existing Coverage`。
-<!-- review:SF-2026-ARXIV-2607-05910:end -->
+- Books disposition：`已有覆盖`。
 
-<!-- review:SF-2026-ARXIV-2607-06118:start -->
-#### WebRetriever: A Large-Scale Comprehensive Benchmark for Efficient Web Agent Evaluation
+本次重新定位到 `PLATFORM-SECURITY` 的 [Ch72](../../../../books/part-06-ai-infrastructure/72-security.md)；现有正文命题与证据边界已承载该 family，本任务不重复追加，独立复核已确认 body anchor。
 
-<!-- claim:SF-2026-ARXIV-2607-06118:start -->Evaluate a web agent using a richer execution record than a final screenshot: collect action sequence, navigation URLs and network requests, filter/restructure them, and let a versioned judge classify success against a human reference. Separate navigation, knowledge-assisted navigation and end-to-end extraction protocols. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-06118:end -->
+### [MoWorld: A Flash World Model](https://arxiv.org/html/2607.06216v1)
 
-**旧方案与约束变化。** `本章的核心判断是：**Evaluation System 是把目标转化为可重复证据和受控决策的系统。它必须同时版本化被评估对象、输入分布、执行环境与 scorer，并显式表达不确定性、切片和风险；工具可以保存证据，但不能替组织定义什么算成功。**`（`books/part-06-ai-infrastructure/66-evaluation-system.md#L14-L14`）旧方案在状态局部、规模较小或 SLO 宽松时继续成立；本 family 面对的新增压力由其 v1 problem statement 和 method 明确限定。
+**系统推理。** 问题是实时视频 world model 同时受历史长度、rollout drift 与 NPU residency 约束。MoWorld 联合语义历史选择、自 rollout 蒸馏和模块/并行/kernel 共设计；作者只在其 14B MoE/NPU 与视觉指标上证明速度和生成质量，未证明 action-sufficient causal dynamics。代价是检索误差、distillation bias 与平台绑定。
 
-**机制、状态与代价。** Evaluate a web agent using a richer execution record than a final screenshot: collect action sequence, navigation URLs and network requests, filter/restructure them, and let a versioned judge classify success against a human reference. Separate navigation, knowledge-assisted navigation and end-to-end extraction protocols. 它改变 `PLATFORM-EVALUATION-SYSTEM` 下的 state/data/control contract，同时引入 metadata、校准/选择误差、额外执行或恢复责任；这些代价必须和收益在同一 workload 内计量。
-
-**Evaluation contract。** Method：`https://arxiv.org/html/2607.06118v1#S3 (1,550 tasks / 800 live sites; three protocols; NavEval inputs task, URLs/requests, actions and final screenshot)`；Evaluation：`https://arxiv.org/html/2607.06118v1#S4 (controlled Playwright runs, six agent families, human success and judge agreement); https://arxiv.org/html/2607.06118v1#Pt0.A3.SS4 (judge-backbone and request-filtering ablations)`；Limitations/Counterevidence：`Not Disclosed — exact v1 provides no dedicated limitations section; live-site drift, restricted search, LLM-judge dependence and binary success aggregation bound the claims`。未披露字段保持 `Not Disclosed`；作者结果不跨模型、硬件、精度、长度、batch、concurrency、SLO 或 evaluator 外推。
-
-- Score V2：Design Delta 2 / System Reach 2 / Durability 2 = **6/9**。
-- Evolution relation：`Layering / Dependency`。
-- Stable owner：`PLATFORM-EVALUATION-SYSTEM`。
-- Books disposition：`No Change — Existing Coverage`。
-<!-- review:SF-2026-ARXIV-2607-06118:end -->
-
-<!-- review:SF-2026-ARXIV-2607-06216:start -->
-#### MoWorld: A Flash World Model
 
 <!-- claim:SF-2026-ARXIV-2607-06216:start -->Authors report a 14B MoE video world model with history selection, few-step causal distillation and NPU execution optimizations under their visual/system benchmark; this does not prove an action-sufficient causal environment model. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-06216:end -->
 
@@ -245,11 +173,14 @@
 - Score V2：Design Delta 3 / System Reach 3 / Durability 2 = **8/9**。
 - Evolution relation：`Direct Evolution`。
 - Stable owner：`MULTIMODAL-WORLD-MODELS`。
-- Books disposition：`Integrate`。
-<!-- review:SF-2026-ARXIV-2607-06216:end -->
+- Books disposition：历史写回已完成；本次判定为 `已有覆盖`。
 
-<!-- review:SF-2026-ARXIV-2607-06256:start -->
-#### Diagnosing Semantic Handoff Failures in Agent-Orchestrated Vision-Language-Action Skill Composition
+本次重新定位到 `MULTIMODAL-WORLD-MODELS` 的 [Ch25](../../../../books/part-03-multimodal-world-models/25-multimodal-world-models.md)；现有正文命题与证据边界已承载该 family，本任务不重复追加，独立复核已确认 body anchor。
+
+### [Diagnosing Semantic Handoff Failures in Agent-Orchestrated Vision-Language-Action Skill Composition](https://arxiv.org/html/2607.06256v1)
+
+**系统推理。** 问题是 VLA 单项 skill 在 clean snapshot 成功，不代表前一 skill 的真实终态满足下一项入口。论文把 current postcondition 与 next-skill readiness 分开，并在 chained rollout 中验证；十个 BEHAVIOR-1K pilot 证明存在显著 handoff gap，未证明所提 predicate 完整或总体失败率。代价是 typed contract、多视角 verifier、replan 与人工恢复。
+
 
 <!-- claim:SF-2026-ARXIV-2607-06256:start -->The authors show a large clean-snapshot versus chained-rollout gap for the same checkpoints and trace failures to readiness/grounding/control under a small BEHAVIOR-1K pilot; they do not estimate population failure rates or prove the proposed next-skill predicate. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-06256:end -->
 
@@ -262,11 +193,14 @@
 - Score V2：Design Delta 3 / System Reach 3 / Durability 3 = **9/9**。
 - Evolution relation：`Direct Evolution`。
 - Stable owner：`MULTIMODAL-EMBODIED-VLA`。
-- Books disposition：`Integrate`。
-<!-- review:SF-2026-ARXIV-2607-06256:end -->
+- Books disposition：历史写回已完成；本次判定为 `已有覆盖`。
 
-<!-- review:SF-2026-ARXIV-2607-06291:start -->
-#### AlayaWorld: Long-Horizon and Playable Video World Generation
+本次重新定位到 `MULTIMODAL-EMBODIED-VLA` 的 [Ch26](../../../../books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md)；现有正文命题与证据边界已承载该 family，本任务不重复追加，独立复核已确认 body anchor。
+
+### [AlayaWorld: Long-Horizon and Playable Video World Generation](https://arxiv.org/html/2607.06291v1)
+
+**系统推理。** 问题是长视频生成的外观连续性不足以维持可修订的世界状态。AlayaWorld 组合 camera/geometry cache、压缩历史、rollout-error replay 与蒸馏采样；v1 主要提供定性和有限生成证据，未证明物理因果、闭环 policy utility 或完整 release 承诺。代价是几何依赖、缓存一致性和长期误差积累。
+
 
 <!-- claim:SF-2026-ARXIV-2607-06291:start -->A proposed full-stack route combines autoregressive video generation with explicit camera/geometry cache, compressed history, rollout-error replay and distilled sampling to pursue long-horizon playable worlds. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-06291:end -->
 
@@ -279,11 +213,14 @@
 - Score V2：Design Delta 2 / System Reach 3 / Durability 2 = **7/9**。
 - Evolution relation：`Layering / Dependency`。
 - Stable owner：`MULTIMODAL-WORLD-MODELS`。
-- Books disposition：`No Change — Existing Coverage`。
-<!-- review:SF-2026-ARXIV-2607-06291:end -->
+- Books disposition：`已有覆盖`。
 
-<!-- review:SF-2026-ARXIV-2607-06327:start -->
-#### Estimating Uncertainty from Reasoning: A Large-Scale Study of Multi- and Crosslingual MCQA Performance in LLMs
+本次重新定位到 `MULTIMODAL-WORLD-MODELS` 的 [Ch25](../../../../books/part-03-multimodal-world-models/25-multimodal-world-models.md)；现有正文命题与证据边界已承载该 family，本任务不重复追加，独立复核已确认 body anchor。
+
+### [Estimating Uncertainty from Reasoning: A Large-Scale Study of Multi- and Crosslingual MCQA Performance in LLMs](https://arxiv.org/html/2607.06327v1)
+
+**系统推理。** 问题是跨语言 reasoning 的自信分数可能混合语言熟悉度、题型和答案正确性。研究在多语言 MCQA 上比较 reasoning-derived uncertainty；结果只支持封闭选项与所测模型，不能外推为开放生成的校准概率。代价是按语言/任务分片校准与 evaluator 偏差，现有 Evaluation owner 已承载。
+
 
 <!-- claim:SF-2026-ARXIV-2607-06327:start -->The authors report multilingual MCQA correlations under their nine-model/22-language contract; results concern correctness discrimination of elicited reasoning and do not establish open-ended factual calibration. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-06327:end -->
 
@@ -296,11 +233,14 @@
 - Score V2：Design Delta 2 / System Reach 2 / Durability 3 = **7/9**。
 - Evolution relation：`Direct Evolution`。
 - Stable owner：`PLATFORM-EVALUATION-SYSTEM`。
-- Books disposition：`Integrate`。
-<!-- review:SF-2026-ARXIV-2607-06327:end -->
+- Books disposition：历史写回已完成；本次判定为 `已有覆盖`。
 
-<!-- review:SF-2026-ARXIV-2607-06370:start -->
-#### ActionCache: Training-Free Acceleration for Vision-Language-Action Models with Action Caching and Refinement
+本次重新定位到 `PLATFORM-EVALUATION-SYSTEM` 的 [Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)；现有正文命题与证据边界已承载该 family，本任务不重复追加，独立复核已确认 body anchor。
+
+### [ActionCache: Training-Free Acceleration for Vision-Language-Action Models with Action Caching and Refinement](https://arxiv.org/html/2607.06370v1)
+
+**系统推理。** 问题是 VLA 重复场景可复用上一动作，但直接缓存会在环境细微变化时造成危险执行。ActionCache 先检索候选 action，再由当前观察做 refinement；作者结果支持所测机器人任务的加速，未证明 unseen aliasing 或安全边界。代价是缓存身份、相似度错误、校正延迟与强制 fallback。
+
 
 <!-- claim:SF-2026-ARXIV-2607-06370:start -->Authors report action-head latency/success trade-offs for pi_0.5 and GR00T-N1.6 on their simulation and real-robot contracts; they do not prove cached actions remain safe under unseen state aliasing or environment change. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-06370:end -->
 
@@ -313,28 +253,14 @@
 - Score V2：Design Delta 3 / System Reach 2 / Durability 2 = **7/9**。
 - Evolution relation：`Direct Evolution`。
 - Stable owner：`MULTIMODAL-EMBODIED-VLA`。
-- Books disposition：`Integrate`。
-<!-- review:SF-2026-ARXIV-2607-06370:end -->
+- Books disposition：历史写回已完成；本次判定为 `已有覆盖`。
 
-<!-- review:SF-2026-ARXIV-2607-06403:start -->
-#### From Foundation to Application: Improving VLA Models in Practice
+本次重新定位到 `MULTIMODAL-EMBODIED-VLA` 的 [Ch26](../../../../books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md)；现有正文命题与证据边界已承载该 family，本任务不重复追加，独立复核已确认 body anchor。
 
-<!-- claim:SF-2026-ARXIV-2607-06403:start -->Authors report improvements under GM-100/generalist and two-platform long-horizon settings; the study does not isolate every dataset, backbone, MoE and predictive-objective contribution into a universal causal recipe. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-06403:end -->
+### [SIEVE: Structure-Aware Data Selection for Imitation Learning with VLA Models](https://arxiv.org/html/2607.06442v1)
 
-**旧方案与约束变化。** `Ch26 already owns typed embodiment/action schemas, future-supervised latent-to-action paths, control-frequency boundaries and progress-versus-success evidence. Ch27 owns data alignment/lineage; this model report is bounded implementation evidence, not a missing canonical mechanism.`（`books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L171`）旧方案在状态局部、规模较小或 SLO 宽松时继续成立；本 family 面对的新增压力由其 v1 problem statement 和 method 明确限定。
+**系统推理。** 问题是 imitation data 仅按样本相似度筛选，会忽略 primitive 与 transition 对策略学习的作用。SIEVE 用结构化动作/状态转移覆盖选择数据；作者实验只证明其任务中的样本效率，cluster 不等于真实 skill。代价是结构提取、覆盖偏差和分布漂移，原始广覆盖数据在未知任务上仍重要。
 
-**机制、状态与代价。** Connect cross-embodiment data quality, typed whole-body action spaces, conditional capacity and future-prediction supervision into one generalist VLA training contract. 它改变 `MULTIMODAL-EMBODIED-VLA` 下的 state/data/control contract，同时引入 metadata、校准/选择误差、额外执行或恢复责任；这些代价必须和收益在同一 workload 内计量。
-
-**Evaluation contract。** Method：`https://arxiv.org/html/2607.06403v1#S3 (per-embodiment trajectory filtering, video/state alignment and egocentric-to-world hand-trajectory reconstruction); https://arxiv.org/html/2607.06403v1#S4 (loss-free MoE action expert, typed multi-embodiment action space and future-prediction supervision)`；Evaluation：`https://arxiv.org/html/2607.06403v1#S5 (GM-100 generalist bimanual, mobile long-horizon, cross-embodiment and component comparisons)`；Limitations/Counterevidence：`https://arxiv.org/html/2607.06403v1#S5 (task/platform disparities, low absolute final success on several tasks, partial-progress versus completion gap and embodiment-specific alignment limits)`。未披露字段保持 `Not Disclosed`；作者结果不跨模型、硬件、精度、长度、batch、concurrency、SLO 或 evaluator 外推。
-
-- Score V2：Design Delta 3 / System Reach 3 / Durability 2 = **8/9**。
-- Evolution relation：`Layering / Dependency`。
-- Stable owner：`MULTIMODAL-EMBODIED-VLA`。
-- Books disposition：`No Change — Existing Coverage`。
-<!-- review:SF-2026-ARXIV-2607-06403:end -->
-
-<!-- review:SF-2026-ARXIV-2607-06442:start -->
-#### SIEVE: Structure-Aware Data Selection for Imitation Learning with VLA Models
 
 <!-- claim:SF-2026-ARXIV-2607-06442:start -->Authors report that SIEVE-selected subsets can outperform full-data training in their VLA/simulator contracts; they do not establish that discovered clusters are true skills or that central trajectories cover safety-critical tails. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-06442:end -->
 
@@ -347,11 +273,14 @@
 - Score V2：Design Delta 3 / System Reach 3 / Durability 3 = **9/9**。
 - Evolution relation：`Direct Evolution`。
 - Stable owner：`TRAIN-DATA`。
-- Books disposition：`Integrate`。
-<!-- review:SF-2026-ARXIV-2607-06442:end -->
+- Books disposition：历史写回已完成；本次判定为 `已有覆盖`。
 
-<!-- review:SF-2026-ARXIV-2607-06519:start -->
-#### FreqDepthKV: Frequency-Guided Depth Sharing for Robust KV Cache Compression in Long-Context LLM Inference
+本次重新定位到 `TRAIN-DATA` 的 [Ch27](../../../../books/part-04-training-system/27-data.md)；现有正文命题与证据边界已承载该 family，本任务不重复追加，独立复核已确认 body anchor。
+
+### [FreqDepthKV: Frequency-Guided Depth Sharing for Robust KV Cache Compression in Long-Context LLM Inference](https://arxiv.org/html/2607.06519v1)
+
+**系统推理。** 问题是各层 KV 频率结构不同，统一压缩强度会在关键层丢失信息。FreqDepthKV 跨层共享频率基并按深度分配残差，同时保留 exact route；作者实验支持指定模型与长上下文任务，未证明跨架构稳定。代价是频域变换、共享误差和专用 kernel。
+
 
 <!-- claim:SF-2026-ARXIV-2607-06519:start -->Exploit adjacent-layer correlation without assuming uniform redundancy: share low-frequency depth components, retain sparse layer-specific residuals, and route each head among shared, residual and exact cache modes using prompt-local attention-logit reconstruction evidence. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-06519:end -->
 
@@ -364,11 +293,14 @@
 - Score V2：Design Delta 3 / System Reach 2 / Durability 2 = **7/9**。
 - Evolution relation：`Direct Evolution`。
 - Stable owner：`INFER-KV-CACHE`。
-- Books disposition：`Integrate`。
-<!-- review:SF-2026-ARXIV-2607-06519:end -->
+- Books disposition：历史写回已完成；本次判定为 `已有覆盖`。
 
-<!-- review:SF-2026-ARXIV-2607-06523:start -->
-#### DepthWeave-KV: Token-Adaptive Cross-Layer Residual Factorization for Long-Context KV Cache Compression
+本次重新定位到 `INFER-KV-CACHE` 的 [Ch45](../../../../books/part-05-inference-system/45-why-kv-cache-speeds-up.md)；现有正文命题与证据边界已承载该 family，本任务不重复追加，独立复核已确认 body anchor。
+
+### [DepthWeave-KV: Token-Adaptive Cross-Layer Residual Factorization for Long-Context KV Cache Compression](https://arxiv.org/html/2607.06523v1)
+
+**系统推理。** 问题是跨层 KV 冗余可压缩，但固定低秩会忽略 token 难度差异。DepthWeave 共享基并为 token 分配 residual rank，以 fused kernel 消费；作者结果支持所测容量—质量折中，未证明所有 token 路由可靠。代价是 rank metadata、fragmentation、融合实现和错误累积。
+
 
 <!-- claim:SF-2026-ARXIV-2607-06523:start -->Represent neighboring-layer K/V with shared low-rank bases, then allocate token-specific residual rank from online attention-output error rather than a uniform cache budget; fuse basis lookup, residual dequantization and projection to avoid returning all savings as decode overhead. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-06523:end -->
 
@@ -381,11 +313,14 @@
 - Score V2：Design Delta 3 / System Reach 2 / Durability 2 = **7/9**。
 - Evolution relation：`Direct Evolution`。
 - Stable owner：`INFER-KV-CACHE`。
-- Books disposition：`Integrate`。
-<!-- review:SF-2026-ARXIV-2607-06523:end -->
+- Books disposition：历史写回已完成；本次判定为 `已有覆盖`。
 
-<!-- review:SF-2026-ARXIV-2607-06558:start -->
-#### RynnWorld-Teleop: An Action-Conditioned World Model for Digital Teleoperation
+本次重新定位到 `INFER-KV-CACHE` 的 [Ch45](../../../../books/part-05-inference-system/45-why-kv-cache-speeds-up.md)；现有正文命题与证据边界已承载该 family，本任务不重复追加，独立复核已确认 body anchor。
+
+### [RynnWorld-Teleop: An Action-Conditioned World Model for Digital Teleoperation](https://arxiv.org/html/2607.06558v1)
+
+**系统推理。** 问题是 teleoperation 数据昂贵，生成式 world model 可补充动作条件轨迹。RynnWorld-Teleop 用 action-conditioned 视频生成产生训练数据；作者只证明合成数据在其任务中的增益，未证明生成 transition 等同真实物理。代价是 simulator bias、动作标定和现实验证，真实采集仍是 authority。
+
 
 <!-- claim:SF-2026-ARXIV-2607-06558:start -->Authors report policy gains from mixed real and generated data and feasibility of synthetic-only transfer on their tasks; they do not prove the generated video is a physically valid transition or that one model transfers across robot kinematics without adaptation. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-06558:end -->
 
@@ -398,11 +333,14 @@
 - Score V2：Design Delta 3 / System Reach 3 / Durability 2 = **8/9**。
 - Evolution relation：`Direct Evolution`。
 - Stable owner：`TRAIN-DATA`。
-- Books disposition：`Integrate`。
-<!-- review:SF-2026-ARXIV-2607-06558:end -->
+- Books disposition：历史写回已完成；本次判定为 `已有覆盖`。
 
-<!-- review:SF-2026-ARXIV-2607-06559:start -->
-#### RynnWorld-4D: 4D Embodied World Models for Robotic Manipulation
+本次重新定位到 `TRAIN-DATA` 的 [Ch27](../../../../books/part-04-training-system/27-data.md)；现有正文命题与证据边界已承载该 family，本任务不重复追加，独立复核已确认 body anchor。
+
+### [RynnWorld-4D: 4D Embodied World Models for Robotic Manipulation](https://arxiv.org/html/2607.06559v1)
+
+**系统推理。** 问题是机器人策略需要同时理解外观、深度、流和动作后果，而分离模型会产生状态不一致。RynnWorld-4D 共享 RGB/depth/flow predictive representation 并接 one-pass policy；作者实验支持所测 manipulation，未证明开放世界因果充分性。代价是多任务权重、传感器同步和错误耦合。
+
 
 <!-- claim:SF-2026-ARXIV-2607-06559:start -->Co-generate appearance, depth and optical flow so predictive state carries geometry and motion, then expose internal predictive features to a one-forward policy instead of placing iterative video denoising on every action step. The generated world branch and control branch share representation but have different latency and authority contracts. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-06559:end -->
 
@@ -415,11 +353,14 @@
 - Score V2：Design Delta 3 / System Reach 2 / Durability 2 = **7/9**。
 - Evolution relation：`Direct Evolution`。
 - Stable owner：`MULTIMODAL-EMBODIED-VLA`。
-- Books disposition：`Integrate`。
-<!-- review:SF-2026-ARXIV-2607-06559:end -->
+- Books disposition：历史写回已完成；本次判定为 `已有覆盖`。
 
-<!-- review:SF-2026-ARXIV-2607-06560:start -->
-#### Vision as Unified Multimodal Generation
+本次重新定位到 `MULTIMODAL-EMBODIED-VLA` 的 [Ch26](../../../../books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md)；现有正文命题与证据边界已承载该 family，本任务不重复追加，独立复核已确认 body anchor。
+
+### [Vision as Unified Multimodal Generation](https://arxiv.org/html/2607.06560v1)
+
+**系统推理。** 问题是文本、图像与视频各自建模会复制语义接口并限制跨模态生成。论文以统一响应 contract 和共享表示组织生成，但作者结果只覆盖其训练数据、模型与评价，不能推出所有模态应采用同一 factorization。代价是 token budget、目标冲突、采样与 cache 路径复杂化。
+
 
 <!-- claim:SF-2026-ARXIV-2607-06560:start -->Convert heterogeneous annotations into a shared sample contract—visual inputs, natural-language task/schema instruction, and a text/image/mixed response that can be deterministically decoded back into boxes, masks, dense maps or camera records—so one generative model can learn many vision tasks without task-specific heads. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-06560:end -->
 
@@ -432,11 +373,14 @@
 - Score V2：Design Delta 3 / System Reach 3 / Durability 3 = **9/9**。
 - Evolution relation：`Direct Evolution`。
 - Stable owner：`MULTIMODAL-GENERATIVE-PARADIGMS`。
-- Books disposition：`Integrate`。
-<!-- review:SF-2026-ARXIV-2607-06560:end -->
+- Books disposition：历史写回已完成；本次判定为 `已有覆盖`。
 
-<!-- review:SF-2026-ARXIV-2607-06564:start -->
-#### Lift3D-VLA: Lifting VLA Models to 3D Geometry and Dynamics-Aware Manipulation
+本次重新定位到 `MULTIMODAL-GENERATIVE-PARADIGMS` 的 [Ch24](../../../../books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md)；现有正文命题与证据边界已承载该 family，本任务不重复追加，独立复核已确认 body anchor。
+
+### [Lift3D-VLA: Lifting VLA Models to 3D Geometry and Dynamics-Aware Manipulation](https://arxiv.org/html/2607.06564v1)
+
+**系统推理。** 问题是 2D VLA 表示难以稳定表达三维几何与动态。Lift3D 将 3D geometry/dynamics 引入动作条件表示；作者只在特定传感器与 manipulation 任务上证明收益，未证明跨 embodiment 或 sim-to-real。代价是标定、传感器同步、3D 表示成本和失效回退。
+
 
 <!-- claim:SF-2026-ARXIV-2607-06564:start -->Authors report simulation, real-task and OOD gains under their sensor/task contract; synthesized point clouds, depth sensors and 25-rollout simulator slices do not prove general physical dynamics. 该结论只在论文公开的 workload 与 evaluation contract 内成立，不外推为通用生产结论。<!-- claim:SF-2026-ARXIV-2607-06564:end -->
 
@@ -449,266 +393,22 @@
 - Score V2：Design Delta 2 / System Reach 2 / Durability 3 = **7/9**。
 - Evolution relation：`Layering / Dependency`。
 - Stable owner：`MULTIMODAL-EMBODIED-VLA`。
-- Books disposition：`No Change — Existing Coverage`。
-<!-- review:SF-2026-ARXIV-2607-06564:end -->
+- Books disposition：`已有覆盖`。
 
-<!-- audit-target:evidence:end -->
-## 4. Benchmark Contracts
+本次重新定位到 `MULTIMODAL-EMBODIED-VLA` 的 [Ch26](../../../../books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md)；现有正文命题与证据边界已承载该 family，本任务不重复追加，独立复核已确认 body anchor。
 
-<!-- validator:benchmark-contract-v1 -->
-| Source Family ID | Workload | Model | Hardware | Precision | Input Length | Output Length | Batch | Concurrency | SLO | Evaluator |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-ARXIV-2607-05475 | prefill/decode microbenchmarks and three dataset-level energy estimates across more than 400 configurations | Llama 3.2 1B/3B, Qwen2.5 1.5B/7B, Phi-3.5 3.8B | four Snapdragon phones across SM8650/SM8750/SM8850 classes with 16 GB memory | primarily weight-only int4 with selected activation/other quantization configurations | protocol-specific prompt/generation lengths; do not infer a universal context contract | Not separately disclosed; bounded by the workload/length contract | mobile single-device runs; exact batch contract varies and is Not Disclosed for every table | primarily isolated measurement; production multi-app contention Not Disclosed | throughput and energy, with decode-latency trade-offs; no product TTFT/TPOT SLO | PowerBench/QPT and powercap rail measurements plus framework outputs; The combined energy reduction is an author estimate over selected configurations, not a production end-to-end measurement; no percentage should be generalized beyond the disclosed mobile contract. |
-| SF-2026-ARXIV-2607-05708 | LoCoMo, SWE-bench, BrowseComp and WebArena long-horizon agent memory/serving tasks | multiple models including OPT-30B in a representative comparison; exact full model matrix is paper-specific | H20/SGLang appears in selected serving setup; full hardware for every benchmark Not Disclosed | Not Disclosed | workload dependent; chunk thresholds/sensitivity studied, full history distributions Not Disclosed | Not separately disclosed; bounded by the workload/length contract | basic sampling and concurrent load studies; exact per-table batch Not Disclosed | load sweep reported; production tenant mix Not Disclosed | task quality, throughput, sustainable request rate and storage/locality metrics; no production tail SLO | benchmark-specific task correctness plus serving/storage measurements; Headline Pareto gains are author results without event-time code and must not be generalized across models, storage devices or production authorization/recovery semantics. |
-| SF-2026-ARXIV-2607-05721 | https://arxiv.org/html/2607.05721v1#S4 | Qwen3-14B/8B/4B/30B-A3B and Mistral-7B-Instruct-v0.3, each with a separately trained probe | Probe training: one NVIDIA H100 80GB for the main setup | Backbone/probe precision not fully disclosed for every evaluation | Generated responses from five factual domains; variable lengths | Approximately 15 semantic spans per response on average; exact generation lengths vary | Probe training batch 16; evaluation batching Not Disclosed | Not Disclosed — offline uncertainty evaluation | Author reports relative single-pass speed versus sampling, not a production tail-latency SLO | Authors; automatic multi-sample labels with a 10% human-validated test sample |
-| SF-2026-ARXIV-2607-05876 | Paper-defined evaluation contract: https://arxiv.org/html/2607.05876v1#S5 (DeepSeek-V3.2-style 671B MoE/MLA case study on 16 H20; concurrency-dependent TP/DP walls and reconciliation) | DeepSeek-V3.2-style 671B MoE/MLA case study | 16 NVIDIA H20 GPUs, 2 nodes; measured collective latency values disclosed | Not fully disclosed for every tensor in the paper summary; do not generalize numeric floors | 8192 tokens in reproduced commands | single-token Decode service step / TPOT analysis; no fixed end-to-end output length | B=1 and B=64 regimes are separately analyzed | Not Disclosed separately from the evaluated batch regimes | P50 TPOT for residual diagnosis; P99 only for service-SLO validation | Analytical lower bounds and one calibrated case study; no universal speedup or production-goodput claim |
-| SF-2026-ARXIV-2607-05910 | https://arxiv.org/html/2607.05910v1#S4 (Adaptive and held-out policy-shift splits, F1/PSS, latency); https://arxiv.org/html/2607.05910v1#A5 (rerun and breakdown details); https://arxiv.org/html/2607.05910v1#S5 (boundary-pair and training-branch ablations) | PolicyShiftGuard 3B/7B and listed VLM/guardrail baselines | Compute appendix exists; latency must remain tied to its disclosed environment rather than generalized | Not disclosed in the headline comparison | Policy/image prompts; exact token-length distribution not a headline contract | typically <=5 tokens; binary decision in first token | Not disclosed for the latency headline | Not disclosed for the latency headline | No production tail-SLO claim | 2,000 instances / 265 images / 28 policy variants; static-image, mostly English finite-policy setting |
-| SF-2026-ARXIV-2607-06118 | Paper-defined evaluation contract: https://arxiv.org/html/2607.06118v1#S4 (controlled Playwright runs, six agent families, human success and judge agreement); https://arxiv.org/html/2607.06118v1#Pt0.A3.SS4 (judge-backbone and request-filtering ablations) | SeeAct, Browser-Use, UI-TARS-1.5, Agent-E, Claude-4.5 and Gemini-2.5-Pro computer-use configurations | Not disclosed / not central to the capability result | Provider/runtime dependent; not disclosed | Task and trajectory lengths vary; not disclosed as a fixed contract | Agent trajectories until task completion/failure; not fixed | Per-task online evaluation; aggregation batch is Not Disclosed | Not Disclosed | No serving SLO claim | Human agreement on this live-site/task sample and protocol; not general web-agent correctness |
-| SF-2026-ARXIV-2607-06216 | https://arxiv.org/html/2607.06216v1#S6 | MoWorld, Wan2.2-A14B-derived high/low-noise MoE video world model | NPU configurations disclosed by the paper; headline up to 50 FPS is stack-specific | Mixed-precision operator path disclosed; exact precision differs by stage/operator | Initial frame, text, camera trajectory and selected latent history; 125-to-2000-frame curriculum | Autoregressive chunks; paper reports 720p streaming scenarios and visual benchmark clips | Not Disclosed as a portable serving batch contract | Interactive stream; multi-user concurrency Not Disclosed | Up to 50 FPS author result; no production tail-latency or controller-deadline contract | Authors using VBench-I2V/in-house samples plus stack-specific system measurements |
-| SF-2026-ARXIV-2607-06256 | https://arxiv.org/html/2607.06256v1#S4 | pi_0.5-based skill checkpoints with an agent/VLM verification harness | BEHAVIOR-1K simulator; training/inference hardware Not Disclosed | Not Disclosed | Ten long-horizon household tasks; clean skill snapshots and chained terminal states | Bounded action chunks and full task rollouts; reference plans vary by task | 6 isolated trials per reported skill and 3 rollouts per long task | Single simulated robot rollout | Step/episode budgets are disclosed; no real-time physical-controller SLO | VLM verifier with a small blinded human audit; BDDL predicates for final task success |
-| SF-2026-ARXIV-2607-06291 | Paper-defined evaluation contract: https://arxiv.org/html/2607.06291v1#S4 (reported forward-exploration examples/metrics; incomplete relative to the paper's own release promise) | AlayaWorld proposed stack | Not sufficiently disclosed in event-time v1 | Not disclosed | Interactive history; not fixed | Long-horizon rollout; event-time denominator incomplete | Not disclosed | Not disclosed | Real-time target, no closed event-time service contract | Authors; qualitative examples at 720p/24fps with four denoising steps per approximately one-second chunk; no quantitative closed-loop control or independent causal evaluation |
-| SF-2026-ARXIV-2607-06327 | https://arxiv.org/html/2607.06327v1#S4 | Gemma3 scales, Qwen3 scales and Claude 4.5 Sonnet as listed in v1 | 8 NVIDIA L40S GPUs on EC2 g6e.48xlarge for disclosed open-model experiments | Qwen3-235B-A22B 4-bit due to hardware constraints; separate quantization analysis for Qwen3-30B | 2,000 parallel MCQA questions x 22 languages with approximately 150-word elicited reasoning | Reasoning plus MCQA label; variable | Offline benchmark; per-run batch Not Disclosed | Not Disclosed — offline UE study | Selective-prediction thresholds, not an online latency SLO | Exact MCQA labels; authors report AUROC/ECE and confidence intervals |
-| SF-2026-ARXIV-2607-06370 | https://arxiv.org/html/2607.06370v1#S4 | pi_0.5 and GR00T-N1.6 flow-based VLA policies | Real-world action-head latency measured on NVIDIA RTX 5090; policy training used 4 H100 GPUs in the disclosed setup | Not Disclosed | Current multimodal observation plus cache key; task/trajectory lengths vary | Action chunks with 0/1/2 or full denoising steps depending on policy/setup | Single robot/control generation | Single control loop; no multi-robot cache isolation study | Action-head latency only; no end-to-end sensor/controller tail-SLO | Authors on VLABench and one real-world pick/place setting |
-| SF-2026-ARXIV-2607-06403 | https://arxiv.org/html/2607.06403v1#S5 | LingBot-VLA-2.0 and paper-listed generalist VLA baselines | Training/deployment compute disclosed in paper; not a portable systems-performance benchmark | Router logits FP32; broader training/inference precision not fully portable | Multi-view robot observations, language, whole-body state and future-supervision inputs | Typed whole-body action chunks; task-specific horizons | Training/evaluation batches vary; real evaluations use repeated trials per task | Single-robot policy execution | 15/30/60Hz platform data frequencies; no common production tail-SLO | Authors on GM-100 and disclosed robot platforms |
-| SF-2026-ARXIV-2607-06442 | https://arxiv.org/html/2607.06442v1#Sx4 | Qwen3-VL-4B-GR00T and Qwen3-VL-4B-OFT | Training hardware not sufficiently disclosed for portable efficiency claims | Not Disclosed | Bridge-V2 approximately 53K, Fractal approximately 87K and GR00T-X-Sim 24K trajectories | Robot action trajectories and simulator rollouts | Selected budgets 50%/70%; proportional and fixed-step training schedules | Not Disclosed — offline training study | Training steps/data budget, not serving SLO | Authors using SimplerEnv-WidowX/GoogleRobot and RoboCasa-GR1 success metrics |
-| SF-2026-ARXIV-2607-06519 | Paper-defined evaluation contract: https://arxiv.org/html/2607.06519v1#S4 (32K QA/retrieval/summarization/code metrics plus throughput, TTFT and peak KV memory); https://arxiv.org/html/2607.06519v1#S5 (factorization, residual, routing, reconstruction loss, exact fallback and block-size variants) | Base long-context decoder not uniquely identified in headline contract | Not disclosed | Not disclosed | 32K prefill | Not disclosed | Not disclosed | Not disclosed | No tail-SLO or multi-tenant contract | Author offline/single-runtime results only; headline 3.9x compression and 70.4 tok/s are not portable constants |
-| SF-2026-ARXIV-2607-06523 | Paper-defined evaluation contract: https://arxiv.org/html/2607.06523v1#S4 (16K-128K retrieval slices; main 64K greedy-512 protocol; quality, memory, TTFT, throughput, perplexity and reconstruction error); https://arxiv.org/html/2607.06523v1#S5 (basis sharing, token router, residual reconstruction/gates and fused-kernel ablations) | Same base model/tokenizer/prompt/decoding across baselines; exact checkpoint not sufficiently disclosed | Not disclosed | Full KV described as full precision; compressed residual precision not fully bound in headline | 64K main; Needle slices 16K-128K | 512 greedy tokens | Not disclosed | Not disclosed | No production tail-SLO | Author benchmark; 8.3x memory and 72.8 tok/s require the undisclosed runtime/hardware and fused kernel |
-| SF-2026-ARXIV-2607-06558 | https://arxiv.org/html/2607.06558v1#S5 | Wan2.2-TI2V-5B-derived RynnWorld-Teleop; DP, pi_0.5 and pi_0 policy learners | World-model warmup/training uses 64 NVIDIA H100 GPUs; real evaluation uses TIANJI M6, WUJI hands and RealSense D435i; author reports >40 FPS on one H100 | Not fully disclosed for inference; training details given by stage | Reference image plus 21-joint hand-pose stream and robot-domain data | Streaming egocentric video and retargeted action trajectory; 35 trials/task, 120s success bound | World-model and policy batches disclosed by stage; real evaluation one episode | Single operator/world-model stream and single robot policy | Author reports >40 FPS generation; no controller tail-latency/safety SLO | Authors on four bimanual real-robot tasks and video metrics |
-| SF-2026-ARXIV-2607-06559 | Paper-defined evaluation contract: https://arxiv.org/html/2607.06559v1#S4 (50 held-out video sequences; six real-robot tasks, 35 consecutive trials/task, 120s success bound, TIANJI M6/WUJI HAND/D435i); https://arxiv.org/html/2607.06559v1#S4.SS4 (modality/representation and policy component ablations) | RynnWorld-4D and RynnWorld-4D-Policy with disclosed frozen backbone/policy training | World/policy training details in paper; runtime limitation explicitly ~9Hz on NVIDIA RTX 5090; real robot TIANJI M6 + WUJI HAND + RealSense D435i | Mixed-precision training; inference precision not fully disclosed | Egocentric RGB-D sequences; held-out 50 sequences | Six real-robot tasks, 35 consecutive trials each, max 120s per trial | Single closed-loop robot episode | One robot/control loop; no serving concurrency | Approx. 9Hz effective control; no safety/tail latency contract | Feasibility on disclosed robots/tasks; not universal physical generalization |
-| SF-2026-ARXIV-2607-06560 | Paper-defined evaluation contract: https://arxiv.org/html/2607.06560v1#S5 (task-family benchmarks against specialists and multimodal baselines); https://arxiv.org/html/2607.06560v1#S6 (data mixture/capability preservation and task-family analyses) | SenseNova-Vision unified multimodal model and paper-listed specialist/UMM baselines | Training/evaluation compute described in paper but headline comparisons are not a serving benchmark | Not a portable performance claim | Task-dependent images/multi-view inputs and instructions | Task-dependent text/image/mixed records | Not Disclosed — task-dependent evaluation batches | Not Disclosed — this is not a serving-concurrency study | No online serving SLO | Author benchmark across converted task suites; does not prove one representation is optimal for every vision workload |
-| SF-2026-ARXIV-2607-06564 | https://arxiv.org/html/2607.06564v1#S5 | Lift3D-VLA 7B LLaMA2/Prismatic-derived stack plus listed VLA/3D baselines | Pretraining/evaluation hardware disclosed in paper; not a runtime-throughput benchmark | Not Disclosed as a portable contract | 224x224 RGB, 1,024-point clouds, language and robot state | Action chunks; task-specific horizons | Self-supervised pretraining batch 4096; simulator evaluation 25 rollouts/task | Single robot/control loop | No real-time/tail-latency SLO | Authors across 22 simulated and 8 real tasks plus OOD perturbations |
-<!-- audit-target:deep_analysis_selection:start -->
-## 5. Deep Analysis Selection
+所有性能数字仅在原文披露的 model、workload、hardware、precision、length、batch、concurrency、SLO 与 evaluator 范围内解释；未披露字段保持 `Not Disclosed`，本次没有把作者 benchmark 写成通用生产结论。
 
-<!-- validator:deep-analysis-selection-v1 -->
-| Source Family ID | Eligibility | Decision | Analysis Unit ID | Subsumed By | Priority Rationale | Narrative Ref |
-| --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-ARXIV-2607-05475 | score_7_9;potential_books_delta | not_selected | — | — | Is Your NPU Ready for LLMs? Dissecting the Hidden Efficiency Bottlenecks in Mobile LLM Inference remains evidence-complete after canonical owner transfer with V2 score 8 and owner INFER-TENSORRT-LLM. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2607-05475 |
-| SF-2026-ARXIV-2607-05708 | score_7_9;potential_books_delta | not_selected | — | — | Akashic: A Low-Overhead LLM Inference Service with MemAttention remains evidence-complete after canonical owner transfer with V2 score 8 and owner AGENT-MEMORY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2607-05708 |
-| SF-2026-ARXIV-2607-05721 | score_7_9;potential_books_delta | selected | DA-20260708-2607-05721 | — | V2=9/9；The paper shows that a model-specific white-box probe can jointly identify semantic spans and rank uncertainty under its factual-English benchmark; it does not turn probe output into truth probability or remove deployment-slice calibration.；相对同日候选提供独立 owner 的最大可定位 delta | analysis:DA-20260708-2607-05721 |
-| SF-2026-ARXIV-2607-05876 | score_7_9;potential_books_delta | not_selected | — | — | Think Before You Grid-Search: Floor-First Triage for LLM Serving remains evidence-complete after canonical owner transfer with V2 score 8 and owner PLATFORM-EVALUATION-SYSTEM. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2607-05876 |
-| SF-2026-ARXIV-2607-05910 | score_7_9;potential_books_delta | not_selected | — | — | PolicyShiftGuard: Benchmarking and Improving Policy-Adaptive Image Guardrails remains evidence-complete after canonical owner transfer with V2 score 8 and owner PLATFORM-SECURITY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2607-05910 |
-| SF-2026-ARXIV-2607-06216 | score_7_9;potential_books_delta | not_selected | — | — | MoWorld: A Flash World Model remains evidence-complete after canonical owner transfer with V2 score 8 and owner MULTIMODAL-WORLD-MODELS. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2607-06216 |
-| SF-2026-ARXIV-2607-06256 | score_7_9;potential_books_delta | selected | DA-20260708-2607-06256 | — | V2=9/9；The authors show a large clean-snapshot versus chained-rollout gap for the same checkpoints and trace failures to readiness/grounding/control under a small BEHAVIOR-1K pilot; they do not estimate population failure rates or prove the proposed next-skill predicate.；相对同日候选提供独立 owner 的最大可定位 delta | analysis:DA-20260708-2607-06256 |
-| SF-2026-ARXIV-2607-06291 | score_7_9;potential_books_delta | not_selected | — | — | AlayaWorld: Long-Horizon and Playable Video World Generation remains evidence-complete after canonical owner transfer with V2 score 7 and owner MULTIMODAL-WORLD-MODELS. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2607-06291 |
-| SF-2026-ARXIV-2607-06327 | score_7_9;potential_books_delta | not_selected | — | — | Estimating Uncertainty from Reasoning: A Large-Scale Study of Multi- and Crosslingual MCQA Performance in LLMs remains evidence-complete after canonical owner transfer with V2 score 7 and owner PLATFORM-EVALUATION-SYSTEM. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2607-06327 |
-| SF-2026-ARXIV-2607-06370 | score_7_9;potential_books_delta | not_selected | — | — | ActionCache: Training-Free Acceleration for Vision-Language-Action Models with Action Caching and Refinement remains evidence-complete after canonical owner transfer with V2 score 7 and owner MULTIMODAL-EMBODIED-VLA. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2607-06370 |
-| SF-2026-ARXIV-2607-06403 | score_7_9;potential_books_delta | not_selected | — | — | From Foundation to Application: Improving VLA Models in Practice remains evidence-complete after canonical owner transfer with V2 score 8 and owner MULTIMODAL-EMBODIED-VLA. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2607-06403 |
-| SF-2026-ARXIV-2607-06442 | score_7_9;potential_books_delta | not_selected | — | — | SIEVE: Structure-Aware Data Selection for Imitation Learning with VLA Models remains evidence-complete after canonical owner transfer with V2 score 9 and owner TRAIN-DATA. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2607-06442 |
-| SF-2026-ARXIV-2607-06519 | score_7_9;potential_books_delta | not_selected | — | — | FreqDepthKV: Frequency-Guided Depth Sharing for Robust KV Cache Compression in Long-Context LLM Inference remains evidence-complete after canonical owner transfer with V2 score 7 and owner INFER-KV-CACHE. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2607-06519 |
-| SF-2026-ARXIV-2607-06523 | score_7_9;potential_books_delta | not_selected | — | — | DepthWeave-KV: Token-Adaptive Cross-Layer Residual Factorization for Long-Context KV Cache Compression remains evidence-complete after canonical owner transfer with V2 score 7 and owner INFER-KV-CACHE. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2607-06523 |
-| SF-2026-ARXIV-2607-06558 | score_7_9;potential_books_delta | not_selected | — | — | RynnWorld-Teleop: An Action-Conditioned World Model for Digital Teleoperation remains evidence-complete after canonical owner transfer with V2 score 8 and owner TRAIN-DATA. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2607-06558 |
-| SF-2026-ARXIV-2607-06559 | score_7_9;potential_books_delta | not_selected | — | — | RynnWorld-4D: 4D Embodied World Models for Robotic Manipulation remains evidence-complete after canonical owner transfer with V2 score 7 and owner MULTIMODAL-EMBODIED-VLA. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2607-06559 |
-| SF-2026-ARXIV-2607-06560 | score_7_9;potential_books_delta | not_selected | — | — | Vision as Unified Multimodal Generation remains evidence-complete after canonical owner transfer with V2 score 9 and owner MULTIMODAL-GENERATIVE-PARADIGMS. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2607-06560 |
-| SF-2026-ARXIV-2607-06564 | score_7_9 | not_selected | — | — | Lift3D-VLA: Lifting VLA Models to 3D Geometry and Dynamics-Aware Manipulation remains evidence-complete after canonical owner transfer with V2 score 7 and owner MULTIMODAL-EMBODIED-VLA. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization. | analysis-decision:SF-2026-ARXIV-2607-06564 |
+## 5. 缺口与下一步
 
-### Selected Analysis Narratives
+无
 
-<!-- analysis-decision:SF-2026-ARXIV-2607-05475:start -->
-Is Your NPU Ready for LLMs? Dissecting the Hidden Efficiency Bottlenecks in Mobile LLM Inference remains evidence-complete after canonical owner transfer with V2 score 8 and owner INFER-TENSORRT-LLM. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
-<!-- analysis-decision:SF-2026-ARXIV-2607-05475:end -->
+本窗没有外部材料请求或待执行工作；非作者独立语义复核已确认已有 Books 段落是机制正文，而非只有 trace。
 
-<!-- analysis-decision:SF-2026-ARXIV-2607-05708:start -->
-Akashic: A Low-Overhead LLM Inference Service with MemAttention remains evidence-complete after canonical owner transfer with V2 score 8 and owner AGENT-MEMORY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
-<!-- analysis-decision:SF-2026-ARXIV-2607-05708:end -->
+## 6. 复核
 
-<!-- analysis:DA-20260708-2607-05721:start -->
-### SpanUQ: Span-Level Uncertainty Quantification for Large Language Model Generation
+复核者：主任务独立复核（非本报告作者）
 
-**旧方案为何合理。** Token entropy was cheap but semantically fragmented; sequence uncertainty captured semantic disagreement but could not localize which claim required evidence and multiplied inference cost.（现有命题定位：`books/part-06-ai-infrastructure/66-evaluation-system.md#L14-L14`）
+结论：通过
 
-**约束变化与机制。** Move uncertainty from token noise or one sequence score to typed semantic spans, distilling multi-sample claim support into a single-pass probe while preserving an explicit external-verification boundary. 这条证据与现有主线的关系是 `Direct Evolution`：它改变或补充 `PLATFORM-EVALUATION-SYSTEM` 下的 representation、state、data flow 或 control ownership，而不是用论文名称替换设计结论。
-
-**收益、代价与下一重压力。** The learned probe adds training/label cost, requires internal states and separate probes per backbone, and inherits judge/Wikipedia/domain bias. Low predicted uncertainty can still be confidently wrong, so calibrated risk-coverage and evidence verification remain authoritative.
-
-<!-- analysis:DA-20260708-2607-05721:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2607-05876:start -->
-Think Before You Grid-Search: Floor-First Triage for LLM Serving remains evidence-complete after canonical owner transfer with V2 score 8 and owner PLATFORM-EVALUATION-SYSTEM. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
-<!-- analysis-decision:SF-2026-ARXIV-2607-05876:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2607-05910:start -->
-PolicyShiftGuard: Benchmarking and Improving Policy-Adaptive Image Guardrails remains evidence-complete after canonical owner transfer with V2 score 8 and owner PLATFORM-SECURITY. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
-<!-- analysis-decision:SF-2026-ARXIV-2607-05910:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2607-06216:start -->
-MoWorld: A Flash World Model remains evidence-complete after canonical owner transfer with V2 score 8 and owner MULTIMODAL-WORLD-MODELS. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
-<!-- analysis-decision:SF-2026-ARXIV-2607-06216:end -->
-
-<!-- analysis:DA-20260708-2607-06256:start -->
-### Diagnosing Semantic Handoff Failures in Agent-Orchestrated Vision-Language-Action Skill Composition
-
-**旧方案为何合理。** Independent skills and postcondition-only verification were reasonable when each skill began from a curated boundary snapshot. Long-horizon composition changes the start-state distribution and makes downstream admissibility part of the interface.（现有命题定位：`books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L14-L14`）
-
-**约束变化与机制。** Separate skill-local success from compositional readiness: a completed skill must establish both its own postcondition and a typed admission predicate for the next skill under the actual chained terminal state. 这条证据与现有主线的关系是 `Direct Evolution`：它改变或补充 `MULTIMODAL-EMBODIED-VLA` 下的 representation、state、data flow 或 control ownership，而不是用论文名称替换设计结论。
-
-**收益、代价与下一重压力。** Readiness checks add verifier latency, schema work and false reject/accept modes; VLM verification is not physical truth. Clean skill tests remain useful component tests, but cannot substitute for chained-state and recovery evaluation.
-
-<!-- analysis:DA-20260708-2607-06256:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2607-06291:start -->
-AlayaWorld: Long-Horizon and Playable Video World Generation remains evidence-complete after canonical owner transfer with V2 score 7 and owner MULTIMODAL-WORLD-MODELS. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
-<!-- analysis-decision:SF-2026-ARXIV-2607-06291:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2607-06327:start -->
-Estimating Uncertainty from Reasoning: A Large-Scale Study of Multi- and Crosslingual MCQA Performance in LLMs remains evidence-complete after canonical owner transfer with V2 score 7 and owner PLATFORM-EVALUATION-SYSTEM. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
-<!-- analysis-decision:SF-2026-ARXIV-2607-06327:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2607-06370:start -->
-ActionCache: Training-Free Acceleration for Vision-Language-Action Models with Action Caching and Refinement remains evidence-complete after canonical owner transfer with V2 score 7 and owner MULTIMODAL-EMBODIED-VLA. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
-<!-- analysis-decision:SF-2026-ARXIV-2607-06370:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2607-06403:start -->
-From Foundation to Application: Improving VLA Models in Practice remains evidence-complete after canonical owner transfer with V2 score 8 and owner MULTIMODAL-EMBODIED-VLA. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
-<!-- analysis-decision:SF-2026-ARXIV-2607-06403:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2607-06442:start -->
-SIEVE: Structure-Aware Data Selection for Imitation Learning with VLA Models remains evidence-complete after canonical owner transfer with V2 score 9 and owner TRAIN-DATA. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
-<!-- analysis-decision:SF-2026-ARXIV-2607-06442:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2607-06519:start -->
-FreqDepthKV: Frequency-Guided Depth Sharing for Robust KV Cache Compression in Long-Context LLM Inference remains evidence-complete after canonical owner transfer with V2 score 7 and owner INFER-KV-CACHE. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
-<!-- analysis-decision:SF-2026-ARXIV-2607-06519:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2607-06523:start -->
-DepthWeave-KV: Token-Adaptive Cross-Layer Residual Factorization for Long-Context KV Cache Compression remains evidence-complete after canonical owner transfer with V2 score 7 and owner INFER-KV-CACHE. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
-<!-- analysis-decision:SF-2026-ARXIV-2607-06523:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2607-06558:start -->
-RynnWorld-Teleop: An Action-Conditioned World Model for Digital Teleoperation remains evidence-complete after canonical owner transfer with V2 score 8 and owner TRAIN-DATA. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
-<!-- analysis-decision:SF-2026-ARXIV-2607-06558:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2607-06559:start -->
-RynnWorld-4D: 4D Embodied World Models for Robotic Manipulation remains evidence-complete after canonical owner transfer with V2 score 7 and owner MULTIMODAL-EMBODIED-VLA. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
-<!-- analysis-decision:SF-2026-ARXIV-2607-06559:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2607-06560:start -->
-Vision as Unified Multimodal Generation remains evidence-complete after canonical owner transfer with V2 score 9 and owner MULTIMODAL-GENERATIVE-PARADIGMS. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
-<!-- analysis-decision:SF-2026-ARXIV-2607-06560:end -->
-
-<!-- analysis-decision:SF-2026-ARXIV-2607-06564:start -->
-Lift3D-VLA: Lifting VLA Models to 3D Geometry and Dynamics-Aware Manipulation remains evidence-complete after canonical owner transfer with V2 score 7 and owner MULTIMODAL-EMBODIED-VLA. The selected units rank higher on distinct cross-layer state/control impact in this owner window; the full family review remains authoritative and is not reduced by narrative prioritization.
-<!-- analysis-decision:SF-2026-ARXIV-2607-06564:end -->
-
-<!-- audit-target:deep_analysis_selection:end -->
-<!-- audit-target:books:start -->
-## 6. Books Comparison
-
-<!-- validator:books-comparison-v1 -->
-| Source Family ID | Stable Node ID | Target Chapter Ref | Adjacent Chapter Refs | Existing Proposition | New Evidence Delta | Evolution Relation | Decision | Books Review Ref |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SF-2026-ARXIV-2607-05475 | INFER-TENSORRT-LLM | books/part-05-inference-system/49-tensorrt-llm.md#L109 | books/part-05-inference-system/48-speculative-decoding.md#L1 | existing:SF-2026-ARXIV-2607-05475 | delta:SF-2026-ARXIV-2607-05475 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2607-05475 |
-| SF-2026-ARXIV-2607-05708 | AGENT-MEMORY | books/part-07-agent/77-memory.md#L348 | books/part-07-agent/76-rag.md#L1 | existing:SF-2026-ARXIV-2607-05708 | delta:SF-2026-ARXIV-2607-05708 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2607-05708 |
-| SF-2026-ARXIV-2607-05721 | PLATFORM-EVALUATION-SYSTEM | books/part-06-ai-infrastructure/66-evaluation-system.md#L934; books/part-06-ai-infrastructure/66-evaluation-system.md#L996 | books/part-06-ai-infrastructure/65-kai-scheduler.md#L14-L14; books/part-06-ai-infrastructure/67-monitoring.md#L14-L14 | existing:SF-2026-ARXIV-2607-05721 | delta:SF-2026-ARXIV-2607-05721 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2607-05721 |
-| SF-2026-ARXIV-2607-05876 | PLATFORM-EVALUATION-SYSTEM | books/part-06-ai-infrastructure/66-evaluation-system.md#L373 | books/part-06-ai-infrastructure/65-kai-scheduler.md#L14-L14; books/part-06-ai-infrastructure/67-monitoring.md#L14-L14 | existing:SF-2026-ARXIV-2607-05876 | delta:SF-2026-ARXIV-2607-05876 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2607-05876 |
-| SF-2026-ARXIV-2607-05910 | PLATFORM-SECURITY | books/part-06-ai-infrastructure/72-security.md#L14-L14 | books/part-06-ai-infrastructure/71-multi-tenant.md#L14-L14; books/part-06-ai-infrastructure/73-production-best-practice.md#L14-L14 | existing:SF-2026-ARXIV-2607-05910 | delta:SF-2026-ARXIV-2607-05910 | Layering / Dependency | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2607-05910 |
-| SF-2026-ARXIV-2607-06118 | PLATFORM-EVALUATION-SYSTEM | books/part-06-ai-infrastructure/66-evaluation-system.md#L14-L14 | books/part-06-ai-infrastructure/65-kai-scheduler.md#L14-L14; books/part-06-ai-infrastructure/67-monitoring.md#L14-L14 | existing:SF-2026-ARXIV-2607-06118 | delta:SF-2026-ARXIV-2607-06118 | Layering / Dependency | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2607-06118 |
-| SF-2026-ARXIV-2607-06216 | MULTIMODAL-WORLD-MODELS | books/part-03-multimodal-world-models/25-multimodal-world-models.md#L327 | books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md#L14-L14; books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L14-L14; books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md#L270 | existing:SF-2026-ARXIV-2607-06216 | delta:SF-2026-ARXIV-2607-06216 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2607-06216 |
-| SF-2026-ARXIV-2607-06256 | MULTIMODAL-EMBODIED-VLA | books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L367 | books/part-03-multimodal-world-models/25-multimodal-world-models.md#L14-L14; books/part-04-training-system/27-data.md#L14-L14; books/part-07-agent/81-workflow.md#L465 | existing:SF-2026-ARXIV-2607-06256 | delta:SF-2026-ARXIV-2607-06256 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2607-06256 |
-| SF-2026-ARXIV-2607-06291 | MULTIMODAL-WORLD-MODELS | books/part-03-multimodal-world-models/25-multimodal-world-models.md#L293 | books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md#L14-L14; books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L14-L14 | existing:SF-2026-ARXIV-2607-06291 | delta:SF-2026-ARXIV-2607-06291 | Layering / Dependency | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2607-06291 |
-| SF-2026-ARXIV-2607-06327 | PLATFORM-EVALUATION-SYSTEM | books/part-06-ai-infrastructure/66-evaluation-system.md#L979 | books/part-06-ai-infrastructure/65-kai-scheduler.md#L14-L14; books/part-06-ai-infrastructure/67-monitoring.md#L14-L14 | existing:SF-2026-ARXIV-2607-06327 | delta:SF-2026-ARXIV-2607-06327 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2607-06327 |
-| SF-2026-ARXIV-2607-06370 | MULTIMODAL-EMBODIED-VLA | books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L153 | books/part-03-multimodal-world-models/25-multimodal-world-models.md#L14-L14; books/part-04-training-system/27-data.md#L14-L14 | existing:SF-2026-ARXIV-2607-06370 | delta:SF-2026-ARXIV-2607-06370 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2607-06370 |
-| SF-2026-ARXIV-2607-06403 | MULTIMODAL-EMBODIED-VLA | books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L171 | books/part-03-multimodal-world-models/25-multimodal-world-models.md#L14-L14; books/part-04-training-system/27-data.md#L14-L14 | existing:SF-2026-ARXIV-2607-06403 | delta:SF-2026-ARXIV-2607-06403 | Layering / Dependency | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2607-06403 |
-| SF-2026-ARXIV-2607-06442 | TRAIN-DATA | books/part-04-training-system/27-data.md#L393 | books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L14-L14; books/part-04-training-system/28-pretraining.md#L14-L14 | existing:SF-2026-ARXIV-2607-06442 | delta:SF-2026-ARXIV-2607-06442 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2607-06442 |
-| SF-2026-ARXIV-2607-06519 | INFER-KV-CACHE | books/part-05-inference-system/45-why-kv-cache-speeds-up.md#L358 | books/part-05-inference-system/44-decode.md#L14-L14; books/part-05-inference-system/46-continuous-batching.md#L14-L14 | existing:SF-2026-ARXIV-2607-06519 | delta:SF-2026-ARXIV-2607-06519 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2607-06519 |
-| SF-2026-ARXIV-2607-06523 | INFER-KV-CACHE | books/part-05-inference-system/45-why-kv-cache-speeds-up.md#L358 | books/part-05-inference-system/44-decode.md#L14-L14; books/part-05-inference-system/46-continuous-batching.md#L14-L14 | existing:SF-2026-ARXIV-2607-06523 | delta:SF-2026-ARXIV-2607-06523 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2607-06523 |
-| SF-2026-ARXIV-2607-06558 | TRAIN-DATA | books/part-04-training-system/27-data.md#L411 | books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L14-L14; books/part-04-training-system/28-pretraining.md#L14-L14; books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L213 | existing:SF-2026-ARXIV-2607-06558 | delta:SF-2026-ARXIV-2607-06558 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2607-06558 |
-| SF-2026-ARXIV-2607-06559 | MULTIMODAL-EMBODIED-VLA | books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L96; books/part-03-multimodal-world-models/25-multimodal-world-models.md#L218 | books/part-03-multimodal-world-models/25-multimodal-world-models.md#L14-L14; books/part-04-training-system/27-data.md#L14-L14 | existing:SF-2026-ARXIV-2607-06559 | delta:SF-2026-ARXIV-2607-06559 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2607-06559 |
-| SF-2026-ARXIV-2607-06560 | MULTIMODAL-GENERATIVE-PARADIGMS | books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md#L183 | books/part-03-multimodal-world-models/23-multimodal-representation.md#L14-L14; books/part-03-multimodal-world-models/25-multimodal-world-models.md#L14-L14 | existing:SF-2026-ARXIV-2607-06560 | delta:SF-2026-ARXIV-2607-06560 | Direct Evolution | Integrate | books-review:SF-2026-ARXIV-2607-06560 |
-| SF-2026-ARXIV-2607-06564 | MULTIMODAL-EMBODIED-VLA | books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L127 | books/part-03-multimodal-world-models/25-multimodal-world-models.md#L14-L14; books/part-04-training-system/27-data.md#L14-L14 | existing:SF-2026-ARXIV-2607-06564 | delta:SF-2026-ARXIV-2607-06564 | Layering / Dependency | No Change — Existing Coverage | books-review:SF-2026-ARXIV-2607-06564 |
-
-<!-- books-review:SF-2026-ARXIV-2607-05475:start --><!-- existing:SF-2026-ARXIV-2607-05475:start -->对读 `books/part-05-inference-system/49-tensorrt-llm.md#L109` 与相邻章节后，现有命题（`books/part-05-inference-system/49-tensorrt-llm.md#L41-L67`）为：Ch49 already treats execution planning as model x shape x precision x hardware x kernel selection, but its accelerator discussion does not yet make host control and prefill/decode backend asymmetry explicit.<!-- existing:SF-2026-ARXIV-2607-05475:end --><!-- delta:SF-2026-ARXIV-2607-05475:start -->新增证据边界：Mobile backend choice is phase dependent: prefill exposes large compute-dense shapes that can fit NPU strengths, while single-token decode exposes small dynamic kernels and memory traffic that can favor CPU. Framework offload coverage, graph/static-shape constraints, quantization support, tensor-layout conversion, host polling, sleep latency, DVFS and affinity determine whether nominal NPU capability becomes end-to-end efficiency. The framework owns operator partition/offload and layout conversions; backend runtimes own executable graph/quantization constraints; host CPU owns polling, wake/sleep and thread scheduling; request phase and KV state determine current shape. A backend switch is therefore a state-transfer/control decision, not a free dispatch choice. 该 delta 已进入 `books/part-05-inference-system/49-tensorrt-llm.md#L109`，正文保留旧方案成立条件、约束变化、代价与下一重压力。<!-- delta:SF-2026-ARXIV-2607-05475:end --><!-- books-review:SF-2026-ARXIV-2607-05475:end -->
-
-<!-- books-review:SF-2026-ARXIV-2607-05708:start --><!-- existing:SF-2026-ARXIV-2607-05708:start -->对读 `books/part-07-agent/77-memory.md#L348` 与相邻章节后，现有命题（`books/part-07-agent/77-memory.md#L314-L343`）为：Ch77 owns logical memory identity, provenance, derived views, retrieval and lifecycle, but does not yet make physical co-access placement a separate state owner; Ch42 owns request/runtime cost rather than memory semantics.<!-- existing:SF-2026-ARXIV-2607-05708:end --><!-- delta:SF-2026-ARXIV-2607-05708:start -->新增证据边界：Instead of rewriting full memory or independently summarizing fixed segments, MemAttention compacts one bounded chunk and reconciles it against a small related set before commit. The Memory Manager then observes co-access and physically co-locates likely co-retrieved chunks, using out-of-place relocation and garbage collection to reduce fragmentation without changing logical memory identity. Logical memory units own semantic identity, provenance and revision; the reconciliation policy owns derived cross-chunk updates; retrieval owns the selected evidence set; the storage manager owns physical placement, relocation and GC. Physical moves must not create a second semantic truth or silently change authorization/deletion state. 该 delta 已进入 `books/part-07-agent/77-memory.md#L348`，正文保留旧方案成立条件、约束变化、代价与下一重压力。<!-- delta:SF-2026-ARXIV-2607-05708:end --><!-- books-review:SF-2026-ARXIV-2607-05708:end -->
-
-<!-- books-review:SF-2026-ARXIV-2607-05721:start --><!-- existing:SF-2026-ARXIV-2607-05721:start -->对读 `books/part-06-ai-infrastructure/66-evaluation-system.md#L934` 与相邻章节后，现有命题（`books/part-06-ai-infrastructure/66-evaluation-system.md#L14-L14`）为：本章的核心判断是：**Evaluation System 是把目标转化为可重复证据和受控决策的系统。它必须同时版本化被评估对象、输入分布、执行环境与 scorer，并显式表达不确定性、切片和风险；工具可以保存证据，但不能替组织定义什么算成功。**<!-- existing:SF-2026-ARXIV-2607-05721:end --><!-- delta:SF-2026-ARXIV-2607-05721:start -->新增证据边界：Move uncertainty from token noise or one sequence score to typed semantic spans, distilling multi-sample claim support into a single-pass probe while preserving an explicit external-verification boundary. 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L934; books/part-06-ai-infrastructure/66-evaluation-system.md#L996`，正文保留旧方案成立条件、约束变化、代价与下一重压力。<!-- delta:SF-2026-ARXIV-2607-05721:end --><!-- books-review:SF-2026-ARXIV-2607-05721:end -->
-
-<!-- books-review:SF-2026-ARXIV-2607-05876:start --><!-- existing:SF-2026-ARXIV-2607-05876:start -->对读 `books/part-06-ai-infrastructure/66-evaluation-system.md#L373` 与相邻章节后，现有命题（`books/part-06-ai-infrastructure/66-evaluation-system.md#L14-L14`）为：本章的核心判断是：**Evaluation System 是把目标转化为可重复证据和受控决策的系统。它必须同时版本化被评估对象、输入分布、执行环境与 scorer，并显式表达不确定性、切片和风险；工具可以保存证据，但不能替组织定义什么算成功。**<!-- existing:SF-2026-ARXIV-2607-05876:end --><!-- delta:SF-2026-ARXIV-2607-05876:start -->新增证据边界：Replace immediate grid search with a versioned resource vector for weight/KV bytes, FLOPs, communication bytes/messages and capacity; compute optimistic and no-overlap bounds, identify the first binding wall as load changes, compare observed steady-state service time against the bound, and open a profiler only when the residual is material. 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L373`，正文保留旧方案成立条件、约束变化、代价与下一重压力。<!-- delta:SF-2026-ARXIV-2607-05876:end --><!-- books-review:SF-2026-ARXIV-2607-05876:end -->
-
-<!-- books-review:SF-2026-ARXIV-2607-05910:start --><!-- existing:SF-2026-ARXIV-2607-05910:start -->对读 `books/part-06-ai-infrastructure/72-security.md#L14-L14` 与相邻章节后，现有命题（`books/part-06-ai-infrastructure/72-security.md#L14-L14`）为：本章的核心判断是：**AI security 是贯穿 capability production、delivery 与 action 的风险管理。平台必须识别资产、主体、数据流和信任转换，并用 provenance、least privilege、isolation、validation 与 audit 建立纵深防御。**<!-- existing:SF-2026-ARXIV-2607-05910:end --><!-- delta:SF-2026-ARXIV-2607-05910:start -->新增证据边界：Treat moderation as a relation between content evidence and a versioned runtime policy, not an intrinsic image label. Randomize policy presentation to remove slot shortcuts, then train matched same-image pass/block pairs so the decision must change when the authoritative boundary changes. 该证据未改变现有长期命题；保留为受限 workload 的 supporting evidence，不在正文重复追加论文段落。<!-- delta:SF-2026-ARXIV-2607-05910:end --><!-- books-review:SF-2026-ARXIV-2607-05910:end -->
-
-<!-- books-review:SF-2026-ARXIV-2607-06118:start --><!-- existing:SF-2026-ARXIV-2607-06118:start -->对读 `books/part-06-ai-infrastructure/66-evaluation-system.md#L14-L14` 与相邻章节后，现有命题（`books/part-06-ai-infrastructure/66-evaluation-system.md#L14-L14`）为：本章的核心判断是：**Evaluation System 是把目标转化为可重复证据和受控决策的系统。它必须同时版本化被评估对象、输入分布、执行环境与 scorer，并显式表达不确定性、切片和风险；工具可以保存证据，但不能替组织定义什么算成功。**<!-- existing:SF-2026-ARXIV-2607-06118:end --><!-- delta:SF-2026-ARXIV-2607-06118:start -->新增证据边界：Evaluate a web agent using a richer execution record than a final screenshot: collect action sequence, navigation URLs and network requests, filter/restructure them, and let a versioned judge classify success against a human reference. Separate navigation, knowledge-assisted navigation and end-to-end extraction protocols. 该证据未改变现有长期命题；保留为受限 workload 的 supporting evidence，不在正文重复追加论文段落。<!-- delta:SF-2026-ARXIV-2607-06118:end --><!-- books-review:SF-2026-ARXIV-2607-06118:end -->
-
-<!-- books-review:SF-2026-ARXIV-2607-06216:start --><!-- existing:SF-2026-ARXIV-2607-06216:start -->对读 `books/part-03-multimodal-world-models/25-multimodal-world-models.md#L327` 与相邻章节后，现有命题（`books/part-03-multimodal-world-models/25-multimodal-world-models.md#L14-L14`）为：本章的核心判断是：**World Model 不是“生成世界画面”的名字，而是围绕环境状态转移建立的可检验契约。它必须把当前状态、action、预测 horizon 与 uncertainty 绑定起来，并始终区分 observed state、latent belief 和 imagined state。**视觉逼真可以是有用表示，却不能代替 action consequence、controllability 与 closed-loop outcome evidence。<!-- existing:SF-2026-ARXIV-2607-06216:end --><!-- delta:SF-2026-ARXIV-2607-06216:start -->新增证据边界：Treat real-time world-model deployment as joint state and runtime design: bound persistent history by semantic retrieval, train the causal student on its own rollout distribution, and co-design residency/parallelism/kernels around streaming latency. 该 delta 已进入 `books/part-03-multimodal-world-models/25-multimodal-world-models.md#L327`，正文保留旧方案成立条件、约束变化、代价与下一重压力。<!-- delta:SF-2026-ARXIV-2607-06216:end --><!-- books-review:SF-2026-ARXIV-2607-06216:end -->
-
-<!-- books-review:SF-2026-ARXIV-2607-06256:start --><!-- existing:SF-2026-ARXIV-2607-06256:start -->对读 `books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L367` 与相邻章节后，现有命题（`books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L14-L14`）为：本章的核心判断是：**Embodied AI 把生成结果变成具有 deadline、坐标系、控制权和不可逆副作用的 action。VLA 只有放在 perception → proposal → controller → environment → observation 的闭环中才有系统意义。**模型可以提出 trajectory 或 action chunk，low-level controller 与 safety envelope 必须独立决定如何、何时以及是否执行。<!-- existing:SF-2026-ARXIV-2607-06256:end --><!-- delta:SF-2026-ARXIV-2607-06256:start -->新增证据边界：Separate skill-local success from compositional readiness: a completed skill must establish both its own postcondition and a typed admission predicate for the next skill under the actual chained terminal state. 该 delta 已进入 `books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L367`，正文保留旧方案成立条件、约束变化、代价与下一重压力。<!-- delta:SF-2026-ARXIV-2607-06256:end --><!-- books-review:SF-2026-ARXIV-2607-06256:end -->
-
-<!-- books-review:SF-2026-ARXIV-2607-06291:start --><!-- existing:SF-2026-ARXIV-2607-06291:start -->对读 `books/part-03-multimodal-world-models/25-multimodal-world-models.md#L293` 与相邻章节后，现有命题（`books/part-03-multimodal-world-models/25-multimodal-world-models.md#L293`）为：Ch25 already owns recent/view-indexed/compressed history, stale-state risk, transition-aware belief and the distinction between visual persistence and causal world-state truth; AlayaWorld is a qualitative bounded case, not a new canonical mechanism.<!-- existing:SF-2026-ARXIV-2607-06291:end --><!-- delta:SF-2026-ARXIV-2607-06291:start -->新增证据边界：A proposed full-stack route combines autoregressive video generation with explicit camera/geometry cache, compressed history, rollout-error replay and distilled sampling to pursue long-horizon playable worlds. 该证据未改变现有长期命题；保留为受限 workload 的 supporting evidence，不在正文重复追加论文段落。<!-- delta:SF-2026-ARXIV-2607-06291:end --><!-- books-review:SF-2026-ARXIV-2607-06291:end -->
-
-<!-- books-review:SF-2026-ARXIV-2607-06327:start --><!-- existing:SF-2026-ARXIV-2607-06327:start -->对读 `books/part-06-ai-infrastructure/66-evaluation-system.md#L979` 与相邻章节后，现有命题（`books/part-06-ai-infrastructure/66-evaluation-system.md#L14-L14`）为：本章的核心判断是：**Evaluation System 是把目标转化为可重复证据和受控决策的系统。它必须同时版本化被评估对象、输入分布、执行环境与 scorer，并显式表达不确定性、切片和风险；工具可以保存证据，但不能替组织定义什么算成功。**<!-- existing:SF-2026-ARXIV-2607-06327:end --><!-- delta:SF-2026-ARXIV-2607-06327:start -->新增证据边界：Make uncertainty calibration slice-aware not only by domain, but by generation language, model scale/family and estimator access contract; method rankings can reverse across these slices. 该 delta 已进入 `books/part-06-ai-infrastructure/66-evaluation-system.md#L979`，正文保留旧方案成立条件、约束变化、代价与下一重压力。<!-- delta:SF-2026-ARXIV-2607-06327:end --><!-- books-review:SF-2026-ARXIV-2607-06327:end -->
-
-<!-- books-review:SF-2026-ARXIV-2607-06370:start --><!-- existing:SF-2026-ARXIV-2607-06370:start -->对读 `books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L153` 与相邻章节后，现有命题（`books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L14-L14`）为：本章的核心判断是：**Embodied AI 把生成结果变成具有 deadline、坐标系、控制权和不可逆副作用的 action。VLA 只有放在 perception → proposal → controller → environment → observation 的闭环中才有系统意义。**模型可以提出 trajectory 或 action chunk，low-level controller 与 safety envelope 必须独立决定如何、何时以及是否执行。<!-- existing:SF-2026-ARXIV-2607-06370:end --><!-- delta:SF-2026-ARXIV-2607-06370:start -->新增证据边界：Move warm-starting from same-episode temporal continuity to versioned output retrieval: reuse a prior action chunk only when an action-relevant multimodal key passes admission, refine it for a bounded number of flow steps, otherwise fall back to the base policy. 该 delta 已进入 `books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L153`，正文保留旧方案成立条件、约束变化、代价与下一重压力。<!-- delta:SF-2026-ARXIV-2607-06370:end --><!-- books-review:SF-2026-ARXIV-2607-06370:end -->
-
-<!-- books-review:SF-2026-ARXIV-2607-06403:start --><!-- existing:SF-2026-ARXIV-2607-06403:start -->对读 `books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L171` 与相邻章节后，现有命题（`books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L171`）为：Ch26 already owns typed embodiment/action schemas, future-supervised latent-to-action paths, control-frequency boundaries and progress-versus-success evidence. Ch27 owns data alignment/lineage; this model report is bounded implementation evidence, not a missing canonical mechanism.<!-- existing:SF-2026-ARXIV-2607-06403:end --><!-- delta:SF-2026-ARXIV-2607-06403:start -->新增证据边界：Connect cross-embodiment data quality, typed whole-body action spaces, conditional capacity and future-prediction supervision into one generalist VLA training contract. 该证据未改变现有长期命题；保留为受限 workload 的 supporting evidence，不在正文重复追加论文段落。<!-- delta:SF-2026-ARXIV-2607-06403:end --><!-- books-review:SF-2026-ARXIV-2607-06403:end -->
-
-<!-- books-review:SF-2026-ARXIV-2607-06442:start --><!-- existing:SF-2026-ARXIV-2607-06442:start -->对读 `books/part-04-training-system/27-data.md#L393` 与相邻章节后，现有命题（`books/part-04-training-system/27-data.md#L14-L14`）为：本章的核心判断是：**训练数据不是等待模型消费的原料，而是对模型行为分布的可执行 specification。**收集、过滤、去重、配比和采样共同定义经验风险中的样本权重；数据 pipeline 的任何偏差，都会通过梯度进入 checkpoint。<!-- existing:SF-2026-ARXIV-2607-06442:end --><!-- delta:SF-2026-ARXIV-2607-06442:start -->新增证据边界：Replace trajectory-count coverage with reusable-structure coverage: allocate budget over primitive compositions and transition interfaces under diminishing returns, then choose stable representatives within each structural bucket. 该 delta 已进入 `books/part-04-training-system/27-data.md#L393`，正文保留旧方案成立条件、约束变化、代价与下一重压力。<!-- delta:SF-2026-ARXIV-2607-06442:end --><!-- books-review:SF-2026-ARXIV-2607-06442:end -->
-
-<!-- books-review:SF-2026-ARXIV-2607-06519:start --><!-- existing:SF-2026-ARXIV-2607-06519:start -->对读 `books/part-05-inference-system/45-why-kv-cache-speeds-up.md#L358` 与相邻章节后，现有命题（`books/part-05-inference-system/45-why-kv-cache-speeds-up.md#L14-L14`）为：本章的核心判断是：**KV Cache 利用 causal decoding 中历史 K/V 不再变化的性质，以随序列增长的 memory state 换取历史 layer computation 不重算；它加速 Decode，也把请求从无状态输入变成必须管理生命周期和 ownership 的系统对象。**<!-- existing:SF-2026-ARXIV-2607-06519:end --><!-- delta:SF-2026-ARXIV-2607-06519:start -->新增证据边界：Exploit adjacent-layer correlation without assuming uniform redundancy: share low-frequency depth components, retain sparse layer-specific residuals, and route each head among shared, residual and exact cache modes using prompt-local attention-logit reconstruction evidence. 该 delta 已进入 `books/part-05-inference-system/45-why-kv-cache-speeds-up.md#L358`，正文保留旧方案成立条件、约束变化、代价与下一重压力。<!-- delta:SF-2026-ARXIV-2607-06519:end --><!-- books-review:SF-2026-ARXIV-2607-06519:end -->
-
-<!-- books-review:SF-2026-ARXIV-2607-06523:start --><!-- existing:SF-2026-ARXIV-2607-06523:start -->对读 `books/part-05-inference-system/45-why-kv-cache-speeds-up.md#L358` 与相邻章节后，现有命题（`books/part-05-inference-system/45-why-kv-cache-speeds-up.md#L14-L14`）为：本章的核心判断是：**KV Cache 利用 causal decoding 中历史 K/V 不再变化的性质，以随序列增长的 memory state 换取历史 layer computation 不重算；它加速 Decode，也把请求从无状态输入变成必须管理生命周期和 ownership 的系统对象。**<!-- existing:SF-2026-ARXIV-2607-06523:end --><!-- delta:SF-2026-ARXIV-2607-06523:start -->新增证据边界：Represent neighboring-layer K/V with shared low-rank bases, then allocate token-specific residual rank from online attention-output error rather than a uniform cache budget; fuse basis lookup, residual dequantization and projection to avoid returning all savings as decode overhead. 该 delta 已进入 `books/part-05-inference-system/45-why-kv-cache-speeds-up.md#L358`，正文保留旧方案成立条件、约束变化、代价与下一重压力。<!-- delta:SF-2026-ARXIV-2607-06523:end --><!-- books-review:SF-2026-ARXIV-2607-06523:end -->
-
-<!-- books-review:SF-2026-ARXIV-2607-06558:start --><!-- existing:SF-2026-ARXIV-2607-06558:start -->对读 `books/part-04-training-system/27-data.md#L411` 与相邻章节后，现有命题（`books/part-04-training-system/27-data.md#L14-L14`）为：本章的核心判断是：**训练数据不是等待模型消费的原料，而是对模型行为分布的可执行 specification。**收集、过滤、去重、配比和采样共同定义经验风险中的样本权重；数据 pipeline 的任何偏差，都会通过梯度进入 checkpoint。<!-- existing:SF-2026-ARXIV-2607-06558:end --><!-- delta:SF-2026-ARXIV-2607-06558:start -->新增证据边界：Decouple operator time from physical robot recording by driving an action-conditioned video world model with human hand poses, retargeting the pose stream to a robot schema and treating the generated egocentric sequence plus action label as a derived training trajectory. 该 delta 已进入 `books/part-04-training-system/27-data.md#L411`，正文保留旧方案成立条件、约束变化、代价与下一重压力。<!-- delta:SF-2026-ARXIV-2607-06558:end --><!-- books-review:SF-2026-ARXIV-2607-06558:end -->
-
-<!-- books-review:SF-2026-ARXIV-2607-06559:start --><!-- existing:SF-2026-ARXIV-2607-06559:start -->对读 `books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L96` 与相邻章节后，现有命题（`books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L14-L14`）为：本章的核心判断是：**Embodied AI 把生成结果变成具有 deadline、坐标系、控制权和不可逆副作用的 action。VLA 只有放在 perception → proposal → controller → environment → observation 的闭环中才有系统意义。**模型可以提出 trajectory 或 action chunk，low-level controller 与 safety envelope 必须独立决定如何、何时以及是否执行。<!-- existing:SF-2026-ARXIV-2607-06559:end --><!-- delta:SF-2026-ARXIV-2607-06559:start -->新增证据边界：Co-generate appearance, depth and optical flow so predictive state carries geometry and motion, then expose internal predictive features to a one-forward policy instead of placing iterative video denoising on every action step. The generated world branch and control branch share representation but have different latency and authority contracts. 该 delta 已进入 `books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L96; books/part-03-multimodal-world-models/25-multimodal-world-models.md#L218`，正文保留旧方案成立条件、约束变化、代价与下一重压力。<!-- delta:SF-2026-ARXIV-2607-06559:end --><!-- books-review:SF-2026-ARXIV-2607-06559:end -->
-
-<!-- books-review:SF-2026-ARXIV-2607-06560:start --><!-- existing:SF-2026-ARXIV-2607-06560:start -->对读 `books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md#L183` 与相邻章节后，现有命题（`books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md#L14-L14`）为：本章的核心判断是：**生成范式的差别首先是概率分解、状态可变性与 commit protocol 的差别，随后才表现为 kernel、cache 和 latency 差别。**“一次生成更多 token”不自动等于更快；“允许修正”也不自动等于更准。必须把 proposal work、verification/correction、memory、并发和输出提交一起计算。<!-- existing:SF-2026-ARXIV-2607-06560:end --><!-- delta:SF-2026-ARXIV-2607-06560:start -->新增证据边界：Convert heterogeneous annotations into a shared sample contract—visual inputs, natural-language task/schema instruction, and a text/image/mixed response that can be deterministically decoded back into boxes, masks, dense maps or camera records—so one generative model can learn many vision tasks without task-specific heads. 该 delta 已进入 `books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md#L183`，正文保留旧方案成立条件、约束变化、代价与下一重压力。<!-- delta:SF-2026-ARXIV-2607-06560:end --><!-- books-review:SF-2026-ARXIV-2607-06560:end -->
-
-<!-- books-review:SF-2026-ARXIV-2607-06564:start --><!-- existing:SF-2026-ARXIV-2607-06564:start -->对读 `books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L127` 与相邻章节后，现有命题（`books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md#L127`）为：Ch23/25/26 already separate modality-specific representation identity, RGB-D/flow predictive state, typed action chunks, calibration and contact failure. Lift3D-VLA is a bounded implementation branch, not a missing owner.<!-- existing:SF-2026-ARXIV-2607-06564:end --><!-- delta:SF-2026-ARXIV-2607-06564:start -->新增证据边界：Preserve explicit geometry while reusing a 2D foundation encoder, supervise both current/future point-cloud structure, and distribute temporal action prediction across intermediate-to-deep LLM layers. 该证据未改变现有长期命题；保留为受限 workload 的 supporting evidence，不在正文重复追加论文段落。<!-- delta:SF-2026-ARXIV-2607-06564:end --><!-- books-review:SF-2026-ARXIV-2607-06564:end -->
-
-<!-- audit-target:books:end -->
-## 7. Semantic Audit
-
-<!-- validator:semantic-audit-v1 -->
-| Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| SA-20260708-COVERAGE-OWNER-REBUILD | fresh-context:pending-owner-rebuild | coverage | coverage:SRC-ARXIV:20260708 | GAP-ARXIV-SEMANTIC-OWNER-REBUILD-20260708: raw closures and false-negative frontier require independent semantic review | Open — canonical inventory and owner receipt are preserved in the date-local source packet | open |
-| SA-20260708-EVIDENCE-OWNER-REBUILD | fresh-context:pending-owner-rebuild | evidence | review:SF-2026-ARXIV-2607-05475; review:SF-2026-ARXIV-2607-05577; review:SF-2026-ARXIV-2607-05708; review:SF-2026-ARXIV-2607-05721; review:SF-2026-ARXIV-2607-05876; review:SF-2026-ARXIV-2607-05910; review:SF-2026-ARXIV-2607-06118; review:SF-2026-ARXIV-2607-06216; review:SF-2026-ARXIV-2607-06256; review:SF-2026-ARXIV-2607-06291; review:SF-2026-ARXIV-2607-06327; review:SF-2026-ARXIV-2607-06370; review:SF-2026-ARXIV-2607-06403; review:SF-2026-ARXIV-2607-06442; review:SF-2026-ARXIV-2607-06519; review:SF-2026-ARXIV-2607-06523; review:SF-2026-ARXIV-2607-06558; review:SF-2026-ARXIV-2607-06559; review:SF-2026-ARXIV-2607-06560; review:SF-2026-ARXIV-2607-06564 | EVIDENCE-OWNER-REBUILD-20260708: transferred exact-v1 reviews require fresh-context false-positive and access audit | Open — transferred review bodies remain provenance, not final acceptance | open |
-| SA-20260708-SELECTION-OWNER-REBUILD | fresh-context:pending-owner-rebuild | deep_analysis_selection | analysis-decision:SF-2026-ARXIV-2607-05475; analysis-decision:SF-2026-ARXIV-2607-05708; analysis:DA-20260708-2607-05721; analysis-decision:SF-2026-ARXIV-2607-05876; analysis-decision:SF-2026-ARXIV-2607-05910; analysis-decision:SF-2026-ARXIV-2607-06216; analysis:DA-20260708-2607-06256; analysis-decision:SF-2026-ARXIV-2607-06291; analysis-decision:SF-2026-ARXIV-2607-06327; analysis-decision:SF-2026-ARXIV-2607-06370; analysis-decision:SF-2026-ARXIV-2607-06403; analysis-decision:SF-2026-ARXIV-2607-06442; analysis-decision:SF-2026-ARXIV-2607-06519; analysis-decision:SF-2026-ARXIV-2607-06523; analysis-decision:SF-2026-ARXIV-2607-06558; analysis-decision:SF-2026-ARXIV-2607-06559; analysis-decision:SF-2026-ARXIV-2607-06560; analysis-decision:SF-2026-ARXIV-2607-06564 | SELECTION-OWNER-REBUILD-20260708: eligibility and at-most-three narrative choice require independent comparison after owner transfer | Open — canonical selection receipts are structurally reconstructed | open |
-| SA-20260708-BOOKS-OWNER-REBUILD | fresh-context:pending-owner-rebuild | books | books-review:SF-2026-ARXIV-2607-05475; books-review:SF-2026-ARXIV-2607-05708; books-review:SF-2026-ARXIV-2607-05721; books-review:SF-2026-ARXIV-2607-05876; books-review:SF-2026-ARXIV-2607-05910; books-review:SF-2026-ARXIV-2607-06118; books-review:SF-2026-ARXIV-2607-06216; books-review:SF-2026-ARXIV-2607-06256; books-review:SF-2026-ARXIV-2607-06291; books-review:SF-2026-ARXIV-2607-06327; books-review:SF-2026-ARXIV-2607-06370; books-review:SF-2026-ARXIV-2607-06403; books-review:SF-2026-ARXIV-2607-06442; books-review:SF-2026-ARXIV-2607-06519; books-review:SF-2026-ARXIV-2607-06523; books-review:SF-2026-ARXIV-2607-06558; books-review:SF-2026-ARXIV-2607-06559; books-review:SF-2026-ARXIV-2607-06560; books-review:SF-2026-ARXIV-2607-06564 | BOOKS-OWNER-REBUILD-20260708: Books comparisons are frozen provenance pending upstream semantic gates and root writeback reconciliation | Open — month-local Books queue remains frozen | open |
-## 8. Ignored Noise
-
-1185 个窗口内 identity 中，1164 个未进入候选分母：它们属于垂直应用、单数据集质量增量、没有状态/控制权变化的模型使用案例，或不在合同 category route。该数字是 route closure，不是声称逐篇全文审阅。
-
-## 9. Recommended Action
-
-1. Sunday Weekly 聚合本日报 family 与 RP，不按发现日重复计分。
-2. 只有重要 revision、artifact、反证或 owner 冲突才重开本日报。
-3. Books Decision：13 个 `Integrate`，7 个 `No Change — Existing Coverage`，1 个 `Weekly Only — Context`，0 个 `Rejected — Low Durability / Out of Scope`；Deep 18 / Standard 3。
-
-## 10. Repository Changes
-
-- 新建或更新 `papers/2026/07/08/README.md`。
-- 本日报长期 delta 已同步至：`books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md`、`books/part-03-multimodal-world-models/25-multimodal-world-models.md`、`books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md`、`books/part-04-training-system/27-data.md`、`books/part-05-inference-system/45-why-kv-cache-speeds-up.md`、`books/part-06-ai-infrastructure/66-evaluation-system.md`。
-
-## 11. Open Questions
-
-- 后续 revision 是否新增 artifact、独立复现或 failure evidence，从而改变当前 claim boundary？
-- Sunday Weekly 的跨日演进链是否需要合并本日报多个同类 family？
-
-## 12. Sources
-
-- [Is Your NPU Ready for LLMs? Dissecting the Hidden Efficiency Bottlenecks in Mobile LLM Inference](https://arxiv.org/abs/2607.05475v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [Narrative World Model: Narratology-Grounded Writer Memory for Long-Form Fiction](https://arxiv.org/abs/2607.05577v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [Akashic: A Low-Overhead LLM Inference Service with MemAttention](https://arxiv.org/abs/2607.05708v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [SpanUQ: Span-Level Uncertainty Quantification for Large Language Model Generation](https://arxiv.org/abs/2607.05721v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [Think Before You Grid-Search: Floor-First Triage for LLM Serving](https://arxiv.org/abs/2607.05876v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [PolicyShiftGuard: Benchmarking and Improving Policy-Adaptive Image Guardrails](https://arxiv.org/abs/2607.05910v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [WebRetriever: A Large-Scale Comprehensive Benchmark for Efficient Web Agent Evaluation](https://arxiv.org/abs/2607.06118v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [MoWorld: A Flash World Model](https://arxiv.org/abs/2607.06216v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [Diagnosing Semantic Handoff Failures in Agent-Orchestrated Vision-Language-Action Skill Composition](https://arxiv.org/abs/2607.06256v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [AlayaWorld: Long-Horizon and Playable Video World Generation](https://arxiv.org/abs/2607.06291v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [Estimating Uncertainty from Reasoning: A Large-Scale Study of Multi- and Crosslingual MCQA Performance in LLMs](https://arxiv.org/abs/2607.06327v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [ActionCache: Training-Free Acceleration for Vision-Language-Action Models with Action Caching and Refinement](https://arxiv.org/abs/2607.06370v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [From Foundation to Application: Improving VLA Models in Practice](https://arxiv.org/abs/2607.06403v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [SIEVE: Structure-Aware Data Selection for Imitation Learning with VLA Models](https://arxiv.org/abs/2607.06442v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [FreqDepthKV: Frequency-Guided Depth Sharing for Robust KV Cache Compression in Long-Context LLM Inference](https://arxiv.org/abs/2607.06519v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [DepthWeave-KV: Token-Adaptive Cross-Layer Residual Factorization for Long-Context KV Cache Compression](https://arxiv.org/abs/2607.06523v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [RynnWorld-Teleop: An Action-Conditioned World Model for Digital Teleoperation](https://arxiv.org/abs/2607.06558v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [RynnWorld-4D: 4D Embodied World Models for Robotic Manipulation](https://arxiv.org/abs/2607.06559v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [Vision as Unified Multimodal Generation](https://arxiv.org/abs/2607.06560v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-- [Lift3D-VLA: Lifting VLA Models to 3D Geometry and Dynamics-Aware Manipulation](https://arxiv.org/abs/2607.06564v1) — first-public（Asia/Shanghai）：2026-07-08；exact evidence：v1；accessed：2026-09-03
-## 13. Final Status
-
-Daily V2.1 的 Coverage、Evidence、Deep Analysis Selection 与 Books Decision 均已完成；fresh-context Semantic Audit 无未解决 finding，三个 Gate 均已闭合。
-
-State Truth: Completion=In Progress；Coverage=Open；Evidence=Open；Books=Open；Unresolved Findings=2。
+独立复核逐项检查 17 个候选的窗口、exact-v1、评分、证据边界和 Books 路由，并核对 execution、memory、evaluation/security、World Model/VLA、Training Data、KV 与生成范式正文。三个排除项按局部应用、重复机制和缺少长期边界变化复查，未发现漏掉的系统性增量。格式校验与 `git diff --check` 通过。

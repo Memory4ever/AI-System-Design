@@ -66,6 +66,14 @@ MPI 把问题提升为并行程序的执行模型。它定义 process/rank、com
 
 因此，从 IPC 到 MPI 不是“一个更快的通信 API”这么简单，而是协作范围、participant identity 和 group semantics 的扩展。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20866:start -->
+异构 worker 还会打破“每个 rank 做相同步数、再同步完整更新”的默认节奏。Local SGD 分支可以让不同 worker
+执行不同数量的 local steps，只通信稀疏坐标，并让优化与传输重叠；它用较少同步等待换取 model staleness、坐标
+选择偏差和更复杂的收敛条件。worker step count、sparsifier、residual/error-feedback、通信中的 update revision 与
+聚合顺序必须成为 checkpoint lineage。论文实验不证明任意大模型或拓扑都受益；漂移、稀疏误差或恢复复杂度
+超过收益时，应回退同步 dense collective 或有界 local steps。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20866:end -->
+
 ## 先分清五个通信层次
 
 分析 AI 通信栈时，至少要分清五层：
@@ -160,6 +168,25 @@ GPU local links
 
 所以不能写成“MPI 使用 Tree、NCCL 使用 Ring”。算法由 operation、payload、topology、runtime 版本与策略共同决定，profile 时需要记录实际选择。
 
+## 当网络开始执行 Reduction：SHARP 与 CollNet
+
+Ring、Tree 和 recursive doubling 默认由 endpoints 交换并归约 partial result，switch 只负责转发。这在通用网络、算子种类多或硬件卸载不可用时最容易验证；规模扩大后，上层链路会反复承载尚未聚合的数据，GPU/NIC 也要承担 reduction 与协议推进。SHARP 改变的是执行位置：它在 InfiniBand fabric 的 aggregation tree 中边转发边归约，使越靠近树根的数据越早合并，再把结果向下分发。Collective 的 group、operator 与 completion 语义仍由上层 runtime 拥有，switch 只是一个受限的 compute participant。
+
+这条路线的四代演进，本质上是 workload 与共享边界逐步变化：
+
+| SHARP 代际 | 约束变化 | 解决的主要压力 | 新的系统约束 |
+| --- | --- | --- | --- |
+| v1 | 从 endpoint reduction 扩展到面向科学计算的小消息 in-network reduction | 大规模 HPC collective 的 latency 与 host 参与 | 支持的消息、数据类型和 reduction operator 受硬件能力约束 |
+| v2 | 增加面向 AI 大消息的 streaming aggregation | 梯度等大 payload 不能只靠小消息路径扩展 | Streaming tree 成为有限资源，早期一张网络主要服务单个 AI workload |
+| v3 | 同一 topology 可建立多棵 aggregation trees | 多个 AI 作业需要并发使用 in-network compute | Tree、port、rail、quota 和隔离必须由 Aggregation Manager 统一分配 |
+| v4 | 把公开支持方向扩展到更广的 AI collective algorithms | 训练不再只由单一 AllReduce 形态主导 | 公开资料尚不足以把内部算法、支持矩阵或性能写成通用保证，必须按实际平台验证 |
+
+因此 v1→v4 不是“新版本让所有 collective 都自动更快”，而是 `small-message offload → streaming large-message reduction → multi-tenant resource sharing → broader collective coverage`。Network compute 越强，resource allocation、topology admission、telemetry 与 fallback 越不能留在隐式配置里。Floating-point reduction 顺序改变还可能产生数值差异；交换机资源耗尽、类型或 operator 不受支持、rail 对齐错误时，系统必须回退普通 NCCL network path，而不是让 collective 静默失效。
+
+NCCL 的 CollNet 是“collective-capable network 如何进入 NCCL”的算法与插件接口，SHARP 是可以实现该能力的一种 InfiniBand fabric。两者不是同义词：`CollNetChain` 让节点内 ranks 沿 chain 汇聚到 network head，控制面较简单但串行深度可能成为瓶颈；`CollNetDirect` 让本地 peers 与多个 heads 建立更直接的 fan-in/fan-out，以更多连接、arity、NVSwitch/NIC topology 和 buffer 约束换并行带宽。NVLS 又是节点内 NVLink SHARP 路径，不应与跨节点 InfiniBand SHARP 混为一层。
+
+同一层次还要分开 operation 与 algorithm。调用 ReduceScatter 已经确定参与 group、输入分区和每个 rank 应得到的结果，NCCL 只在合法实现中选择 Ring、Tree、CollNet、PAT、NVLS 等数据流；它不会因为某个矩阵“看起来不大”就擅自缩小 process group，也不必永远把它映射成一个物理大环。如果 payload 太小而 participants 太多，`alpha`、同步和 topology 成本确实可能高于 local compute；正确修复是重新选择 parallel degree、process-group scope、bucket/chunk 与允许的 algorithm，而不是把 ReduceScatter 语义本身当成 Ring。
+
 ## MPI、NCCL、UCX、UCC 与 NIXL 的边界
 
 这些名字经常出现在同一张系统图里，但并不位于同一个抽象层，也不是线性替代关系：
@@ -187,6 +214,14 @@ versioned collective policy
 ```
 
 通信 runtime 仍拥有 collective 语义、participant ordering 与 completion；policy 只拥有已授权的选择空间，不能改写 tensor、group 或 optimizer-step identity。这提高了策略演进的可审计性，却以表达能力、verifier 维护和版本兼容为代价；固定拓扑或策略很少变化时，静态 NCCL 配置仍更简单。Verifier acceptance 只排除了受限程序中的 memory/control-safety 风险，并不证明策略在语义和性能上合理：一个 memory-safe 的错误 collective policy 仍可能通过验证并显著降低吞吐，因此上线前还需要 operator 语义检查、性能验证与回退条件。Exact-v1 证据只覆盖 `arXiv:2603.11438v1` §3.3 的架构、§5.1 的 CPU/GPU 开销、§5.2 的 verifier rejection 与 hot reload，以及 §5.3 的 policy case studies；§7 所述边界不支持外推到任意策略、故障条件或生产集群。<!-- source-family:SF-2026-ARXIV-2603-11438 -->
+
+#### 退化链路仍在线时，Collective 需要 Bandwidth-state Schedule
+
+<!-- semantic-body-binding:SF-OPTCC-ASYMMETRIC-ALLREDUCE:start -->
+正常 Ring/Tree 假设参与链路的带宽差异有限；少数链路降速但未断开时，沿用健康拓扑最容易恢复，却会让整次 AllReduce 被最慢阶段拖住。此时调度器可以把当前链路 bandwidth state、participant ordering、chunk assignment 与 collective lower bound 一起纳入计划，在不改变 reduction 结果与 step barrier 的前提下重排数据流。Network monitor 提供测量，planner 只提出 schedule，communication runtime 仍拥有 collective semantics、completion 与故障判定。
+
+这条分支用探测、重排和更复杂的 failure handling 换取 degraded-but-live 条件下的完成时间；带宽估计过期、链路状态震荡或额外同步开销可能使它反而更慢。理论 lower bound 只约束给定故障模型与拓扑，不能证明未知网络上的全局最优，也不能把慢链路当成健康链路。状态不可信、故障超出模型或集群稳定时，应回退经过验证的普通 Ring/Tree/hierarchical collective，必要时由作业层重启或缩容。现有证据只覆盖论文披露的链路退化模型与实验环境。
+<!-- semantic-body-binding:SF-OPTCC-ASYMMETRIC-ALLREDUCE:end -->
 
 #### Overlap 不是免费隐藏：Communication 与 Compute 共享资源预算
 
@@ -325,6 +360,16 @@ update semantics。作者的解析通信比例与有限实验不能外推任意�
 aggregation/DP、Byzantine policy 与 held-out evaluation。
 <!-- semantic-body-binding:SF-BEYOND-PARAMETER-AGGREGATION-SEMANTIC-CONSENSUS-FOR-FEDERATED-FINE-TUNIN:end -->
 
+### 去中心化全参数微调必须显式切分 Optimizer Ownership
+
+共享 architecture 且存在可信中心聚合器时，集中式 full-parameter fine-tuning 最容易保持参数、梯度和 Adam moments 的单一提交顺序；资源受限、数据不能离开各 client 且不希望中心节点持有完整状态时，单纯把 FedAvg 换成 peer-to-peer 通信仍没有解决每个参与方无法驻留全部 optimizer state 的问题。
+
+一种受限分支按 parameter block 切分参数更新与一阶、二阶矩的 canonical owner。各 client 在本地 non-IID data 上计算所需贡献，只把带 round、block、base-checkpoint 和 sender identity 的更新发送给对应 owner；owner 完成本 block 的 Adam transition，再让所有参与方在明确 barrier 或有界 staleness 后组成同一 model revision。这里节省的是单 client 的 optimizer memory，并改变通信拓扑；它不允许各 client 各自提交一份“近似完整模型”后再无身份地平均。
+
+这条路线用去中心化和更低单点 state pressure，换取 block hotspot、拓扑故障、non-IID drift、跨 block 不一致和更复杂的恢复协议。任一 block owner 丢失、round 身份冲突或收敛偏离 matched centralized baseline 时，应恢复最近一致 checkpoint，重新分配 owner，或回退中心式/参数高效微调。`arXiv:2606.03209v1` 只支持论文披露的 block-wise Adam、client/topology/model scale 与 non-IID 实验；它没有建立任意生产网络、模型规模或 optimizer 的通用等价性。
+
+<!-- semantic-body-binding:SF-DECA-DECENTRALIZED-FPFT -->
+
 ## 最简单的扩展：Data Parallel
 
 Data Parallel 在每个 rank 复制完整模型，切分 samples：
@@ -423,6 +468,14 @@ minibatch。它获得独立 microbatch progress，却放弃 NCCL collective 的�
 dedup、late/missing worker、minibatch commit、daemon recovery 与 backpressure。短序列、负载均衡或跨节点
 P2P 较慢时 FSDP collective 仍更好；故障/elasticity 未定义时也不能把吞吐重叠视为正确恢复。
 
+### Gradient 不必在 Backward 与 Optimizer 之间完整物化
+
+传统 reverse-mode 先把每层 weight gradient 写入全局内存，再由 optimizer 读回。这个两阶段边界让职责与调试都很清楚，却使大量 gradient 在 backward 与 optimizer 之间同时存活。条件允许时，可以在 backward 产生某层 gradient 时，由 fused optimizer path 立即消费、更新并释放；register 或 on-chip state 只拥有本层临时值，optimizer/step coordinator 仍拥有全局 step commit。TP shard、overflow、clipping、accumulation 与 checkpoint identity 必须共同版本化，不能因融合而省略。
+
+它用更低的 gradient materialization 和 memory traffic，换取更窄的 optimizer 支持面、更复杂的 kernel fusion、调试与低精度/累积顺序。需要完整 gradient inspection、optimizer 不兼容、数值分歧或 recovery 无法复现时，应回退 materialized-gradient 两阶段基线。作者的内存和速度结果只绑定披露的 optimizer、batch、GPU 与 Megatron 路径。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-22932 -->
+
 ## 五个主要切分维度
 
 ```text
@@ -453,6 +506,10 @@ all-head materialization
 通常越高。GQA 还要求 head ordering 与 KV group 复用一致。传统一次性 Ulysses 在 buffer 可承受、短 context 或
 希望降低 orchestration cost 时仍成立。Untied Ulysses/UPipe 为这条 memory–throughput trade-off 提供了 H100
 实验性证据，不证明其 chunk 大小或长上下文倍率可跨 topology 与 framework 外推。
+
+低带宽链路上，另一条受限分支先把需要交换的 activation 投影到动态选择的若干低维 subspaces，再传输系数并在接收端重构。它把通信 bytes 换成 projection compute 和有损误差，因此 subspace basis、selector revision、重构误差、训练 step 与 fallback 必须共同进入 activation identity；只比较压缩率会掩盖收敛漂移。网络带宽充足、表示快速变化或误差超界时，应停用 projection 并回退原始 Context Parallel。作者在特定模型和低带宽设置中的结果不证明任意 topology 或训练阶段都能保持质量。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-16384 -->
 
 ### 从等 Token Packing 到有界 Attention Workload Pool
 
@@ -539,6 +596,12 @@ per-batch planning、weight P2P、temporary memory、gradient merge、topology s
 负载平衡或互联较慢时静态 EP 仍更好；热点稳定且显存充足时 replication 可摊平 weight movement。单机
 H200 实验不能证明多机弱互联仍有净收益，因此平台必须用真实 router trace、forward/backward 和恢复路径
 共同验证。
+
+跨站点带宽远低于机内互联时，让每个 site 保存完整 MoE replica 会把 expert weights 与 optimizer state 的同步变成主成本。一个 federation 分支按 site 分区 expert layers，只复制热点或关键 experts；本地样本遇到 non-resident expert 时可以显式 skip、延后或远端执行，再以较低频率同步。它减少跨站 bytes，却会改变本地 token 所见的 expert support，并引入 routing drift、部分副本新鲜度和 WAN failure；这些状态必须绑定 model round，不能把 skip 后的 update 当作普通全副本训练。
+
+当 expert support 变化影响 objective、远端失败无法恢复或站点间数据差异过大时，应回退同构 island、完整 replica 或集中训练。现有小规模实测与大模型 cost projection 只证明该分区机制在作者假设下可行，不证明 100B 级跨站训练结果已经实测。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-19025 -->
 
 ### Owner-oriented Collective：通信算法也可以随参数所有权重写
 
@@ -663,6 +726,21 @@ TP collective 高频且延迟敏感，通常优先放在节点内高速互联；
 
 数学上合法的 rank grid 可能把最频繁 collective 放到最慢链路，造成 GPU 大量等待。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24326:start -->
+单机房内固定 rank placement、hierarchical collective 和经验调优，在 failure domain 单一、路径稳定时最容易复现。训练跨越楼宇或园区后，链路层级、可用 path、尾延迟和故障相关性同时改变；只调 collective algorithm 而不改变 placement，往往把最频繁通信放进最不稳定的域。此时 planner 需要在同一冻结输入上联合搜索 placement、path 与 collective schedule，并把 topology revision、failure domain、带宽/延迟模型和 plan epoch 写入执行身份；communication runtime 仍拥有 collective 语义与 completion，搜索器只提出候选计划。
+
+联合搜索可以利用跨域资源，却会支付 profiling、模拟误差、搜索成本和更大的故障面。平均带宽改善也可能被 tail latency 或相关故障抵消；模型过期时，优化计划甚至比固定 hierarchy 更差。因此必须用目标集群上的 step time、tail、恢复和收敛共同验收，并在路径状态不可信、收益不足或 failure budget 超界时回退单站点、固定 hierarchy 或缩小成员集。现有证据只支持论文披露的跨楼宇模型、测试床/模拟和结果，不证明任意 WAN 或生产故障组合都受益。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24326:end -->
+<!-- source-family:SF-2026-ARXIV-2605-24326 -->
+
+### Teacher 与 Student 不应共享一份并行 Plan
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-27797:start -->
+知识蒸馏在 teacher 与 student 规模接近、激活生命周期相似时，可以复用同一份并行布局；当 teacher 主要执行推理、student 还要保存反向与 optimizer state 时，对称切分会把两类不同的显存和通信 critical path 强行绑在一起。更合适的做法是分别规划 teacher 的推理分片与 student 的训练分片，并把版本化 teacher output、buffer ownership 和消费顺序定义为两者之间的显式 handoff，而不是假定它们共享 rank topology。
+
+非对称计划能避开局部内存或通信拐点，却增加 topology search、handoff buffering、版本一致性和运行时控制面；错误的成本模型可能把局部节省变成跨模型同步瓶颈。teacher/student footprint 相近、拓扑证据不足或 handoff 无法稳定复现时，对称布局仍是更简单的基线；非对称方案只有在目标集群上同时通过吞吐、显存与收敛验收后才应接管。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-27797:end -->
+
 ## Global Batch 与收敛语义
 
 增加 `D` 时，如果保持 `B_micro`、`A` 不变，`B_global` 会增大。这样吞吐提高的同时，也改变 optimizer 每步看到的样本数和固定 token budget 下的 step 数。
@@ -679,6 +757,23 @@ weak scaling    workload grows with device count
 ```
 
 只报告 GPUs 增加后的 samples/s，可能把更大 batch 当成系统加速。
+
+### 并行策略的目标不能停在最短单步时间
+
+为整个训练固定一套 DP/TP/PP 与 batch 配置，在模型 shape、网络和优化动力学稳定时最容易复现；离线搜索最短
+step time 也能快速排除明显低效布局。但不同 global batch 会改变 gradient noise 与单位 wall-clock 内的优化进展，
+单步最快的策略未必最早到达目标 validation loss。训练控制面因此应把 parallel plan、global batch、learning-rate
+schedule、checkpoint 与当前优化状态共同版本化，并用 time-to-quality 而非纯 step time 决定是否切换。
+
+在线 chaining 可以先在每个 batch size 内保留最快合法布局，再用当前 gradient-noise estimate 与 measured throughput
+比较跨 batch 候选；只有预计收益超过 reshard、pipeline 重建和 optimizer/state 迁移成本时，才在 checkpoint-safe
+边界提交新 plan。它用更短 time-to-perplexity 的机会换取 probe cost、估计漂移、切换失败和复现实验复杂度；目标
+质量宽松、训练很短、状态迁移昂贵或估计未校准时，固定策略仍是可靠基线。`arXiv:2609.07236v1` 在作者公开的
+GPT-2/Llama 类配置与特定集群上支持“领先策略会随训练阶段变化”及其 surrogate/search 机制，但其非凸 SGD 界限
+只说明满足假设时不破坏渐近收敛率，不证明选择器总能找到最优链，也不能把 1.8～11.4× 的 TTP 差异外推到其他
+模型、数据、optimizer、网络或目标指标。
+
+<!-- source-family:SF-2026-ARXIV-2609-07236 -->
 
 ## Scaling Efficiency
 
@@ -725,6 +820,15 @@ efficiency = 6000 / (8*1000) = 75%
 
 Elastic membership 对纯 DP 相对容易；TP/PP/EP layout 改变通常需要 reshard 或重建模型。第 35 章的 checkpoint correctness 是分布式容错的前提。
 
+分布式 driver 还必须区分“某个 rank 已失败”和“所有 rank 都已返回”。按 rank 顺序等待全部结果，在正常路径
+便于恢复有序输出；一旦首个 rank 在 collective 前 OOM，而其他 ranks 已进入 NCCL，它会把原始异常隐藏到
+watchdog 超时之后。更稳健的控制面按完成顺序观察结果，发现首个错误就向上抛出，并把共享 device pool 标为
+terminal，拒绝 checkpoint、teardown 等后续 RPC 再进入同一阻塞域；rank-ordered 结果只在成功终态重组。
+best-effort cancellation 不能安全地强杀已阻塞在 native collective 的 actor，因此 fail-fast 缩短的是错误暴露与
+二次阻塞，不是自动恢复 peer。低风险单进程任务仍可直接等待全部结果；分布式失败后必须重建或显式恢复 process group。
+
+<!-- source-family:SF-2026-UNIRL-258 -->
+
 ### 从同步重启到有提交边界的异步追赶
 
 全组从最近 checkpoint 同步重启，在故障稀少、checkpoint 间隔短且恢复时间可接受时最容易证明副本一致；大规模训练中，单卡故障若让健康 ranks 一起停止，会把恢复成本放大为整个 group 的 idle time。一个条件化分支把 failure detection 与 recovery control 留在 CPU，把正常 tensor data plane 留在 GPU：故障 replica 从 committed checkpoint 恢复后，以不阻塞健康 replica 的方式追赶，但只有 batch/step identity、参数版本与数据 cursor 对齐后，才能重新加入共同提交。
@@ -765,11 +869,25 @@ rollout worker 只有在基于正确 base 重构并通过 hash 与 shape 校验�
 
 <!-- source-family:SF-2026-ARXIV-2605-08524 -->
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07569:start -->
+规则 Ulysses/同构 mesh 假定各 GPU 的 compute、memory 与 link capacity 近似一致；混合设备中，平均切分会让最弱维度决定整个 step。Parallel planner 应联合建模设备算力、可用显存、网络层级与 head/sequence ownership，生成可版本化的 fully asymmetric CP/HP partition；所有 rank 一致提交 plan epoch 后才能执行。它用更高建图、profile、buffer 和同步成本换减少 straggler 的机会；profile 过期、拓扑变化或计划无法一致提交时，回退规则 Ulysses、同构 CP 或缩小成员集。`arXiv:2605.07569v1` 的 simulation 与有限实验不构成生产 70B、任意拓扑或收敛等价证明。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07569:end -->
+
 第三条变化出现在故障恢复。普通 transport 只知道丢失了哪些 packet，可靠重传因而是最保守的默认；collective-aware recovery 还能识别 packet 属于哪个 operation、message 与 round，从而只恢复保持 collective completion 所需的状态。这里的优化不能放松数学语义：round identity 不完整、loss 超出验证范围或参与者对完成状态有分歧时，必须回到可靠重传或整轮 retry。论文的模拟结果只支持“恢复可以消费 collective semantics”这一机制方向，不构成生产 tail latency 保证。[受限证据：arXiv:2606.20582v1]
 
 <!-- source-family:SF-2026-ARXIV-2606-20582 -->
 
 这三条分支共享同一原则：通信层可以利用上层语义，但不能取得训练正确性的最终所有权。状态类型越丰富，越能减少无效传输或无差别恢复，也越需要版本、计划、校验与 fallback；小规模、稳定 topology 或更新近似 dense 时，完整 snapshot、规则 collective 和可靠重传仍然更合适。
+
+两个实现级错误进一步说明，collective 完成不能替代张量语义验收。其一，autograd backward 若原地修改一个还被
+其他分支引用的 gradient buffer，会让 collective 数值看似正确、却污染 sibling branch；通信 primitive 必须声明
+borrowed/owned storage，并在复用本地 slice 前证明没有别名冲突。其二，Ulysses-style sequence parallel 只有在
+Q/K/V 先按 sequence/head ownership 完成 All-to-All、优化 attention kernel 又真正处理 tail-padding mask 时，才与
+非 SP reference 具有可比较语义；仅仅调用了同一个 kernel 并不成立。前者用额外 owned buffer 换正确性，后者用
+collective 与 trim/re-pad 路径换全序列 attention。任何优化分支都应以 non-parallel reference、不同 layout 与
+真实多设备路径做 differential test；不支持的 backend 或 mask 形态回退到已验证路径。
+
+<!-- source-family:SF-2026-VEOMNI-1159;SF-2026-VEOMNI-1158 -->
 
 ### 跨域 Policy Publication 需要 Delta、Stream 与 Lease 共享版本
 
@@ -806,6 +924,12 @@ facility queue / allocation observation
 <!-- source-family:SF-FEDQUEUE-CROSS-FACILITY-QUEUE-AWARE-TRAINING -->
 
 ## Variable-length Batch 让并行计划成为 Runtime State
+
+离线 bucket 依赖 tokenization 前即可预测样本成本；当模板、augmentation、multimodal token expansion 或 preprocessing 完成后才知道真实长度，预先固定 batch 会持续产生 padding 或 OOM。此时 DataLoader 可以把已经完成变换的样本放入在线 queue，由 batch scheduler 按可见成本、等待时间与资源上限形成下一步，同时保持所有 DP ranks 的 step alignment。
+
+在线决策提高 packing 效率，却会引入 arrival-order bias、公平性、队列状态和非平稳估计；形式化等待或效率界也只在其到达/成本假设内成立。训练必须记录 queue policy、sample order、batch membership 与拒绝原因，假设不成立或严格复现实验优先时回退静态 bucket。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-19989 -->
 
 模型 shape 固定时，一个静态 parallel plan 容易验证，也能复用 process group；但训练数据长度高度变化时，最慢
 microbatch 会决定 iteration，统一 sequence-parallel degree、gradient accumulation 与 recompute policy 会在短样本
@@ -1031,15 +1155,15 @@ Model FLOPs Utilization 可以描述硬件计算单元使用情况，但不等�
 新增 administrative boundary 作为不可跨越的数据/状态 owner，并把 typed aggregate 与 audit log 变成训练协议。
 <!-- semantic-body-binding:SF-ECHELON-AGGREGATE-ONLY-ADAPTATION:end -->
 
-<!-- semantic-body-binding:SF-2026-ARXIV-2606-24369:start -->
-把 visual diffusion RL 的 generation/training 解耦，并沿 generation 与 timestep 两轴并行；trainer bubble 临时借给 generator，TCSS 以 trajectory-consistent point 控制权重同步。
-<!-- semantic-body-binding:SF-2026-ARXIV-2606-24369:end -->
-
 ### 通信压缩必须把编解码写进 Critical Path
 
 带宽昂贵时，压缩 collective payload 是合理选择；但若只计算网络字节而忽略 GPU 上的 encode/decode，瓶颈只是从链路迁移到计算 critical path。更完整的 contract 需要同时记录 tensor 分布假设、bit-exact requirement、collective-aware layout、编解码 kernel 时间与 adaptive fallback。基于 exponent 的无损编码在观测分布接近假设时可以减少通信，却以额外 kernel、格式切换状态和 workload-specific normality 假设为代价；当压缩后端到端步时没有下降时，应回退原 collective，而不能用压缩率替代训练吞吐证据。
 
 <!-- source-family:SF-2026-ARXIV-2604-27844 -->
+
+梯度压缩进一步下沉到 CXL memory controller 时，host/GPU 不再独占 collective 的数值语义。Controller 可以在 memory-side 进行低比特聚合以减少搬运，但 admission 必须按 workload、layer 与 training phase 选择，并保留逐 tensor 的 FP32 All-Reduce recovery path。它以 controller 状态、量化误差和更复杂的 failure recovery 换带宽；某些更难 workload 的失败说明近似路径不能无条件覆盖全部层。没有足够数值监控、CXL controller 不可验证或重放成本过高时，标准 FP32/BF16 collective 仍是正确基线。公开结果只覆盖论文的 ResNet/DistilBERT、模拟与 FPGA plausibility，不构成大模型训练的通用吞吐结论。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-15045 -->
 
 <!-- semantic-body-binding:SF-NCCLZ-COMPRESSION-ENABLED-GPU-COLLECTIVES-WITH-DECOUPLED-QUANTIZATION-AN:start -->
 进一步把 quantization、entropy coding 与 collective primitive 解耦，可以让 device-side selector 按 tensor/phase 选择
@@ -1075,9 +1199,21 @@ activation memory 成为瓶颈时，直接压缩所有张量看似比 checkpoint
 
 ### Collective 故障诊断与 MoE 资源计划必须进入 Runtime Owner
 
-collective 慢或 hang 时，只有 job-level timeout 无法定位哪一个 rank、链路或 phase 首先偏离。训练 runtime 应注入低开销 rank probe，形成 fault fingerprint，把诊断结果交给重试、拓扑绕行、rank 隔离或 checkpoint 恢复。probe 自身会增加通信和状态量，误诊可能触发更大扰动；证据不足时回退到全局停机与一致 checkpoint，而不是局部继续造成 silent divergence。
+collective 慢或 hang 时，只有 job-level timeout 无法定位哪一个 rank、链路或 phase 首先偏离。训练 runtime 可以注入低开销 rank probe 并形成 fault fingerprint；这证明的是诊断与归因能力，不自动证明重试、拓扑绕行、rank 隔离或 checkpoint 恢复都安全。任何 remediation 仍需由拥有 collective consistency 与 checkpoint contract 的 controller 单独验证和提交。probe 自身会增加通信和状态量；证据不足时回退到全局停机与一致 checkpoint，而不是依据诊断猜测局部继续并造成 silent divergence。
 
-MoE 扩展又把 expert placement、pipeline stage、communication 与 memory 绑在一起。resource model 可以生成 hybrid-parallel plan，并在运行中依据 token skew 与链路状态调整 pipeline；收益是减少空洞和拥塞，代价是 cost model 漂移、迁移开销和更复杂的更新一致性。模型不可信或迁移窗口不安全时，应回退到静态布局，保证训练语义优先于利用率。
+MoE 扩展又把 expert placement、pipeline stage、communication 与 memory 绑在一起。resource model 可以联合生成 hybrid-parallel plan；运行时若观测到 token imbalance，受限机制是在同一资源组内迁移 expert，以重新平衡计算，而不是凭链路状态任意在线改写整条 pipeline。收益是减少局部 expert 空洞，代价是迁移开销、路由/参数版本对齐和更复杂的更新一致性。Cost model 不可信、迁移窗口不安全或状态无法原子切换时，应回退静态布局，保证训练语义优先于利用率。
+
+Colocated training/rollout 还会共享同一 Python 进程里的 backend 全局状态。第三方 runtime 的 import 若静默关闭
+cuDNN SDPA、切换 allocator 或修改默认 kernel policy，训练 actor 即使没有调用该 runtime，也会沿新的执行路径运行；
+这类变化既不属于模型配置，也不会出现在普通 batch trace 中。runtime owner 应在加载 foreign subsystem 前后显式
+snapshot/restore 可变 backend state，或把不同 execution policy 隔离到独立进程，并在启动验收中比较实际 operator path。
+
+共享进程减少模型副本、IPC 与启动成本，却扩大 import-order、global flag 和 library-version 的 blast radius；无法枚举
+被修改状态时，进程隔离是更可靠的旧方案。UniRL #426 在 HunyuanVideo-1.5、8×H800 的同一 recipe 中定位到
+vLLM import 对 PyTorch SDPA 的进程级副作用，并在恢复原设置后将 attention 时间从约 31.2 秒降到 16.2 秒；
+该单一 workload 没有证明所有 colocated runtime 都受同一 flag 影响，也不能把局部恢复数字外推为通用训练加速。
+
+<!-- source-family:SF-2026-UNIRL-426 -->
 
 <!-- source-family:SF-CCL-D-A-HIGH-PRECISION-DIAGNOSTIC-SYSTEM-FOR-SLOW-AND-HANG-ANOMALIES-IN- -->
 <!-- source-family:SF-PIPER-EFFICIENT-LARGE-SCALE-MOE-TRAINING-VIA-RESOURCE-MODELING-AND-PIPEL -->
@@ -1087,6 +1223,39 @@ MoE 扩展又把 expert placement、pipeline stage、communication 与 memory �
 先按 scaling law 选择模型和数据，再让系统“尽量跑快”，可能得到无法在目标集群高效放置的 shape。MoE sparsity、activated parameters、MFU、通信、内存和并行布局应在同一可行域中求解：模型 loss frontier 只是输入，真实目标还要满足 hardware topology、wall-clock 与预算。
 
 联合搜索依赖 scaling fit 和系统校准，超出训练规模或更换硬件时会漂移；小规模实验仍可采用简单 compute-optimal 设计。重要的是把算法 shape 与执行计划的耦合显式化，而不是把某个搜索器的输出当普遍最优。
+
+### Rollout 与 Update Pool 的边界可以移动，但 Policy Identity 不能漂移
+
+异步 RL 将 rollout generation 与 parameter update 固定在两组资源上，部署简单，却会在两侧 backlog 不平衡时同时出现空闲与 staleness。双向调度允许节点在生成和更新之间迁移；scheduler 只拥有容量租约与 phase transition，trainer 仍拥有 checkpoint、optimizer 和 policy version，进入 update 的 trajectory 必须携带生成它的 policy identity。
+
+跨互联网异构节点进一步要求 contributor、update、验证与聚合都有独立身份。节点快慢、断连和恶意更新不能仅靠最终平均梯度掩盖；staleness window、贡献证明、异常隔离与可回滚 aggregate 必须进入 protocol。两条路径都以更高控制面复杂度和迁移成本换取利用率；规模小、phase 比例稳定或信任边界封闭时，固定资源池与同步聚合仍更可控。
+
+<!-- source-family:SF-2026-ARXIV-2607-09207 -->
+<!-- source-family:SF-2026-ARXIV-2607-13332 -->
+
+### 跨地域电力约束会把全局同步改成层级且有陈旧度的聚合
+
+所有站点每步参加 WAN barrier，在单故障域或一致性优先时最容易推理；跨地域带宽、时延和电力可用性成为主要约束后，它会让最慢站点决定全局进度。层级方案可在区域内频繁同步，由区域聚合器异步向 canonical global state 提交，并随训练阶段、电力和网络条件调整提交频率。
+
+它以较低 WAN/能耗压力换 update staleness、区域偏置和更复杂 checkpoint ownership。模拟结果不能证明真实大模型收敛、optimizer 语义、故障恢复或隐私边界。系统必须记录 local/global revision、staleness budget、aggregation weight 与 canonical checkpoint owner；一致性或可恢复性比能源套利更重要时，单域同步仍应作为基线。
+
+<!-- source-family:SF-2026-ARXIV-2607-25650 -->
+
+### Rollout 与 Training GPU 角色切换必须是有语义的状态迁移
+
+固定划分 rollout/training 资源在负载稳定时简单；两阶段 backlog 变化后会产生空闲。动态 resize 不能只是把 GPU 标签换掉：必须 drain 当前工作、保存 policy/checkpoint revision、重建 communicator 与 memory layout、验证新角色 ready，再原子提交 capacity。失败时回退原分区或从已知 checkpoint 重建。
+
+弹性提高利用率，却引入切换延迟、在途 sample 归属、版本错配和 collective failure。只有收益超过 transition cost 且 rollout provenance 保持完整时才切换，短阶段或强同步 workload 仍适合静态分区。
+
+<!-- source-family:SF-2026-ARXIV-2607-22614 -->
+
+### 长上下文训练负载不能只按 Token 数均衡
+
+样本 token 数相近时，Attention 工作仍近似随序列长度平方变化；按 token balance 分 shard 会让长样本集中设备成为 straggler。调度应同时保留 token/activation 容量约束与 `sum(length^2)` 的 attention-work 估计，再结合 sequence/context parallel 的实际 kernel 校准。
+
+二次 proxy 不覆盖 sparse/linear attention、padding、通信和 kernel saturation。系统必须以实测 step time 修正模型；短序列或线性算子场景仍可使用 token-count 简化，不能把 proxy 当硬件无关真值。
+
+<!-- source-family:SF-2026-ARXIV-2607-23250 -->
 
 ## 本章在知识树中的位置
 
@@ -1213,12 +1382,13 @@ gradient event
 7. Collective 为什么不是 Ring 或 Tree 的同义词？
 8. Alpha-Beta 模型中的 `alpha`、`beta`、`m` 和 overlap 各表示什么？
 9. Ring、Tree 与 recursive doubling 分别倾向优化什么？
-10. MPI、NCCL、UCX、UCC 与 NIXL 为什么不是线性替代关系？
-11. Strong scaling 与 weak scaling 有何区别？
-12. 8 卡 6000 tokens/s 的 scaling efficiency 怎样计算？
-13. 为什么同步训练会放大单个 straggler？
-14. 训练 collective 与推理 KV state transfer 有哪些共同约束和不同语义？
-15. “训练成功启动”为什么不能证明并行策略正确？
+10. SHARP、CollNet 与 NVLS 分别位于哪一层？为什么 in-network reduction 仍需要 fallback？
+11. MPI、NCCL、UCX、UCC 与 NIXL 为什么不是线性替代关系？
+12. Strong scaling 与 weak scaling 有何区别？
+13. 8 卡 6000 tokens/s 的 scaling efficiency 怎样计算？
+14. 为什么同步训练会放大单个 straggler？
+15. 训练 collective 与推理 KV state transfer 有哪些共同约束和不同语义？
+16. “训练成功启动”为什么不能证明并行策略正确？
 
 ## 当未来负载、迟到更新与模型边界成为调度输入
 
@@ -1291,6 +1461,26 @@ RL rollout 已经产生 token-to-expert 路由；若训练系统仍分别优化�
 
 DP 扩展样本吞吐，TP 切 layer 内算子，PP 切深度，CP 切序列，EP 切 experts，ZeRO/FSDP 切 model states。多模态 variable-shape workload 又要求 batch builder 同时拥有 memory/compute 约束，空间复用则把 placement 与 interference budget 带进同一执行合同。每种机制都会把局部压力迁移到通信、同步、拓扑或状态生命周期，最终必须用吞吐、效率、收敛和恢复共同验证。
 
+### 可重构 Fabric 要让 Topology Revision 进入 Collective Plan
+
+固定拓扑上的 collective schedule 易部署且可复现，但在链路可重构时会浪费临时可用带宽。复用 subring 并结合 Bruck-style 交换，可以为 AllReduce、AllGather、ReduceScatter 与 All-to-All 重组通信路径；执行资产必须绑定 topology revision、rank mapping 和 collective semantics。<!-- semantic-body-binding:SF-2026-ARXIV-2605-12766 -->
+
+重配置控制、计划生成与故障恢复会增加复杂度，收益也受具体 fabric 和消息规模限制。拓扑变更过快、计划成本超过通信节省或容错性下降时，应回退稳定 ring/tree schedule。
+
+### Live Reconfiguration 需要 Target World 与显式 Commit
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22014:start -->
+传统弹性训练通过 checkpoint、退出旧 world、再用新 world 重启，恢复边界清楚，却把存储和重新初始化放进关键路径。Live handoff 可以在当前 world 继续训练时并行准备 target world，以有界额外内存传输参数、optimizer 与并行状态；只有目标布局、版本和状态完整性通过验证后，controller 才提交切换。源 world 在 commit 前仍拥有训练进度，target world 只拥有候选执行状态。
+
+双 world 会临时消费显存、初始化容量、网络带宽，并可能干扰正在运行的 step；混合并行布局还要求明确 rank mapping、state transform 和切换点。现有 exact-v1 只支持作者披露的 workload 与条件，不证明任意模型、故障或拓扑都能无停顿迁移。准备错过 warning window、传输校验失败或 commit 无法原子化时，应中止 handoff，继续旧 world，并回退既有 checkpoint/restart 路径。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22014:end -->
+
+### 异步更新要纠正 Worker Frequency Bias
+
+ASGD 让快 worker 无需等待慢 worker，但当 worker 速度与数据分布相关时，模型会过度吸收高频 worker 的样本。按各 worker 的贡献频率重标度 arriving gradients，可以恢复目标数据权重；frequency estimator 和 rescaling state 因而成为 optimizer contract 的一部分。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13434 -->
+
+重标度会提高方差，频率估计也会随故障和资源变化漂移。理论与实验只覆盖其假设范围；估计不稳定或尾部 worker 权重爆炸时，应截断权重、重新采样，或回退 bounded-staleness/synchronous training。
+
 ## Review notes
 
 - `SF-2026-ARXIV-2602-00277`（Status: Experimental）：exact-v1 的 FT-HSDP 设计支持 CPU recovery control、GPU normal data plane、asynchronous catch-up 与 batch/step consistency，§6 给出作者实验；它不证明 arbitrary optimizer、elastic topology 或 production failure combinations 下的 exactly-once execution。https://arxiv.org/html/2602.00277v1
@@ -1327,6 +1517,16 @@ Primary-source 校验入口：
 - Deepak Narayanan et al., "Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM", 2021: https://arxiv.org/abs/2104.04473
 - MPI Forum, MPI 4.1 Standard: https://www.mpi-forum.org/docs/mpi-4.1/mpi41-report.pdf
 - NVIDIA, NCCL Documentation: https://docs.nvidia.com/deeplearning/nccl/
+- NVIDIA, “Advancing Performance with NVIDIA SHARP In-Network Computing”:
+  https://developer.nvidia.com/blog/advancing-performance-with-nvidia-sharp-in-network-computing/
+- NVIDIA, “Using NVIDIA SHARP with NVIDIA NCCL”:
+  https://docs.nvidia.com/networking/display/sharpv3110/Using%2BNVIDIA%2BSHARP%2Bwith%2BNVIDIA%2BNCCL
+- NVIDIA, SHARP hardware capabilities and resource limits:
+  https://docs.nvidia.com/networking/display/sharpv352lts/setting%2Bup%2Bnvidia%2Bsharp%2Benvironment
+- NVIDIA, NCCL algorithm configuration and versioned algorithm set:
+  https://docs.nvidia.com/deeplearning/nccl/archives/nccl_2303/user-guide/docs/env.html
+- NVIDIA NCCL source, CollNet chain/direct topology construction:
+  https://github.com/NVIDIA/nccl/blob/master/src/graph/connect.cc
 - OpenUCX, UCX API Documentation: https://openucx.github.io/ucx/api/latest/html/
 - OpenUCX, UCC: https://openucx.github.io/ucc/
 - PyTorch, Distributed Communication Package: https://docs.pytorch.org/docs/stable/distributed.html
@@ -1357,7 +1557,7 @@ Primary-source 校验入口：
 
 ### Daily integration evidence trace
 
-- `2026-05-04 / SF-2026-ARXIV-2605-01989` — exact-v1 `arXiv:2605.01989v1`；正文吸收 phase-aware bounded-loss transport 的责任划分，经验 tolerance 不作为通用阈值。
+- `2026-05-05 / SF-2026-ARXIV-2605-01989` — exact-v1 `arXiv:2605.01989v1`；正文吸收 phase-aware bounded-loss transport 的责任划分，经验 tolerance 不作为通用阈值。
 
 #### Source-specific exact-v1 Review notes
 
@@ -1372,58 +1572,11 @@ Primary-source 校验入口：
 #### Source-specific Review notes
 
 - SF-2026-ARXIV-2606-24143: `arXiv:2606.24143v1`; exact-v1 URL=`https://arxiv.org/html/2606.24143v1`; Method=`https://arxiv.org/html/2606.24143v1 — §4 Forward- and Reverse-KL OPD Under Staleness; 7 AsyncOPD`; Evaluation=`https://arxiv.org/html/2606.24143v1 — §7 AsyncOPD Experimental Results; G Scheduler Details`; Non-proof=`实验限单节点 8 GPU、sparse/MC estimator；dense full-vocabulary KL、跨节点扩展与更长 staleness 未验证，cache/queue 压力过大时应回退 bounded-staleness 或同步 OPD。`; Artifact=`https://github.com/furiosa-ai/async-opd`
-- SF-2026-ARXIV-2606-24369: `arXiv:2606.24369v1`; exact-v1 URL=`https://arxiv.org/html/2606.24369v1`; Method=`https://arxiv.org/html/2606.24369v1 — §3 DigenRL: System Design; GAP/TSP/TAG/TCSS`; Evaluation=`https://arxiv.org/html/2606.24369v1 — §5 Evaluation; End-to-End Time and TCSS Effectiveness`; Non-proof=`收益绑定论文 diffusion workload、资源组合与 stale policy 容忍度；异构故障、跨作业隔离和 reward/model drift 未验证，质量偏离时回退同步或 bounded-staleness。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
 - SF-2026-ARXIV-2606-24722: `arXiv:2606.24722v1`; exact-v1 URL=`https://arxiv.org/html/2606.24722v1`; Method=`https://arxiv.org/html/2606.24722v1 — §2 Protocol; Block-Local Diffusion Objective; Decentralized Execution`; Evaluation=`https://arxiv.org/html/2606.24722v1 — §3 Real-Text Experiments; 4 Decentralization and Asynchrony`; Non-proof=`real-text small model、virtual edge worker 与 WAN smoke test 不证明大模型质量、Byzantine worker、激励或大规模收敛；acceptance 失败时回退同步/集中训练。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
 
 #### 2026-06-25 source-specific Review notes
 
 - **SF-2026-ARXIV-2606-25759**：Primary `arXiv:2606.25759v1`；Method `https://arxiv.org/html/2606.25759v1 — §3 System Overview; 4 Operating-Profile Calibration; 5 Runtime Binding and Bucket Routing`；Evaluation `https://arxiv.org/html/2606.25759v1 — §7 Closed-Loop Cluster Evaluation; 7.1 Evaluation Setup and Scope`；未证明边界 `https://arxiv.org/html/2606.25759v1 — §9 Limitations and Future Work; A.4 Evaluation Environment and Measurement Boundary`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-
-### Source-family integration record
-
-<!-- daily-20260627:TRAIN-DISTRIBUTED-TRAINING:start -->
-### Owner-merged minimal durable delta
-
-知识蒸馏 runtime 不应强迫 teacher inference 与 student training 共用一份并行方案，而应按两类 workload 分别分片。它们的参数驻留、activation lifetime、batch shape 与通信 critical path 均不同；真正的 handoff 是 student update 消费的版本化 teacher output，而不是共享 rank topology。
-
-### Trade-off、failure、fallback 与 coexistence
-
-非对称方案增加 handoff buffering 与 topology search；teacher/student footprint 相近时，共享方案仍更简单。
-
-<!-- daily-20260627:TRAIN-DISTRIBUTED-TRAINING:end -->
-
-<!-- recovered-daily-20260623:TRAIN-DISTRIBUTED-TRAINING:start -->
-### 2026-06-23 evidence integration — TRAIN-DISTRIBUTED-TRAINING
-
-相邻章 `books/part-04-training-system/37-tensor-parallel.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-22768**：Factored Gossip DiLoCo: Reducing Blocking Communication in DiLoCo 的 exact-v1 机制为：On up to billion-parameter language models in low-bandwidth settings, our framework substantially improves compute utilization compared to DiLoCo, with training progress ranging from comparable to closely matching it, and is more robust to failures. 因此 把同步拓扑、worker identity、通信阻塞与收敛/分歧界面共同版本化。 该 family 的 failure pressure 是：While DiLoCo communicates infrequently, its outer synchronization remains bandwidth-heavy and brittle to stragglers and transient failures. 披露的 evaluation signal 是：To make large-scale distributed training practical outside high-bandwidth datacenters, we must reduce blocking, high-volume synchronization. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；分歧或通信容错界面越界时恢复最近一致 checkpoint 与保守同步。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-22932**：FORGE: Fused On-Register Gradient Elimination for Memory-Efficient LLM Training 的 exact-v1 机制为：This two-phase schedule sets the memory ceiling of modern training: at the seam between the phases, every layer's gradient is live at once. 因此 把同步拓扑、worker identity、通信阻塞与收敛/分歧界面共同版本化。 该 family 的 failure pressure 是：Reverse-mode differentiation computes every weight gradient, writes it to memory, and only then lets the optimizer read it back. 披露的 evaluation signal 是：Empirically FORGE more than halves the memory of an optimizer step and, at the small batch sizes typical of fine-tuning and continued pretraining, runs about 1.5x faster; integrated into tensor-parallel Megatron-LM it fits 8B training at four times the micro-batch a standard optimizer allows on the same GPUs. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；分歧或通信容错界面越界时恢复最近一致 checkpoint 与保守同步。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-23017**：Nautilus: A Verifiable Hierarchical Federated Learning Framework for Vehicular-Edge-Cloud Systems 的 exact-v1 机制为：Federated Learning (FL) enables privacy-preserving collaborative learning for Internet of Vehicles (IoV) scenarios, but extreme heterogeneity of vehicular-edge-cloud resources severely limits system efficiency. 因此 把同步拓扑、worker identity、通信阻塞与收敛/分歧界面共同版本化。 该 family 的 failure pressure 是：Dynamic scheduling strategies mitigate this issue but introduce new trust concerns: verifying fair scheduling decisions and faithful client execution of compression instructions without privacy leakage remains an open challenge. 披露的 evaluation signal 是：First, a multi-dimensional resource-aware scheduling algorithm dynamically allocates compression ratios and training tasks based on vehicle bandwidth, latency and computing power, improving training efficiency. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；分歧或通信容错界面越界时恢复最近一致 checkpoint 与保守同步。旧路径在其原约束成立时继续共存。
-
-<!-- recovered-daily-20260623:TRAIN-DISTRIBUTED-TRAINING:end -->
-
-<!-- recovered-daily-20260624:TRAIN-DISTRIBUTED-TRAINING:start -->
-### 2026-06-24 evidence integration — TRAIN-DISTRIBUTED-TRAINING
-
-相邻章 `books/part-04-training-system/38-pipeline-parallel.md` 只接收 handoff，不重复拥有机制。
-
-### Owner-merged minimal text
-
-- **SF-2026-ARXIV-2606-24143**：将 rollout、teacher scoring、student update 解耦为 queue stages；learner 用 current-student recomputation 修正 reverse-KL stale signal，并以 multi-sample MC 避免 cached top-k support bias。 实验限单节点 8 GPU、sparse/MC estimator；dense full-vocabulary KL、跨节点扩展与更长 staleness 未验证，cache/queue 压力过大时应回退 bounded-staleness 或同步 OPD。
-- **SF-2026-ARXIV-2606-24369**：把 visual diffusion RL 的 generation/training 解耦，并沿 generation 与 timestep 两轴并行；trainer bubble 临时借给 generator，TCSS 以 trajectory-consistent point 控制权重同步。 收益绑定论文 diffusion workload、资源组合与 stale policy 容忍度；异构故障、跨作业隔离和 reward/model drift 未验证，质量偏离时回退同步或 bounded-staleness。
-- **SF-2026-ARXIV-2606-24722**：把 end-to-end backprop 的全局 hidden-target ownership拆成 block-local diffusion objective；edge worker 独立更新 block，coordinator 只按版本/acceptance rule 接收异步 update，同一 block protocol 也支撑分布式 inference。 real-text small model、virtual edge worker 与 WAN smoke test 不证明大模型质量、Byzantine worker、激励或大规模收敛；acceptance 失败时回退同步/集中训练。
-
-<!-- recovered-daily-20260624:TRAIN-DISTRIBUTED-TRAINING:end -->
-
-<!-- recovered-daily-20260625:TRAIN-DISTRIBUTED-TRAINING:start -->
-### 2026-06-25 evidence integration — TRAIN-DISTRIBUTED-TRAINING
-
-- **SF-2026-ARXIV-2606-25759**：`3 System Overview; 4 Operating-Profile Calibration; 5 Runtime Binding and Bucket Routing` 所定义的源特定机制用于把集群运行剖面映射为运行时 bucket 与并行绑定状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `9 Limitations and Future Work; A.4 Evaluation Environment and Measurement Boundary` 是 `NEURON-Fabric: Architecture-Runtime Co-Design for Controlled Low-Bit Gradient Communication` 的 source-specific 反例/局限边界；若运行条件离开 `7 Closed-Loop Cluster Evaluation; 7.1 Evaluation Setup and Scope` 的验证域，`TRAIN-DISTRIBUTED-TRAINING` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-<!-- recovered-daily-20260625:TRAIN-DISTRIBUTED-TRAINING:end -->
 
 ### Daily Books delta trace（2026-06—08）
 
@@ -1434,27 +1587,27 @@ Primary-source 校验入口：
 <!-- daily-books-trace:SF-FEDQUEUE-CROSS-FACILITY-QUEUE-AWARE-TRAINING:end -->
 
 <!-- daily-books-trace:SF-ECHELON-AGGREGATE-ONLY-ADAPTATION:start -->
-- `SF-ECHELON-AGGREGATE-ONLY-ADAPTATION` — Daily `2026-06-02`；primary `arXiv:2606.02958v1`；Books review `books-review:SF-ECHELON-AGGREGATE-ONLY-ADAPTATION`。
+- `SF-ECHELON-AGGREGATE-ONLY-ADAPTATION` — Daily `2026-06-03`；primary `arXiv:2606.02958v1`；Books review `books-review:SF-ECHELON-AGGREGATE-ONLY-ADAPTATION`。
 
   **已吸收的语义增量：** 新增 administrative boundary 作为不可跨越的数据/状态 owner，并把 typed aggregate 与 audit log 变成训练协议。
 <!-- daily-books-trace:SF-ECHELON-AGGREGATE-ONLY-ADAPTATION:end -->
 
 <!-- daily-books-trace:SF-OPTCC-ASYMMETRIC-ALLREDUCE:start -->
-- `SF-OPTCC-ASYMMETRIC-ALLREDUCE` — Daily `2026-06-02`；primary `arXiv:2606.01680v1`；Books review `books-review:SF-OPTCC-ASYMMETRIC-ALLREDUCE`。
+- `SF-OPTCC-ASYMMETRIC-ALLREDUCE` — Daily `2026-06-02`；primary `arXiv:2606.01680v1`；正文锚点“退化链路仍在线时，Collective 需要 Bandwidth-state Schedule”。
 
   **已吸收的语义增量：** 增加退化链路仍在线时的 bandwidth-state schedule 与下界。
 <!-- daily-books-trace:SF-OPTCC-ASYMMETRIC-ALLREDUCE:end -->
 
 <!-- daily-books-trace:SF-DECA-DECENTRALIZED-FPFT:start -->
-- `SF-DECA-DECENTRALIZED-FPFT` — Daily `2026-06-03`；primary `arXiv:2606.03209v1`；Books review `books-review:SF-DECA-DECENTRALIZED-FPFT`。
+- `SF-DECA-DECENTRALIZED-FPFT` — Daily `2026-06-03`；primary `arXiv:2606.03209v1`；正文锚点“去中心化全参数微调必须显式切分 Optimizer Ownership”。
 
-  **已吸收的语义增量：** Block-wise Adam partitions parameter and optimizer-state ownership across decentralized non-IID clients and changes the communication/memory contract for full-parameter fine-tuning. Boundary: Evidence is limited to Appendix B complexity; non-IID client, topology and model-scale boundary; it does not establish a universal production result outside the declared models, systems, workloads or topology.
+  正文吸收 block-level parameter/optimizer owner、round/base identity、non-IID 与拓扑 failure，并保留 centralized/PEFT fallback；证据不外推未披露规模、网络或 optimizer。
 <!-- daily-books-trace:SF-DECA-DECENTRALIZED-FPFT:end -->
 
 <!-- daily-books-trace:SF-LIBRA-AGENTIC-RL:start -->
-- `SF-LIBRA-AGENTIC-RL` — Daily `2026-06-03`；primary `arXiv:2606.03077v1`；Books review `books-review:SF-LIBRA-AGENTIC-RL`。
+- `SF-LIBRA-AGENTIC-RL` — Daily `2026-06-03`；primary `arXiv:2606.03077v1`；Books Decision=`No Change — Existing Coverage`；命题锚点“RL Phase 资源可以成为弹性函数，但训练语义不能随实例伸缩”“Agent RL 从 Trainer 中心演进为版本化 Dataflow”。
 
-  **已吸收的语义增量：** Before the first tool call, all trajectories are placed in the shortest bucket. Because the initial prompt and early reasoning contents typically occupy limited context, assigning every request to a high-TP instance would reduce cluster-wide utilization. When the model emits a tool-call token, Libra pauses decoding, offloads the request from the GPU, and waits for the external environment to execute the tool asynchronously. Boundary: This paper presents Libra, a resource orchestration system designed for agentic RL post-training. Libra introduces a periodic global resource planner that jointly optimizes GPU allocation across rollout and training clusters, together with an elastic hybrid pool that enables lightweight, non-blocking worker reallocation between stages. In addition, Libra proposes a causality-driven multi-level feedback queue (C-MLFQ) scheduler that routes requests to heterogeneous rollout buckets based on causal signals from tool-return outcomes.
+  当前正文已覆盖 rollout/learner owner、异构资源池、tool wait、long-tail trajectory placement、policy identity 与固定池 fallback；论文的 C-MLFQ 是该合同的受限实现。
 <!-- daily-books-trace:SF-LIBRA-AGENTIC-RL:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-05951:start -->
@@ -1464,7 +1617,7 @@ Primary-source 校验入口：
 <!-- daily-books-trace:SF-2026-ARXIV-2606-05951:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-07019:start -->
-- `SF-2026-ARXIV-2606-07019` — Daily `2026-06-06`；primary `arXiv:2606.07019v1`；Books review `books-review:SF-2026-ARXIV-2606-07019`。
+- `SF-2026-ARXIV-2606-07019` — Daily `2026-06-08`；primary `arXiv:2606.07019v1`；Books review `books-review:SF-2026-ARXIV-2606-07019`。
 
   **已吸收的语义增量：** Exact-v1 adds a source-specific mechanism and evaluation boundary not fully represented by the current owner proposition. The delta remains bounded by exact-v1 and does not transfer commit authority to an adjacent owner.
 <!-- daily-books-trace:SF-2026-ARXIV-2606-07019:end -->
@@ -1481,11 +1634,6 @@ Primary-source 校验入口：
   **已吸收的语义增量：** 把低比特梯度聚合下沉到 CXL memory controller，并以 workload/layer/phase admission 保留 FP32 recovery path。
 <!-- daily-books-trace:SF-2026-ARXIV-2606-15045:end -->
 
-<!-- daily-books-trace:SF-2026-ARXIV-2606-15625:start -->
-- `SF-2026-ARXIV-2606-15625` — Daily `2026-06-15`；primary `arXiv:2606.15625v1`；Books review `books-review:SF-2026-ARXIV-2606-15625`。
-
-  **已吸收的语义增量：** federated MoE聚合需分离expert importance、conflicting gradient projection与client-local residual retention，same-index expert不天然语义一致
-<!-- daily-books-trace:SF-2026-ARXIV-2606-15625:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-16384:start -->
 - `SF-2026-ARXIV-2606-16384` — Daily `2026-06-16`；primary `arXiv:2606.16384v1`；Books review `books-review:SF-2026-ARXIV-2606-16384`。
@@ -1554,7 +1702,7 @@ Primary-source 校验入口：
 <!-- daily-books-trace:SF-2026-ARXIV-2607-20145:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-23250:start -->
-- `SF-2026-ARXIV-2607-23250` — Daily `2026-07-26`；primary `arXiv:2607.23250v1`；Books review `books-review:SF-2026-ARXIV-2607-23250`。
+- `SF-2026-ARXIV-2607-23250` — Daily `2026-07-28`；primary `arXiv:2607.23250v1`；Books review `books-review:SF-2026-ARXIV-2607-23250`。
 
   **已吸收的语义增量：** 新增证据边界：Libra freezes the raw-sample multiset of each optimizer step, partitions its DP replicas into fixed-size sequence pools, uses exact-cardinality variance-reduced placement to pair complementary packed-sequence workloads across pools, then dispatches sequence-by-head tiles within each pool. A CPU planner emits per-iteration plans; the GPU executor performs planned Q/K/V and output all-to-all around an unmodified variable-length FlashAttention kernel, with chunked overlap. Scaling DP creates more pools rather than expanding the communication domain of each pool. 该 delta 已进入 `books/part-04-training-system/36-distributed-training.md#L358`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-23250:end -->

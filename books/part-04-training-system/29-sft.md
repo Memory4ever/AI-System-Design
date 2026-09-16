@@ -52,6 +52,14 @@ assistant response
 
 因此 SFT data schema 是模型接口的一部分。训练时的 chat template 与 Serving 时不同，即使可见文字近似，也可能形成 special-token、role id 或 whitespace 的 training-serving skew。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21177:start -->
+长 demonstration 的显存压力还可以通过 chunk-wise forward/backward 分解，而不是直接截断序列。ChunkFT 类分支
+只在每个 chunk 保留必要边界状态并分段反传，试图降低 activation memory；这会把 chunk boundary、recompute、
+gradient accumulation 与数值等价性纳入训练 contract。作者报告的内存、时间和优化质量只属于披露模型与实现，
+不证明任意 attention/state 都可无损分块。跨块依赖、梯度对齐或墙钟收益不成立时，应回退普通 full-sequence
+backprop、checkpointing 或较短但语义完整的样本。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21177:end -->
+
 ## SFT 的数学仍是条件最大似然
 
 给定 prompt `x` 和 response `y`：
@@ -151,7 +159,31 @@ task and tool schema
 
 使用更强模型生成 synthetic demonstrations 可以扩大覆盖，却可能复制 teacher 的错误、偏好和措辞。过滤器与 judge model 也会引入自己的 selection bias。
 
+### 离线 Feedback 可以先编译成显式 Goal Conditioning
+
+把 scalar score 或 categorical feedback 直接当作在线 reward，适合模型仍在环境中探索、反馈与当前 action 严格对齐的场景；已有离线样本只带粗粒度反馈时，这条路径会虚构不存在的 rollout state。一个更保守的分支，是把反馈一次性量化为显式 natural-language goal，把训练样本组织成 `(input, goal) → output`，并在推理时同样给出目标条件。threshold 决定从反馈中产生哪些 goal，以及哪些 sample-goal pair 可用于训练；beyond-threshold 的配对还允许同一输出服务多个可满足目标。此时 feedback converter 拥有目标解释与配对版本，SFT 只学习条件化 token distribution；它不是 reward model，也不拥有在线策略更新。
+
+这种编译让粗反馈可进入可审计的条件监督流水线，却会把阈值误差、标签偏差、错误 goal 解释和重复配对固化进训练集；推理目标与训练目标不一致时也会产生新的 distribution shift。goal state 不稳定、反馈语义含混或条件化能力回归失败时，应回退普通 SFT、人工清洗或只保留可信 goal。现有证据只支持作者离线反馈数据、目标构造和阈值设置，不能证明自然语言目标等于真实用户意图，也不能外推为在线 RL。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-16345:start -->
+离线反馈进入 SFT 前，可以成为带版本和阈值的显式 goal；训练与推理共享 goal-conditioned interface，sample-goal admission 只是构造这种监督的一部分，而不是主机制或逐步 reward。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-16345:end -->
+
 ### Distillation 不是“Teacher 越强越好”
+
+Teacher-student distillation 最简单的形式是统一对齐所有位置与层；它在表示密度较均匀、teacher/student capacity 接近时容易解释。混合视觉语言模型中，不同区域的 residual representation 密度可能差异很大，一个条件分支用局部密度估计器为 residual alignment 分配权重，并把 teacher、hybrid bridge 与 student 组成分阶段路径。密度只是训练 controller 的 estimator state，不是“语义重要性”的真值，也不能替代任务评价。
+
+它用额外估计与三阶段耦合换取对拥挤表征区域的差异化监督，却可能放大噪声、在新域漂移，或让学生过度追随 teacher geometry。density estimator、层映射或下游回归不稳时，应回退 uniform residual alignment、原始 distillation loss 或较短的 teacher-student 路径。作者实验只支持披露的 VLM、数据和目标，不证明密度加权对任意架构都更好。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-17093:start -->
+Distillation 的监督权重可以由局部 representation density 提议，但最终能力仍由 held-out 行为而非密度本身验收。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-17093:end -->
+
+### 多 Teacher Debate 把 Supervision 变成版本化的集体状态
+
+单教师在学生已经访问到的 on-policy state 上提供分布，接口简单、成本可控；但教师自身偏差会直接进入学生。一个条件分支让多个教师先在同一 student state 上提出并互相挑战，再冻结 privileged distribution，随后按任务选择 JSD 或 reverse-KL 蒸馏。Teacher ensemble 拥有监督提案，debate transcript 与聚合策略形成版本化 artifact，学生当前 rollout 仍定义训练分布。
+
+它以多倍推理、教师相关错误和聚合规则偏差换更丰富的反例；共识也可能只是共享盲点。低成本、领域稳定或单教师已有强校准时，原路径仍合理；agent trajectory 还必须按 step 对齐，不能把未来信息泄漏给较早状态。现有 exact-v1 只支持作者的模型、任务与聚合设定，不证明 debate 产生真值。<!-- semantic-body-binding:SF-2026-ARXIV-2605-01347 -->
 
 #### Self-distillation 也可以改变 Target Distribution
 
@@ -172,6 +204,12 @@ base checkpoint + prompt pool
 高风险或可获得可靠 verifier 时仍成立。Simple Self-Distillation 的作者实验只支持其五模型与 code benchmark
 contract，不构成无监督“自我改进”的通用证明。
 
+另一种分支不是直接改变 sampling temperature，而是先用少量 correctness-defining spans 的梯度构造低秩 capability subspace，生成时临时投影各层 attention 的 K/V state，让 base policy 更倾向产生目标能力样本；投影 hooks 随生成结束移除，原模型再对验证后的 corpus 做普通 SFT。这里 base checkpoint、projected generation policy 与 generated corpus 是三个不同的版本化 artifact：subspace owner 只提出生成 bias，validator 决定样本 admission，SFT owner 才提交权重。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22675:start -->
+这种做法用 gradient collection、逐层 SVD、runtime hooks 与额外生成成本，换取无需永久 teacher 的定向自数据；但 gradient subspace 不是能力真值，投影后的 raw output 也不是 correctness oracle，低秩方向还可能压制与目标耦合的其他能力或放大原模型错误。若 calibration labels、subspace stability、样本验证或 capability regression 失败，应移除 hooks、丢弃该 corpus，并回退 verified external data、常规 filtered self-training 或 untouched base checkpoint。现有证据仅覆盖作者的 code、math 与 QA 设置，不证明能力可以普遍解耦成唯一低秩方向。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22675:end -->
+
 当 student 与 teacher 的容量、目标或输出风格差距过大时，直接模仿最强 teacher 可能产生不可学的
 soft targets、过长 reasoning 或与 student inductive bias 不匹配的行为。一个可选演进是 cascade：
 先从较近的 parent checkpoint prune 到目标 shape，完成 distillation 后再把 child 作为下一尺寸的
@@ -190,6 +228,33 @@ large parent
 成立。Mistral 的后续 Ministral 3 报告为这条机制提供了作者实验，其中“pretraining teacher 更强
 未必更好、post-training teacher strength 又可能有益”只能视为其设置下的 sensitivity evidence，
 不能升级为通用配方，也不能倒写成 2025 Mistral 3 release 已公开的完整训练机制。
+
+### Rollout-conditioned Distillation 应按证据归因，而不是整段照抄
+
+完整模仿 teacher answer 在 teacher 稳定且 student 访问相同状态时最简单；当 rollout 中只有部分 token 由外部
+reference 支持时，统一 token loss 会把正确、猜测和遗漏混成同一监督。一个更受控的分支，对同一 student
+rollout 分别计算有/无 reference 条件下的 token likelihood 差，将增益大的 token 视为局部证据支持；对于 rollout
+完全漏掉但 reference 明确要求的事实，再加入稀疏 omission anchor：
+
+```text
+student rollout
+→ compare reference-conditioned / reference-free token likelihood
+→ weight locally supported tokens
+→ add sparse anchors for omitted authoritative facts
+→ validate retention and capability regression
+```
+
+它比整段答案蒸馏更精确，却仍继承 reference 错误、likelihood calibration 和权重阈值偏差，并增加双路推理成本。
+高风险事实仍需 retrieval 或外部 evidence；teacher/reference 不可靠时，应回退人工核验数据、普通 distillation
+或不做参数注入。该机制只在披露的知识注入与 retention 任务中得到支持，不证明参数已经成为可审计事实库。
+
+<!-- source-family:SF-2026-ARXIV-2607-24771; daily-trace:papers/2026/07/29/README.md -->
+
+普通 SFT 不约束行为增量在参数中的位置，事后找到相关 circuit 也不等于因果必要。Loss-Constrained Dual Descent 在 utility budget 下联合优化 routing mask 与 weights，把目标行为压进 sparse carrier；随后 SFT-Eraser 用 carrier-channel activation matching 的 soft prompt 在推理时反转该行为。它以专门训练、mask artifact 和 trigger governance 换可控性；carrier 稀疏性、utility 或 held-out behavior gate 失败时回退标准 SFT checkpoint、adapter rollback 或外部 policy。
+
+证据覆盖作者选择的 safety/fixed-response/style behaviors 与多个 model families；不证明 standard SFT 自带可逆 carrier、未知行为可定位、soft prompt 无副作用或安全策略可被无条件关闭。 PLATFORM-SECURITY 拥有 trigger/authorization；TRAIN-SFT 拥有 behavior-carrier training mechanism。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-06632 -->
 
 ### Context Distillation：把可逆 Prompt 行为迁移进权重
 
@@ -251,6 +316,16 @@ Entropy 表示 student 不确定，分歧表示 teacher 与 student 不同；二
 Rethinking On-Policy Distillation 的作者实验只证明在其模型、数据和评测下某些 token allocation 更有效，不能
 把高熵或高分歧直接当作因果 credit。固定全 token distillation 在算子成熟、差异较均匀或需要最简单 objective
 时继续成立；选择性更新必须保存 threshold、teacher/student snapshots、mask 与被排除 token 的 regression 证据。
+
+统一把 privileged teacher 拉近 student 的所有 token，也可能过早收缩真正需要保留多个候选的推理分叉。一个更窄的条件分支，用 student entropy 与 teacher-gap reliability 路由局部蒸馏方向：低熵、重复性的 scaffold token 向可靠 teacher 收敛；高熵 fork 可在有界条件下反向远离 teacher，但整条 trajectory 的正负方向仍由 terminal verifier 决定。Teacher 只提供 token-level correction，不能取代 outcome correctness owner。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22263:start -->
+这种 signed routing 能在稳定 routine steps 的同时保留探索，却需要第二次 forward、entropy quantile 与 gap state，并可能把随机高熵噪声误判为有用分叉，甚至排斥正确 teacher。Student entropy 不是正确率，repulsion 也不保证产生正确 alternative。若 entropy calibration、privileged trace、verifier outcome 或 held-out execution/diversity 回归失败，应把 teacher correction 归零，回退 verifier-only GRPO、uniform/gated on-policy distillation 或 verified SFT。现有证据只支持作者披露的 reasoning families 与 verifier-scored rollouts，不构成普遍的 signed-teacher 规则。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22263:end -->
+
+少步 diffusion 的连续适配暴露了更具体的 distribution mismatch：普通 SFT 在静态 teacher targets 上优化，可能改善目标域拟合，却破坏 step-distilled 模型在自己少步轨迹上的推理能力。一条条件分支让 student 先运行自身 few-step rollout，再让同一基础模型的 privileged teacher 额外读取目标图像与 prompt，在 student 实际访问的 trajectory 上提供蒸馏目标。Student 拥有部署时 state coverage，teacher 只拥有训练期监督，生成范式和 step state 仍由第 24 章解释。<!-- source-family:SF-2026-ARXIV-2605-05204 -->
+
+它用约 `4x` FLOPs、约 `2x` iteration time 与额外 multimodal condition 换取能力保持，且收益依赖 encoder/base model 已具有可用的 in-context teacher 能力；teacher 在 privileged condition 下仍失败时，不会产生可靠监督。这只支持作者的少步 diffusion 设置，不能外推所有 diffusion 或 LLM tuning。静态目标足够、成本敏感或 teacher 不可靠时，vanilla SFT、重新 distill 或保留原 checkpoint 仍是可验证的 fallback。
 
 #### Outcome Failure 不能单独定位 Perception Credit
 
@@ -322,6 +397,13 @@ raw deployment episode
 
 ### Demonstration Schedule 也是 Objective 的一部分
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24432:start -->
+把单轮答案拼成多轮对话，在每一轮所需信息已经完整出现时，是便宜且可控的训练数据构造；真实会话却经常把信息逐步揭示，模型若在证据不足时仍直接回答，就会把单轮能力误用成多轮猜测。更受约束的自蒸馏路径为同一问题构造 information-equivalent 的完整视图与分步视图：完整视图产生可验证目标，分步视图要求模型在信息不足时 defer 或 clarify，在信息闭合后再复用同一能力。
+
+这种 view-asymmetric 训练能缩小单轮到多轮的接口差异，却高度依赖“两个视图确实信息等价”。遗漏条件、错误配对或 teacher 自信偏差会把错误行为蒸馏到 student。数据 owner 必须记录 view transformation 与等价性检查，训练 owner 只消费已验证 pair；等价性无法建立或 held-out 对话回归时，应回退显式澄清策略、人工标注或外部 teacher。现有证据只支持论文披露的 grounded context、自蒸馏与实验，不证明任意多轮能力都可由单轮能力自动迁移。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24432:end -->
+<!-- source-family:SF-2026-ARXIV-2605-24432 -->
+
 一次看到更多不同样本通常提高 coverage，但长 reasoning demonstration 中真正决定策略的稀有转折可能只出现
 一次，容易被大量常规 token 稀释。重复同一 verified trajectory 能增加它在经验风险中的权重，却不会创造新证据：
 
@@ -361,6 +443,17 @@ active set 移除，再在新的 gradient field 上重新估计其余 stopping p
 可恢复的 SFT state machine，也付出多次 rollout、checkpoint footprint、评测泄漏与 hard exclusion 的代价。
 任务动态相近、held-out oracle 不可靠或存储预算紧张时，统一 global budget 仍更稳健；软降权也可能比直接
 删除更适合需要持续抑制 forgetting 的任务。
+
+Tool-use SFT 还多了一层准入：任务本身适合调用工具，不等于 teacher trajectory 对 student 可学习。若把所有“允许工具”的
+样本都混入监督，模型可能学到冗长调用格式，却在工具无益时也触发调用，并遗忘原有 text-only reasoning。更稳妥的 recipe
+先筛选 `tool-suited task × executable teacher trajectory`，再与 text-only trajectory 按显式比例混合；checkpoint 同时观察
+`pass@k`、tool-call validity、实际工具使用率与 response length，只有 form 与 substance 都稳定后才交给 RLVR。
+
+这条路径增加 teacher 执行、轨迹验证、mixture 调参和 checkpoint 选择成本；teacher 错误或工具反馈不稳定会被监督直接固化。
+纯文本能力足够、工具收益不可验证或执行环境昂贵时，保留 text-only SFT 更合理。受限证据只覆盖 Qwen3 4B/30B、竞赛数学与
+4,325 个 RLVR 样本，且两个规模的最佳路径不同；它支持条件化的训练顺序，不构成通用 tool-use 配方。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-06326 -->
 
 ### Scaffold-bound specialization：环境协议也是监督分布
 
@@ -431,6 +524,12 @@ Delta theta represented by small trainable factors
 
 两者可以使用相同 SFT data 与 token loss。LoRA 是参数化和训练状态选择，不是另一种 supervision objective。
 
+受限微调中分别选择 data subset 与 parameter mask 会重复计算并产生两个漂移的 selector。共享 validation objective 下，可从同一 gradient interaction matrix 的行/列聚合联合导出 data utility 与 parameter importance；selection artifact 必须绑定 validation set、gradient approximation、budget 与 base revision。局部/二阶近似失效或 shared matrix 成本过高时回退单轴选择、顺序选择或全量 SFT。
+
+证据覆盖 3B–9B 模型与作者 matched-budget 比较，只支持局部 response-surrogate 近似和所测 stability–plasticity trade-off；不证明全局 bilevel optimum。 TRAIN-DATA 管理数据准入；TRAIN-SFT 是联合 selection artifact 的 canonical owner。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-06166 -->
+
 ### Trainable Subspace 也是 Continual SFT 的评估变量
 
 把 fine-tuning regime 固定后比较 continual-learning 方法，在参数预算、更新深度和任务顺序稳定时最容易复算；但 full fine-tuning、只更新上层、adapter 或其他 PEFT 并不是同一优化问题。它们把梯度投影到不同 trainable subspace，因而同时改变新任务拟合、旧能力保持和可恢复的 update state。
@@ -438,6 +537,15 @@ Delta theta represented by small trainable factors
 <!-- semantic-body-binding:SF-2026-ARXIV-2604-21927:start -->
 所以 continual SFT 的 EvalSpec 必须把 trainable parameter set、更新深度、optimizer state 与 task order 写进 adaptation identity；方法排名若只在一个 regime 下成立，不能外推成算法本身的稳定优劣。更小的 subspace 可降低状态与遗忘面，却可能缺少目标任务所需自由度；更大的 subspace 提高可塑性，也扩大回退和旧能力损伤风险。论文只在其 task-incremental 模型与 benchmark 中展示 regime-dependent 结果，不能证明某种深度普遍最优。目标变化需要广泛表征重写时 full tuning 仍合理，数据窄、回滚与多租户 adapter 更重要时 PEFT 仍合理。
 <!-- semantic-body-binding:SF-2026-ARXIV-2604-21927:end -->
+
+
+#### Rotation-preserving 约束把遗忘风险落到敏感方向
+
+普通 SFT 允许梯度自由重排参数空间，在目标数据充足、旧能力可重训时最直接；continual SFT 的约束变成既要适配新任务，又要保护少量对 pretrained function 敏感的方向。rotation-preserving 分支把这些方向作为受保护 state，由优化器限制更新造成的旋转，而不是把所有参数一律冻结。它改变的是可训练子空间的几何约束，不是给旧能力提供绝对不变保证。
+
+保护敏感方向可减少部分遗忘，却需要估计和保存方向、增加优化约束，并可能阻碍新任务真正需要的表征重写；方向估计失真还会保护错误子空间。旧任务不重要或分布改变很大时，普通 full SFT 仍合理；预算紧、需要独立回滚时 adapter 仍更清楚。`arXiv:2605.10973v1` 的 §3–§5 与 Appendices C–E 只证明作者模型和任务中的 adaptation–forgetting 结果，不能外推为通用最优 SFT 几何。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-10973 -->
 
 ## Catastrophic forgetting 与能力回退
 
@@ -450,6 +558,34 @@ Delta theta represented by small trainable factors
 - 拒答边界过宽或过窄。
 
 缓解方法可能包括混入部分 pretraining/domain data、降低 update magnitude、增加数据多样性、使用 adapters 或早停。但每种方法都重新定义训练分布，必须通过 multi-slice Evaluation 验证。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-26097:start -->
+这些手段背后其实有三个相互约束的变量：旧能力收到多强的 retention signal、模型还剩多少可塑容量，以及优化以多快速度吸收新任务。单纯降低 learning rate 通常只是用更多 steps 换取更小的单步漂移；它不会增加容量，也不会补回缺失的旧分布约束。无法访问原始 pretraining data 时，可以冻结旧 reference model，由它从约定起始分布生成 replay，再用 token-level KL 约束当前模型。论文的受控实验表明，这条分支在仍有容量时可以缓解较高学习率带来的速度—遗忘冲突；接近容量饱和时，replay 仍不能凭空创造可塑性。
+
+因此 self-generated replay 只是一种有条件的 retention signal，不是无条件自举。BOS samples 可能不代表真实 pretraining distribution，reference 本身可能带偏差，狭窄 retain slices 也会掩盖回退；生成 replay、reference forward 与 KL 还会增加训练计算和 artifact lineage。现有证据主要来自受控语言混合、单任务 fine-tuning 与一个 1B instruction model 的 Verilog slice，没有直接测量信息容量，也不证明它适用于 frontier-scale、多任务持续学习或生产安全回归。若 replay 分布、capacity proxy 或 retain evaluation 失效，应回退可信 pretraining/domain replay、较低 learning rate 与早停、adapter/扩容，必要时拒绝继续吸收新任务。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-26097:end -->
+
+还有一项常被省略的 lineage 是 optimizer continuity。预训练与 full SFT 使用不同 optimizer 时，改变的不只是超参数名，而是更新方向的预条件、历史矩与局部 loss geometry；切换后的短期适配可能更快，也可能沿与预训练表示不一致的方向放大遗忘。因而比较“同一 checkpoint 的 SFT recipe”必须同时冻结 pretraining optimizer、SFT optimizer、状态是否继承/重置、学习率与数据顺序，并用目标能力和 retain slices 共同验收。保持同一 optimizer 可减少一种状态断裂，却可能不适合新的 batch、objective 或资源预算；出现不稳定或目标拟合不足时，应回退经过匹配实验验证的 SFT optimizer，而不是把 continuity 当作普遍最优。exact-v1 只支持作者模型和 full-finetuning 设置中的学习/遗忘差异，不证明任意架构、PEFT 或任务都应沿用预训练 optimizer。
+
+<!-- source-family:SF-2026-ARXIV-2605-06654 -->
+
+### Alignment 还可能在反向微调后的再暴露中 Rebound
+
+只比较 base 与最后一个 fine-tuned checkpoint，会把 alignment 当作静态结果。受限实验中的演进是三段有梯度更新的路径：先建立 alignment，再用 reverse fine-tuning 压低相关行为，最后通过 re-exposure / re-alignment training 观察能力是否快速恢复。它证明的是后续数据与目标可以重新激活被压低的行为，不是“停止训练后随时间自然反弹”。更完整的 release identity 应保存各 stage 的 matched checkpoints、数据与 objective、update steps、re-exposure 条件和 evaluator revision，把暂时被覆盖与稳定删除分开。
+
+轨迹验收增加 checkpoint、重放与监测成本，也可能把普通采样波动误判为 rebound。现有结果只覆盖三个 base LLM、窄数据和论文规定的分阶段训练，不能给出无训练时的时间恢复规律或通用恢复速率；因此它只能收紧后续微调与发布证据，不能取代全量安全回归。re-exposure 条件不匹配、趋势不稳或生产分布不同，应继续使用 retain slices、持续监测与可回滚 checkpoint，而不是依据一次终点测量宣称 alignment 已永久写入或会自动回来。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-18309:start -->
+Fine-tuning 的 alignment receipt 应覆盖 alignment、reverse fine-tuning 与 re-exposure/re-alignment 的匹配阶段，避免把后续训练下的快速恢复误写成停训后的自发反弹，也避免把一次抑制当成稳定删除。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-18309:end -->
+
+### Fine-tuning 稳定性还要观察输出空间
+
+固定 seed、降低 learning rate 和限制权重距离，是控制小样本 fine-tuning 的合理起点；但相近的参数距离不保证模型在输入附近保留相近的 action/output geometry。某些更新可以沿参数化的弱约束方向移动，使训练 loss 正常下降，输出却收缩到少数模式。Trainer 因而需要把多 seed lineage 与 patch/token-level output variance、covariance 和真实 rollout 结果一起保存，而不能只观察 weight norm。
+
+Output-level regularization、dropout 或更保守的 learning rate 可以抑制这种 collapse，却也可能压制任务真正需要的低方差动作。模型输出统计只是一种 sensor，环境 success receipt 才拥有行为验收权；在新场景、不同 embodiment 或小样本估计不稳定时，仍应回退多 seed、held-out rollout 和保守 schedule。受限机器人 benchmark 上的改善不能被写成“随机性已被消除”的通用结论。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606.13856 -->
 
 ### Forgetting Budget 可以绑定当前 Loss，而不是固定 Learning Rate
 
@@ -484,6 +620,20 @@ controller、transfer 与实验设置；§9 不证明任意模型尺度、域序
 - 难以追踪、更新或删除。
 
 需要频繁更新、可引用或权限敏感的知识，通常还要考虑 Retrieval、tool 或外部 state。SFT 更稳定的角色是塑造行为和任务接口，而不是替代所有知识系统。
+
+当参数内专门化确有价值时，也不必让整个 backbone 承担新领域。一个条件分支冻结 base model，让可插拔
+parametric memory 模仿 non-parametric retriever，再由逐 token router 融合 memory 与 base distribution。它把
+领域更新和回滚边界从 backbone 移到独立 artifact，却增加 memory 训练、路由、Serving 状态与跨域遗忘风险；
+router 失配或领域证据频繁变化时应回退外部 retrieval，容量足够且变更稳定时普通 SFT 仍更简单。
+
+<!-- source-family:SF-2026-ARXIV-2607-25614; daily-trace:papers/2026/07/29/README.md -->
+
+<!-- semantic-body-binding:SF-2026-MINIMAX-SPARSE-TOKEN-FORGETTING:start -->
+SFT 数据通常按任务或领域统计 coverage，这在目标行为由完整样本决定时合理，却可能漏掉更低层的输出接口：某些 token 在 pretraining 中出现过，但在 SFT 阶段几乎从未作为 target 被预测，最终 `lm_head` 对这些 token 的相对方向发生漂移。因而参数内知识保留还需要区分“token 出现在 context”与“token 作为 target 得到监督”，并把 pretrain→SFT 的 target frequency、logit/`lm_head` drift 和受影响 slice 纳入诊断。
+
+向全词表机械补重复样本可以提高最低 target coverage，却会浪费 token budget、改变会话分布，且未必修复所有语言或分词结构。更稳妥的控制顺序是先定位稀疏 target 与漂移，再选择数据清洗、targeted synthesis、受控 replay 或 CPT，并用原任务和受影响 token 的双重回归判断是否发布；Korean 等反例说明单一补数策略不能当通用修复。无法建立因果边界时，外部 retrieval 或保留旧 checkpoint 比盲目扩充 SFT 更安全。
+<!-- semantic-body-binding:SF-2026-MINIMAX-SPARSE-TOKEN-FORGETTING:end -->
+<!-- source-family:SF-2026-MINIMAX-SPARSE-TOKEN-FORGETTING -->
 
 若确实要做参数内的知识更新，监督数据也不能只是互相独立的问答。先固定一份有版本的事件与关系事实集，
 再生成文章和问题，并把生成内容抽回事实层检查局部、跨样本的一致性，可以避免同一事件在不同样本中
@@ -543,9 +693,18 @@ Training loss 只衡量对 demonstrations 的拟合。若 validation set 与训�
 
 ### SFT 也需要显式 Distribution-drift Contract
 
-标准 SFT 假设目标数据足以定义新行为，却可能在局部提升时破坏原能力。moving trust-region anchor 可以限制当前 policy 相对参考分布的漂移，并随训练阶段更新参考点；它把 catastrophic forgetting 从事后惊讶变成训练中的约束。代价是额外参考推理、anchor 选择和适应速度下降，过强约束会阻止真正需要的能力迁移。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-05438:start -->
+### 标签正确率不能替代结构约束
 
-因此 anchor 必须绑定任务切片与可接受 drift，而不是一个全局距离。发生分布切换或 reference 已过时时，应重新基准或回退到更弱约束并执行完整回归。小规模、同分布微调仍可使用普通 SFT，但不能把一次 loss 下降当作原能力保持的证明。
+普通 cross-entropy 在标签已经表达完整目标时最直接；若任务要求 transitivity、d-separation 等结构一致性，模型可以提高逐样本 accuracy，却通过 shortcut 产生彼此矛盾的全局关系。一个受限分支把可验证的 graph rule 编译为独立 semantic loss，并动态调整其权重，使“标签拟合”和“结构违反”成为两个可观察 objective。规则 owner 提交 constraint，优化器负责权衡，held-out behavior test 才判断推理结构是否真的保留。
+
+结构监督能揭示表面高分下的 collapse，也会引入错误规则、权重敏感性和 task-specific encoding。现有证据只覆盖 Gemma 270M 与合成的 transitivity/d-separation 任务，不能把这些规则升格为通用 causal reasoning。没有可靠结构规则时，应回退 cross-entropy、balanced slice、prediction-distribution audit 与独立行为测试，而不是用一个新的语义损失伪造普适性。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-05438:end -->
+
+标准 SFT 假设目标数据足以定义新行为，却可能在局部提升时破坏原能力。固定 KL reference 虽能限制漂移，但当 current model 已沿任务方向前进时，持续拉回同一个分布会制造长期 gradient conflict。一个离线折中先训练并冻结目标任务的 SFT reference；在每个 outer iteration，用 **current model 与该 frozen SFT reference** 的 probability 或 logit interpolation 构造 detached anchor，再在 inner loop 通过 distillation 近似投影到这个中间分布。变化的是 anchor 随 current model 移动，reference 本身并未被阶段性替换。
+
+这把一次全局迁移拆成一系列局部 distribution update，并在论文假设下给出单次 KL bound；它不证明任意 optimizer、近似 inner-loop 或未测能力都获得全局 retention。系统必须绑定 frozen reference、interpolation space/系数、outer/inner step、distillation data 与回归切片；额外 reference forward 和多层循环换来更受控的步长，过强约束会减慢真正需要的能力迁移。Reference 已不再代表目标、inner projection 偏差不可控或任务很小且同分布时，应重新基准或回退普通 SFT，并用完整回归而不是训练 loss 判断能力是否保留。
 
 <!-- source-family:SF-STABILIZING-LLM-SUPERVISED-FINE-TUNING-VIA-EXPLICIT-DISTRIBUTIONAL-CONTR -->
 
@@ -587,6 +746,15 @@ claim 则应优先保留 RAG/tool authority。Knowledge-aligned SFT 的作者实
 
 <!-- source-family:SF-2026-ARXIV-2609-01687 -->
 
+
+### 整体 Activation 相似不能证明内部能力未重排
+
+用平均 representation similarity 比较 SFT 前后模型，在变化广泛且稠密时是便宜诊断；稀疏 latent 只在特定 task/layer 激活时，整体相似度会把局部迁移淹没。评测应沿 layer、task 和 latent support 保存差异，并将这些内部 sensor 与最终行为、可干预性分别报告；probe 只描述相关结构，不能宣布模型真实推理机制。
+
+细粒度分析提高局部漂移可见性，却增加 probe 选择、多重比较和解释歧义，也可能把无害重参数化误判为能力改变。只关心最终结果或缺少可靠 intervention 时，行为回归仍是主 gate。`arXiv:2605.11426v1` 的 §3–§4 与 Conclusion/Limitations 只支持作者模型和任务上的 mechanistic observation，不证明相似 activation 意味着能力保留或 trace 忠实。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11426 -->
+
 ## Scaffold 既是策略，也是训练数据生成器
 
 程序化 scaffold 可以在 rollout 时分解任务、调用工具并产生 demonstration，再通过 distillation 把部分行为迁入参数。它因此不是一次性 prompt，而是与 base model、tool contract 和 compiler revision 配对的训练 artifact。模型在移除 scaffold 后成功，只证明某些行为被内化，不证明完整策略、异常处理或权限边界已迁移。
@@ -597,6 +765,20 @@ scaffold discovery、数据生成、蒸馏与重新编译可以循环演进，�
 
 传统 SFT 把 demonstration 当成静态样本；当 rollout 由 procedural scaffold graph 生成时，数据分布同时受 base model、tool contract、scaffold 与 compiler revision 控制。平台应把这组配对关系写入 artifact identity，再通过 discovery、distillation 与受控 recompilation 演进，而不是只登记最终权重。蒸馏可降低线上对 scaffold 的依赖，却可能丢失分支条件与恢复逻辑；无 scaffold 测试只能证明受测行为，不证明策略已完整内化，遇到新工具或分布漂移时仍需回退原 scaffold 或重新生成证据。
 <!-- source-family: arxiv:2608.05156v1; daily: 2026-08-07; semantic-body-binding: scaffold-conditioned-demonstration-provenance -->
+
+### 跨 Tokenizer 蒸馏需要共享概率接口，而不只是共享文本
+
+teacher 和 student tokenizer 不同时，teacher next-token probability 不能直接按 token ID 对齐。可把候选映射到规范化 byte space，再把概率质量分配给最长匹配的 student byte prefix，并把未匹配或跨边界质量保存在显式 residual/approximation 中。这样保留的是概率质量，而不是假设两套 vocabulary 同构。
+
+该近似依赖 Unicode normalization、prefix 条件与跨 token boundary 的处理；有限数学/编程任务不能证明所有语言都忠实。shared tokenizer 仍是最简单精确的基线。必须跨 tokenizer 时，训练 artifact 应记录双方 tokenizer identity、normalization、residual mass 与 approximation rate，并用行为回归拒绝 silent mass loss。
+
+进一步的问题是：只在字符串完全相同的 common tokens 上计算 KL，虽容易实现，也能在重合率高时保留尖锐监督；但 teacher 把数字或领域词拆成多个 token、student 却用单 token 表达时，common-vocabulary softmax 可能持续压低这些未匹配但任务关键的 logits。此时应先按 token class 审计被映射概率质量与 residual mass，再选择损失：关键类别覆盖不足时，用冻结的 canonicalization、span alignment 与稀疏概率投影计算 partition-free KL；覆盖可靠时，才扩展 high-confidence mapping 形成 hybrid KL。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21699:start -->
+Tokenizer 与映射 artifact 只定义概率坐标，teacher 提供监督，student optimizer 才提交参数更新，最终接纳仍由 held-out task 与多语言回归决定。投影能恢复 unmatched critical mass，却增加 span dynamic programming、稀疏映射、top-k 截断与映射漂移风险；字符串或重分词映射也不证明 token 语义等价。若 canonicalization、关键类别 coverage、residual mass 或行为回归失败，应回退 same-tokenizer distillation、带显式 residual 的 byte-level alignment，或只蒸馏经过验证的 hard sequences。现有证据只支持作者披露的 tokenizer pairs 与小模型 continued-pretraining 设置，不足以证明任意 tokenizer 都可无损对齐。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21699:end -->
+
+<!-- source-family:SF-2026-ARXIV-2607-22334 -->
 
 ## 本章在知识树中的位置
 
@@ -631,6 +813,12 @@ frozen pre-SFT policy
 coverage/tail 指标可能比训练集平均 loss 更合适；若数据小、噪声高或后续没有 RL，完整且均匀的 SFT baseline
 仍更容易复现。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11290:start -->
+序列级 tail 选择仍可能把不同 capability 混成一个平均难度。固定 token budget 下，可以先用冻结 probe 估计各 capability 的当前状态、饱和度和跨能力 spillover，再动态分配 targeted teacher supervision；allocator 只提出 capability/token 配额，teacher dataset、SFT objective 与独立能力回归共同决定是否提交。这样把“哪里还没学会”从单序列扩展为能力向量，而不是默认所有 teacher token 的边际价值相同。
+
+动态分配会继承 taxonomy、probe 和 teacher 的偏差，也可能为一个能力加预算却伤害相邻能力。现有结果只覆盖作者 teacher/student、20M/150M token budgets、八类 capability 与 evaluator，不证明开放 taxonomy、安全或隐私维度同样有效。Probe 不可靠、能力耦合强或覆盖不足时，应回退 static mixture、均匀探索或 staged distillation。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11290:end -->
+
 
 ## 从机制演进到系统设计
 
@@ -659,7 +847,116 @@ SFT 通过 demonstrations 和 loss mask，把 pretrained model 的开放续写�
 
 SFT 可以显著改善指令遵循、格式和风格，也可能导致过拟合、遗忘或错误行为固化。它需要和任务正确性、安全、通用能力回归以及 Serving protocol 一起评估。
 
+### Demonstration 可以由当前失败轨迹反向生成
+
+静态 teacher demonstrations 在任务分布稳定时简单，却常常没有覆盖当前 Agent 真正失败的位置。Hindsight Hint
+Distillation 先保存当前 policy 的失败 rollout，再由独立 hint generator 针对失败点提出提示，验证加入提示后的成功轨迹后
+才进入 SFT。这样把数据生成从一次离线采样改成 failure-conditioned 闭环，但 hint、judge 和 Agent 可能共享错误，成功也
+可能来自答案泄漏。因而 rollout、hint、修复轨迹与 verifier revision 必须分别保存；无法独立验证时回退原始人工示范或
+只保留失败样本用于评测。现有证据限 SWE-bench、OpenHands 与作者受测模型。
+
+<!-- source-family:SF-2026-ARXIV-2605-11556 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12741:start -->
+Rare-success 阶段还需要管理派生经验的生命周期，而不只是生成一次 demonstration。失败 trajectory 先保留 raw provenance；局部 reflection 只诊断本次 failure；跨 step playbook 再把可复用 lesson 保存为 derived state，并用 helpful/harmful evidence、staleness 与 pruning 控制保留。Self-teacher 可以读取这些状态产生 token-level target，但 playbook 不是环境事实，也不拥有样本 admission；当真实成功样本增多或派生策略开始失真时，应切换到 GRPO 或 verified SFT，避免让旧 lesson 自我强化。
+
+它以更密集监督换 reflection hallucination、跨步 poisoning、stale lesson 与参数化后难删除等风险。无法验证 lesson、需要用户级删除或任务后果很高时，应回退 raw trace、外部 memory 和人工 review。exact-v1 只支持 Qwen3-4B/30B 与四个 continual-learning tasks 的 early rare-success regime；其中 GRPO 对照并非等 rollout budget，后期收益也不单调。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12741:end -->
+
+### Offline Distillation 必须校正 Student 实际访问的分布
+
+固定 teacher dataset 在 student policy 与采集策略接近时简单有效；训练推进后，student 真正访问的状态可能与离线数据
+分布分离，使常见区域被过度重复、关键区域缺信号。distribution-corrected distillation 用估计权重调整离线样本贡献，
+权重器只拥有 training reweight 权，不能把估计分布冒充部署真值。它降低部分 mismatch，也引入 density-ratio 方差、权重
+爆炸和支持集缺口；重叠不足时应截断权重、补在线数据或回退普通 SFT。现有证据限作者 Method、模型和实验。
+
+<!-- source-family:SF-2026-ARXIV-2605-14071 -->
+
+### Teacher/Student 混合 Occupancy 是离线与纯 On-policy 之间的分支
+
+Offline SFT 使用完整 teacher trajectory，在 teacher 与 student 访问相同状态时最便宜、最稳定；长程 tool
+interaction 中，student 的早期错误会改变后续 state distribution，使稠密 teacher label 落不到部署时真正
+访问的 prefix。纯 student on-policy distillation 能覆盖这些状态，却可能在冷启动时持续产生无价值或不可恢复的
+轨迹。DAgger 提供中间分支：随 iteration 衰减 teacher intervention，在每个 turn 选择 student 或 teacher
+执行，或让 student 控制 prefix 后由 teacher 接管；无论谁执行，teacher 都为 visited state 提供 action label，
+student 再以监督损失更新。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12913:start -->
+这里有两类不能混淆的 owner：mixture rollout policy 决定 occupancy，teacher 只提供 label，environment 或
+verifier 才决定 outcome。该分支以额外环境交互与 teacher inference、复杂 trajectory/version identity、teacher
+bias 和 context overflow 风险，换取 covariate-shift 修正与早期恢复。teacher/student occupancy 已接近且成本
+优先时，offline SFT 仍成立；teacher 不可用时可回退 student-only on-policy distillation 或 RLVR，并接受
+sparse-feedback 边界。现有证据只支持受测 Qwen3 students、固定 teacher 与 OpenHands/SWE-Gym/
+SWE-Bench Verified，不能证明跨 Agent domain 或高风险代码自动发布。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12913:end -->
+
+### 复用局部正确 Prefix 时，要独立验证视觉依赖
+
+多模态 self-improvement 若每次从头重采样，能够保持 trajectory diversity，却浪费已经正确的早期推理；直接复用
+完整旧轨迹又可能把文本先验伪装成视觉推理。一个中间分支保留经 outcome 验证的 partial-correct prefix，从失败
+位置继续 resample，同时读取 intermediate-layer visual-attention signal，筛除几乎不依赖输入图像的候选。Prefix
+pool 拥有可复用轨迹状态，attention sensor 只提供视觉依赖 proposal，任务 verifier 仍拥有正确性 verdict。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11931:start -->
+该机制以更多中间激活采集、阈值校准和版本化 prefix 状态，换取较低的重复采样成本与更强 visual grounding；但
+attention 不是因果解释，错误 prefix 会约束后续搜索，过度复用还会降低 diversity。sensor 漂移、视觉依赖证据弱或
+任务分布变化时，应回退完整 resampling、原始 SFT/DPO/GRPO 数据路径和独立视觉反事实检查。现有证据只支持
+exact-v1 所测 2B–8B 多模态模型、五个 benchmark、8×A800 80GB 与最大输出 2048 的设置。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11931:end -->
+
+### 早期 Data Exposure 可以塑造后续 Fine-tuning 的抗遗忘边界
+
+仅在最后一次 SFT 注入关键能力，会让后续微调轻易覆盖它。受限实验提示，在更早阶段接触相关数据可以改变参数到解的路径，使同一能力在之后的 fine-tuning 中更难被抹除；这不是多训练一次的同义词，而是 data order 成为 recipe identity。<!-- semantic-body-binding:SF-2026-ARXIV-2605-12705 -->
+
+早期暴露也可能造成过拟合、污染或把不希望持久的行为固化。结论只支持所测模型与能力；后续任务冲突或泛化回归时，应回退 rehearsal、adapter isolation、regularization 或显式多任务训练。
+
+### Data Difficulty 在 Generalization 与 Extrapolation 间重新分配容量
+
+容易样本有助于稳定拟合已见分布，困难样本则可能提供外推所需结构，但过难或过少会让梯度被噪声和偶然策略主导。SFT recipe 因此不能只追求平均难度或最大难度，而应按目标能力分别验证 in-distribution generalization 与 out-of-range extrapolation。<!-- semantic-body-binding:SF-2026-ARXIV-2605-12906 -->
+
+难度由生成器或 solver 定义时还会引入测量偏差。现有合成推理实验不证明同一曲线适用于开放任务；外推收益不稳定时，应混入基础样本、扩大覆盖并回退以 held-out slice 选择配比。
+
+### Test-time Self-training 把参数更新带入请求生命周期
+
+普通 SFT 在部署前冻结参数，行为容易复现；query-conditioned test-time self-training 则从当前输入构造监督并临时更新模型，使推理能适配特定 query，却把 parameter delta、optimizer state 与 rollback 变成请求级状态。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13369 -->
+
+输入诱导的更新可能污染后续请求、放大恶意样本并增加尾延迟。受限实验不能证明开放流量安全；没有租户隔离、可验证监督和原子 rollback 时，应回退 frozen inference、检索或 session-local adapter，绝不把临时 delta 静默合并进共享 checkpoint。
+
+### On-policy Safety Distillation 必须把“会翻转的决策点”与普通模仿分开
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-15239:start -->
+离线安全 SFT 在危险模式稳定、示范覆盖充分时最便宜；部署策略不断变化后，固定数据可能看不到 student 真正访问的 unsafe prefix。一个受限分支先让当前 student on-policy rollout，再由带特权安全上下文的 teacher 找出能够把 unsafe 行为翻转为 safe 的位置，并只在 student 已访问的 token 上施加稠密 KL。teacher 负责提出反事实 target，flip signal 负责选择有信息的状态，student rollout 定义 occupancy；最终安全 verdict 仍由独立 policy/effect gate 决定。
+
+它把监督集中到早期 compliance token，可能减少无差别蒸馏，却会继承 teacher 偏差、共享盲点和 flip detector 的误判；“teacher 能翻转”也不等于真实世界安全。exact-v1 的 §3.1–3.2、§5.1–5.2、Appendix C/G 及 Limitations 只支持作者模型与评测。特权上下文不可用、flip rate 漂移或外部安全回归失败时，应回退 curated safety demonstration、普通 off-policy distillation，并保留独立红队与发布 gate。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-15239:end -->
+
+### Diffusion-LM SFT 要同时决定学什么与何时学
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22939:start -->
+统一随机 mask timestep 的 SFT 在 token 难度近似均匀时最容易实现；当不同 token 的学习阶段不同，curriculum 需要同时拥有 what（token difficulty）与 when（mask timestep）两个坐标。它们只决定监督 proposal，最终收益必须在 compute-matched baseline 与普通 SFT 下比较。
+
+联合 curriculum 能集中训练预算，却会引入难度估计偏差、时间表耦合和训练—推理失配。exact-v1 只支持作者 diffusion LM、数据和实验；估计不稳、额外复杂度无净收益或泛化回归时，应回退统一 sampling 或 vanilla SFT。arXiv:2605.22939v1
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22939:end -->
+
+### Embedding Noise 的分布本身属于训练 Recipe
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23171:start -->
+固定形状的 embedding noise 在局部平滑假设成立时是便宜的 regularizer；不同维度曲率与 tokenizer/model revision 改变后，noise symmetry、strength 和作用位置必须进入 recipe identity。噪声只提供局部扰动，held-out quality 与曲率诊断才决定是否保留。
+
+更匹配几何的噪声可能改善稳健性，却会放大尺度敏感、稀有 token 破坏和版本迁移失败。作者结果不证明某个分布对所有模型最优；曲率假设、质量或稳定性 Gate 失败时，应回退无噪 SFT 或已校准的 NEFTune 类基线。arXiv:2605.23171v1
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23171:end -->
+
+### Distillation 还要防止 Output Head 的共同偏差
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23645:start -->
+蒸馏通常把 teacher 输出当作内容监督；即使输入内容无关，只要 teacher 与 student 的 output-head 几何兼容，某些偏差仍可能沿软目标传递。监督身份因此要记录 teacher/student head、tokenizer 与目标构造，不能用总体 benchmark 强度掩盖 common-mode risk。
+
+该诊断揭示了“无关数据也安全”的边界，却不证明所有蒸馏都会传递隐藏特征。exact-v1 的结论受作者模型、控制实验和必要条件限制；风险不可接受、head 关系不明或独立回归失败时，应回退 verified ground-truth data、独立 head baseline 或停止 distillation。arXiv:2605.23645v1
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23645:end -->
+
 ## Review notes
+
+- [Teaching Thinking Models to Reason with Tools](https://arxiv.org/html/2605.06326v1)（Status: Experimental）：Qwen3 4B/30B、竞赛数学与 4,325 个 RLVR 样本支持条件化 SFT→RLVR recipe；不能外推为通用 Agent workflow 配方。
 
 - Evidence Sufficiency Boundary Training（Status: Experimental）：[arXiv:2609.01687v1](https://arxiv.org/html/2609.01687v1) §2–7、§9，Eq4–10、Tables1–4。
   同题四视图支持局部边界监督；Eq8仅限制gold-prefix score下降，不能证明答案identity不变。Qwen2.5-3B/LoRA、三multi-hop QA数据集、单正式seed；自动构造、不同baseline监督量/解码预算以及SEAL-style在多项指标更强的结果限制外推。没有在线gold oracle、全局最小证据保证或新领域验证。
@@ -712,11 +1009,6 @@ Primary-source 校验入口：
 
 ### Daily Books delta trace（2026-06—08）
 
-<!-- daily-books-trace:SF-2026-ARXIV-2606-18286:start -->
-- `SF-2026-ARXIV-2606-18286` — Daily `2026-06-11`；primary `arXiv:2606.18286v1`；Books review `books-review:SF-2026-ARXIV-2606-18286`。
-
-  **已吸收的语义增量：** Code SFT 的 sparse supervision unit 应是 syntax-complete、data-flow-connected code block，而非孤立 high-loss token；完整 response 继续作 context。
-<!-- daily-books-trace:SF-2026-ARXIV-2606-18286:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-28336:start -->
 - `SF-2026-ARXIV-2607-28336` — Daily `2026-07-31`；primary `arXiv:2607.28336v1`；Books review `books-review:SF-2026-ARXIV-2607-28336`。

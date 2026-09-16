@@ -106,6 +106,26 @@ theta_(t+1) = theta_t - eta_t * g_t
 
 负梯度是局部下降方向，不是全局最优导航。学习率过小，训练进展缓慢；过大，更新可能越过有效区域甚至数值发散。实际优化器会加入 momentum、自适应缩放、weight decay 等机制，但核心仍是利用局部导数决定参数如何改变。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21933:start -->
+把小步长训练近似成可逆连续流或 Langevin 过程，有助于建立直觉，却会省略有限离散更新的时间不对称。受限理论表明，backward error、time-renormalized correction、time-asymmetry 与正则化 entropy production 在 leading order 可形成一致的不可逆性刻画，并产生选择学习轨迹的 symmetry-breaking force。它修正的是动力学解释，不是一个自动选择 schedule 的新 optimizer。
+
+该结论依赖小步长展开、正则化和论文中的对称性条件，诊断本身也增加计算。exact-v1 的理论与实验不能外推到任意大步长或生产训练；假设不成立时，应回到离散 update、loss、gradient、step norm 与多 learning-rate 对照，而不是用 entropy-production 叙事代替实际稳定性测量。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21933:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22644:start -->
+类似地，把 SGD noise 直接等同 Brownian motion 会漏掉有限 learning rate 的二阶离散项；在 flat direction 上，真实离散动力学甚至未必具有连续扩散假设下的 stationary distribution。连续近似因此必须绑定步长、时间尺度和局部几何条件，不能把“噪声看起来近似高斯”升级为完整的 Langevin 语义。
+
+保留离散修正提高解释精度，却增加理论和数值估计成本，也不会自动选出更好的生产 optimizer。exact-v1 只支持其 disclosed setup、理论条件和多步长实验；尺度分离或正则条件未验证时，应停止使用 Brownian stationary 结论，回退直接离散模拟以及 loss、gradient 与 parameter displacement 监测。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22644:end -->
+
+### Edge of Stability 不是“越过阈值仍然安全”
+
+局部二次模型会给出一个由最大曲率和 learning rate 决定的经典稳定边界；它在 Hessian 近似固定、更新只停留在同一局部区域时很有用。深网训练却可能在 sharpness 越过这条静态阈值后继续降低 loss，因为离散 gradient map 会进入带振荡的局部分岔：normal direction 围绕低损失区域摆动，tangent direction 仍可能缓慢前进。这里改变的是训练动力学的解释，不是负梯度突然获得全局导航能力。
+
+Optimizer 拥有 step size 与 momentum，loss geometry 决定局部 map，sharpness/Lyapunov 指标只是一种诊断 sensor，不能自动授予放大学习率的权限。曲率估计昂贵、局部分岔假设也可能不成立；出现 loss、gradient 或 step norm 失控时仍应回退保守 schedule、clipping 和联合监控。更完整的调度与稳定性合同由第 28 章接手。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606.15551 -->
+
 数据集通常太大，无法每一步计算完整平均损失。训练因而使用 mini-batch `B_t` 对梯度做估计：
 
 ```text

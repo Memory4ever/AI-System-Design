@@ -284,6 +284,12 @@ authority 仍属于独立 policy；无法取得内部状态时回退 output/traj
 
 ### Model-internal Sensor 必须从 Inference Hot Path 解耦
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-25674:start -->
+训练侧也需要比 loss/gradient norm 更细的健康信号。一个受限 sensor 用一次全参数 Hessian-vector product 配合 Hutchinson probes，无偏估计每层 Hessian trace；存在 weight sharing 时，必须先按 layer 装配目标 Hessian 再求导，否则共享参数会被重复或错误归属。Probe 数和 mini-batch 重采样共同决定随机投影方差与数据噪声，曲率读数只能触发诊断，不能直接拥有停训权。
+
+HVP、多个 probes 与重采样增加训练开销，probe 方差、batch noise 或 shared-weight 处理错误还会伪造异常。估计不稳时应增加 probes、转离线高精度审计，或回退 loss/gradient norm 和人工判断。作者规模与 memorisation setting 只证明所测 detector，不构成大模型训练的通用阈值。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-25674:end -->
+
 只采集请求级 metrics 成本最低，却看不到 activation、attention、router 或 hidden-state 异常；在每个 kernel 上同步
 复制完整 tensor 最直接，又会让诊断本身改变 latency、显存与调度。内部可观测性因此需要从“是否插桩”演进为一条
 受 policy 控制的数据路径。
@@ -333,23 +339,43 @@ topology 和 application goodput 才能定位 root cause。NCCL Inspector 的 Pr
 主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-11916:start -->
-LLM serving release 不能只测分钟级峰值；应在 host/device/client 三面进行长时 aging campaign，并用 autocorrelation-aware statistics 区分 leak、runtime 与 workload regime。
+#### Software Aging 需要长时、多观察面的 Release Campaign
+
+分钟级压测适合验证峰值容量，却看不见 allocator、cache、queue 与连接状态在数小时或数天内累积的 software aging。Serving release 应在 host、device 与 client-perceived 三个观察面运行长时 campaign，保存 workload regime、版本与重启边界，并用考虑 autocorrelation 的统计方法区分持续泄漏、周期性 runtime 行为和输入分布变化。Monitor 只能报告趋势与变点；是否 drain、restart 或 rollback 仍由运维策略根据 SLO 与证据决定。
+
+长时观测提高慢性故障可见性，却耗费资源并可能把负载漂移误判为 aging。作者方法只支持其受测 serving stack 与 campaign，不能给出通用告警斜率；观测窗口不足、版本改变或客户端信号缺失时，应保留 Unknown，并用隔离复现、heap/device profile 或 canary 对照确认。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-11916:end -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-11949:start -->
-deployed safety classifier 需要 reference-window calibration、sequential alarm、multiplicity control 与 alarm-triggered conformal abstention；shift sensor 与安全 authority 分离。
+#### Shift Alarm 与安全放行权必须分离
+
+已部署 safety classifier 的静态阈值在 reference distribution 稳定时简单有效；prompt、攻击策略与 reasoning budget 漂移后，同一 raw score 不再对应同一风险。Monitoring 应冻结 reference window 和 classifier revision，使用 sequential alarm 与 multiplicity control 检测 shift，并在告警后触发经过校准的 conformal abstention 或更强复核。Shift detector 只拥有升级提议，确定性 policy、人工或独立 verifier 才拥有放行/拒绝 authority。
+
+在线适应缩短漂移暴露期，却新增 false alarm、延迟检测、标注滞后和覆盖假设失效。论文保证只属于其 exchangeability/校准条件和受测分类器；条件破坏、关键 action 或告警通道受攻击时，应回退保守拒绝、隔离执行或人工复核，而不是自动重设安全阈值。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-11949:end -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-14589:start -->
-Long-lived Agent 的 silent failure 应按 environment quirk、assumption mismatch、error swallowing、fail-plausible narrative、operational omission 分类，并要求错误跨组件边界后仍以可行动 evidence 到达人。
+#### Silent Failure 必须保留可行动的外部回执
+
+Long-lived Agent 的失败常被自然语言解释掩盖：environment quirk、assumption mismatch、error swallowing、看似合理的失败叙述和 operational omission 都可能让任务继续推进却没有交付真实 effect。监控链应把这些 failure class 映射到具体 stage、expected receipt 与 escalation owner，要求错误穿过组件边界后仍以可行动 evidence 到达人；“模型说已完成”不能关闭缺失的外部回执。
+
+分类提高定位和告警路由，却依赖完整 trace 与可定义的 expected effect；未知故障会落入旧 taxonomy 之外。作者纵向案例不能证明各类故障的普遍发生率，因此低风险、确定性 workflow 仍可用固定断言，高副作用或证据缺失路径则必须停在 Unknown/needs-review，而不是生成补偿性 narrative。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-14589:end -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-15980:start -->
-模型更新应默认触发activation-monitor revalidation，并将staleness prediction、label-free realignment与labeled retraining分层。
+#### Model Revision 必须触发 Activation Monitor 复验
+
+Activation monitor 依赖模型内部表征，模型更新即使保持外部 benchmark，也可能让 sensor feature 与原标签关系失效。每个 model revision 因此应默认触发 monitor revalidation：先用版本差异和未标注流量预测 staleness，再把 label-free realignment 作为低成本候选，只有独立 labeled gate 通过才晋级；失败时回退旧模型/旧 monitor 配对或外部行为传感器。Monitor artifact 必须绑定 model、layer/hook、feature transform 与 calibration set。
+
+自动 realignment 降低重标成本，却可能在真实风险一起漂移时维持虚假稳定；staleness predictor 也只是 sensor。作者评估不证明跨架构、跨任务修复，因此没有标签、hook 不兼容或 release 风险高时，应重训和重新校准，而不是继承旧阈值。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-15980:end -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-19386:start -->
-wall-clock moment detector 在 Agent cadence 下可能结构性双稳态；monitor 必须以可观测 transition window 校准而非宣称瞬时状态真值。
+#### 采样 Cadence 不足时只能报告 Transition Window
+
+Agent action 与环境 effect 的节奏可能慢于 monitor sampling。此时 wall-clock “瞬时变点”并非总是可识别：同一真实 transition 会因采样相位落在两个稳定解释上，形成结构性双稳态。Monitor 应声明可观测 transition window、采样 cadence 与迟到事件策略，输出区间或双假设而非伪造唯一 moment；调度/安全控制只在两种解释都允许时自动行动，否则等待新证据或升级。
+
+区间化结论牺牲反应速度，换取不把时间分辨率不足伪装成状态真值。作者构造只证明其 wall-clock 模型下的不可识别边界，不能代替真实系统校准；事件时间戳、因果 receipt 或更高频传感器可用时仍应使用更精确路径，证据不足则保留 Unknown。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-19386:end -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-24119:start -->
@@ -369,12 +395,6 @@ wall-clock moment detector 在 Agent cadence 下可能结构性双稳态；monit
 训练系统常用随机 bit flip 验证容错，因为它便宜且可重复；但真实 GPU silent corruption 与 operation type、数值位置和传播拓扑相关，均匀随机模型可能高估或低估保护效果。Monitoring 应把硬件错误指纹、受影响算子、跨 rank 传播和最终模型偏差连接起来，再据此设计校验、冗余与重算策略。更真实的 fault injection 提升证据质量，也增加硬件依赖与实验成本；无法取得现场故障分布时，应把随机注入明确标成 stress test，而非生产故障率或恢复能力的证明。[受限证据：arXiv:2605.04213v1]
 
 <!-- source-family:SF-2026-ARXIV-2605-04213 -->
-
-对永久或稳定复现的 CPU defect，另一条受限分支在同一 thread 内复制关键 instruction 并比较输出，把原 workload 变成主动 functional test。它比只依赖 machine-check exception 覆盖更多 silent mismatch，却增加指令、寄存器和时间开销；同源复制也可能共同受到设计 bug、瞬态相关故障或 compiler transformation 影响。
-
-这种 checker 只拥有检测信号，不拥有根因和恢复权。部署前应绑定被改写程序、instruction 类型、compiler、硬件代际与 false-positive/coverage 测量；开销过高或 fault model 不匹配时，回退离线诊断、ECC/checksum、冗余执行或 checkpoint recovery。作者 hyperscaler 测试不能外推为任意 AI accelerator 或生产故障率。
-
-<!-- source-family:SF-2026-ARXIV-2605-15638 -->
 
 ### 跨管理域网络需要可校验的 Ground Truth Loop
 
@@ -456,8 +476,10 @@ trajectory + tool/environment signals
 
 在固定已知攻击集上测 monitor，适合比较版本并建立最低回归线；当攻击者会观察告警边界并调整轨迹时，静态集合会系统性低估最难发现的 failure。更完整的 pressure test 让 red-team generator 在受控预算内搜索能完成有害目标、同时绕过当前 monitor 的 trajectory，再由独立 environment verifier 和 judge 确认目标、可执行性与告警结果。Monitor 只拥有 observation，red-team 只产生挑战，两者都不能自行宣布安全结论。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-09684:start -->
 <!-- source-family:SF-MONITORINGBENCH-SEMI-AUTOMATED-RED-TEAMING-FOR-AGENT-MONITORING -->
 每轮结果必须绑定 attack generator、target agent、tool/environment、monitor revision、judge 与 search budget；否则更强搜索产生的低分会被误读为 monitor 回归，较弱搜索产生的高分又会成为虚假安全感。半自动 red-team 能提高 hard-negative recall，却增加攻击生成成本、judge 偏差和 benchmark overfitting；固定回归集、人工设计攻击与生产 incident replay 仍应共存。公开结果只支持其 coding-agent monitor、模型和攻击分布，不证明未知攻击覆盖率。[受限证据：arXiv:2605.09684v1]
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-09684:end -->
 
 ### Router Telemetry 是旁路安全传感器，不是裁决器
 
@@ -481,9 +503,82 @@ Agent 说“我正在偏离”并不是可靠 monitor；外部 trace 可以用 s
 当训练进程自身可能挂起、污染缓存或重写日志时，进程内 telemetry 无法证明故障前后的真实状态。监测平面应从独立副本或旁路读取信号，先验证副本等价性，再用原位 replay 定位差异；这增加了资源与同步成本，却避免 observer 与故障共享同一失效域。副本不等价时只能报告异常线索，不能归因。
 <!-- source-family: arxiv:2608.11034v1; semantic-body-binding: independent-observation-path-and-in-situ-replay -->
 
+## 长轨迹 Monitor 需要可回到原始证据的有界状态
+
+### Risk-aware Latent 只能压缩 Evidence，不能压缩 Authority
+
+保存全部 Agent trajectory 最容易复查，但长会话会让在线 monitor 的 Context 和延迟失控；普通摘要又可能优先保留语言
+流畅性而丢失稀疏、迟发或组合风险。可控分支由 compressor 把轨迹压为 bounded latent evidence，再由独立 reader 判断风险，
+同时保存 compressor/reader revision、risk taxonomy、latent budget、source-span lineage 与 abstain receipt。latent state 只提供
+告警信号，不能单独授权或阻止真实 action。
+
+这条分工用不可直接人工阅读的表示、双模型成本与压缩漏检风险换在线可扩展性；reader 与 compressor 若共享盲区仍会共同
+失败。风险不确定、taxonomy 漂移或高影响 action 时必须回读 raw trajectory、扩大预算或转人工。作者结果只覆盖所测
+trajectory-safety 数据和 backbone，不证明生产权限或副作用已被治理。
+
+<!-- source-family:SF-2026-ARXIV-2606-00611 -->
+
+### Pre-reliability Monitoring 先验证 Wiring，再解释 Quality
+
+早期 Agent 系统尚不能稳定完成任务时，直接优化 task score 会把 missing integration、错误依赖和不完整 telemetry 混成
+“模型能力差”。monitor identity 应先区分 structural、within-run 与 cross-run scope，再在每个 scope 观察 quality、
+suitability 与 efficiency；结构完整性未通过时，FMEA 只把证据路由到修复或人工调查，不对业务质量做强结论。
+
+分层 scope 改善归因，却增加 taxonomy、severity、reviewer ownership 和跨 run state；variance 也可能来自 workload drift，
+不是 failure truth。单一 synthetic testbed 的结果不能提供生产 threshold，无法定位时应保留 Unknown、原始事件和人工复核，
+Evaluation/Release gate 仍拥有最终接受权。
+
+<!-- source-family:SF-2026-ARXIV-2606-02494 -->
+
 ## 小结
 
 Monitoring 用受控成本提供系统健康的统计视图。它适合发现趋势、提出 fail-slow suspect 并驱动分层控制环，却不能独自判定节点故障，也不能解释某一次失败的完整上下文。下一章用 structured logs 保存事件证据。
+
+### 小 Monitor 需要专门训练其检测边界
+
+用 frontier model 监控每条 reasoning trace 成本高且形成同源依赖。较小 monitor 可先通过 SFT 蒸馏已知检测行为，再用针对隐蔽目标的 RL 扩展到困难样本；它降低在线成本，却把 teacher blind spot、hard-case generator 与 OOD calibration 变成新的监控状态。<!-- semantic-body-binding:SF-2026-ARXIV-2605-12746 -->
+
+小模型在论文 threat model 外没有强保证，推理文本本身也可能被策略性伪装。检测分布漂移或严重度升高时，应升级强 monitor、执行工具验证或人工复核，不让低成本 sensor 拥有阻断真值。
+
+### 监控要定位首次错误 Step，而非只给整条 Trace 打分
+
+整条 trace 的单一 confidence 无法告诉系统何时开始偏离，也不能支持局部重试。沿 hidden-state transport geometry 观察相邻 reasoning steps，可以提出 first-error location，并把“前缀可信、后缀待修”交给 workflow；proposal 与最终 correctness verdict 必须分权。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13772 -->
+
+隐藏几何受模型、任务和层选择限制，理论及实验不构成因果证明。定位漂移或校准失败时，应回退外部 step verifier、多样本交叉检查或整条拒绝。
+
+### 小 Monitor 的跨域能力需要独立训练与校准
+
+为每个 domain 部署专用大模型 monitor 成本高；多任务单-token classifier 通过 SFT 可以迁移部分 detection boundary，但相邻 domain 的 transfer 不等于完全换 prompt 后仍理解新规则。training mixture 和 stage 决定 monitor representation，monitor 只产生风险 evidence，policy/release gate 保留裁决权。通用 instruction stage 能缓解 rule leakage，却会带来 loss dilution、prompt shift 和 edge-case regression。未在目标 domain/framing 验收时，应回退 prompted 或专用 monitor、保留 general instruction data 与独立 holdout。exact-v1 不给出跨部署通用阈值或生产成本保证。
+
+<!-- semantic-body-binding:SF-HOW-USEFUL-IS-CROSS-DOMAIN-GENERALIZATION-FOR-TRAINING-LLM-MONITORS -->
+
+### Streaming Threshold 必须由风险预算派生，而不是离线固定
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24696:start -->
+固定阈值在 base rate 稳定、告警成本明确时最容易运维；进入 streaming intrusion workload 后，prevalence 与 regime
+变化会让同一分数对应不同 operator burden。更完整的控制链从 operator cost、alert budget 与 SLO 派生 versioned
+threshold，把 change-point detection、calibration、conformal risk control 与 multi-window burn-rate 连接起来；模型
+只产生风险 signal，预算 owner 和发布 Gate 决定是否告警、隔离或升级。
+
+自适应阈值减少离线阈值漂移，却依赖 exchangeability、prevalence 估计与 calibration set。CRC overshoot、density
+degeneracy 或 base-rate inversion 会产生看似有保证的错误工作点。exact-v1 只覆盖作者披露的三个 prevalence regime
+和相应消融，不是通用在线安全保证；假设或 burn-rate 验证失败时，应回退静态保守阈值、隔离和人工调查，并保留
+旧阈值作为可比较的 reference path。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24696:end -->
+<!-- source-family:SF-2026-ARXIV-2605-24696 -->
+
+### Compliance Signal 可以持续运行，但 Judge Disagreement 必须升级
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24737:start -->
+一次性 compliance audit 在规则稳定、发布频率低时仍是可靠 baseline；持续变化的模型、prompt 与 policy 会让审计
+结论迅速过期，因此可把 policy/version、judge/model identity、输入 cohort 与 verdict 保存为 runtime signal，持续监测
+合规漂移。多个 judge 的一致只是一种传感器状态；disagreement 应触发人工仲裁，而不是通过多数票自动取得 truth。
+
+在线治理缩短发现延迟，也把 judge bias、共同盲区、prompt drift 与运行成本带进控制面。exact-v1 只给出作者框架和
+初步实验，不证明 judge ensemble 能替代法律或组织责任。bias、drift、低一致性或证据不可回放时，应回退静态审计、
+确定性规则和人工 override，并保留原始输入与裁决 lineage 供复验。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24737:end -->
+<!-- source-family:SF-2026-ARXIV-2605-24737 -->
 
 ## Review notes
 
@@ -520,37 +615,6 @@ Primary-source 与官方入口：
 #### 2026-06-25 source-specific Review notes
 
 - **SF-2026-ARXIV-2606-26383**：Primary `arXiv:2606.26383v1`；Method `https://arxiv.org/html/2606.26383v1 — §SOLAR speed-of-light performance model; bottleneck decomposition and bound calculation`；Evaluation `https://arxiv.org/html/2606.26383v1 — §Predicted-vs-observed latency and throughput analysis`；未证明边界 `https://arxiv.org/html/2606.26383v1 — §Analytical bounds depend on calibrated hardware/workload parameters and omit undisclosed runtime effects`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-
-### Source-family integration record
-
-<!-- daily-20260627:PLATFORM-MONITORING:start -->
-### Owner-merged minimal durable delta
-
-Training-instability monitoring 应在 aggregate loss 发散前读取 mechanism-adjacent state：attention spectrum、router/load state 与 update statistic 是分别校准、绑定 checkpoint 的 sensor。它们可以触发暂停、诊断或 rollback，但不能自动拥有 root-cause truth；sensor 漂移或相互冲突时必须 abstain，并保留最近已验证 checkpoint 作为 fallback。
-
-### Trade-off、failure、fallback 与 coexistence
-
-Pre-loss signal 可能噪声大且依赖 family；它们保持 observe-first，缺失校准时 abstain，不能自动干预训练。
-
-<!-- daily-20260627:PLATFORM-MONITORING:end -->
-
-<!-- recovered-daily-20260624:PLATFORM-MONITORING:start -->
-### 2026-06-24 evidence integration — PLATFORM-MONITORING
-
-相邻章 `books/part-06-ai-infrastructure/66-evaluation-system.md` 只接收 handoff，不重复拥有机制。
-
-### Owner-merged minimal text
-
-- **SF-2026-ARXIV-2606-24119**：撤销把 denoising top-1 concentration 当 PEFT collapse alarm 的旧路径；monitor 改读 max LoRA gradient norm，并由每个 DLM family 的 held-out calibration 拥有告警阈值。 816 个配置、3 个 DLM family 与 200-step horizon 只支持短程 DLM-LoRA triage；跨 family 阈值失败，不能外推为通用 collapse detector。
-
-<!-- recovered-daily-20260624:PLATFORM-MONITORING:end -->
-
-<!-- recovered-daily-20260625:PLATFORM-MONITORING:start -->
-### 2026-06-25 evidence integration — PLATFORM-MONITORING
-
-- **SF-2026-ARXIV-2606-26383**：`SOLAR speed-of-light performance model; bottleneck decomposition and bound calculation` 所定义的源特定机制用于以校准后的硬件与 workload 参数分解性能上界和瓶颈；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Analytical bounds depend on calibrated hardware/workload parameters and omit undisclosed runtime effects` 是 `SOLAR: AI-Powered Speed-of-Light Performance Analysis` 的 source-specific 反例/局限边界；若运行条件离开 `Predicted-vs-observed latency and throughput analysis` 的验证域，`PLATFORM-MONITORING` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-<!-- recovered-daily-20260625:PLATFORM-MONITORING:end -->
 
 ### Daily Books delta trace（2026-06—08）
 

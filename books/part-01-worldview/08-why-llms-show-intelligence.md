@@ -50,6 +50,25 @@ L(theta) = - sum_t log p_theta(x_t | x_<t)
 
 但“压缩”在这里是解释性视角，不代表模型一定构建了正确、简洁或因果的世界模型。错误相关性同样可以降低 loss，互相矛盾的文本也可能共同进入参数。语言中的世界结构只是训练分布的一部分投影。
 
+## 相关分布能支持因果推演，但不能自动识别干预关系
+
+既然科学论文、历史叙述和日常解释都包含原因、结果与反事实，一个合理的朴素判断是：模型为了预测这些文本，会把其中反复出现的因果结构压缩进可复用表示。这个判断解释了模型为什么能够复述因果知识、补全因果链，甚至在给定规则后执行多步推演；它不能直接推出模型已经从世界中识别出真实因果机制。
+
+关键差异在于，观察到 `X` 时预测 `Y` 与主动改变 `X` 后预测 `Y` 不是同一个问题：
+
+```text
+observational relation: P(Y | X)
+interventional relation: P(Y | do(X))
+```
+
+例如“撑伞”与“地面湿”可以在文本和观察数据中高度相关，但强制人们撑伞并不会让地面变湿；共同原因可能是下雨。多套因果结构可以产生相同或近似的观察分布，所以 next-token loss 即使拟合得很好，也没有提供唯一识别因果方向所需的 intervention、环境变化或结构假设。因果表示研究在明确条件下证明，完美干预数据可以增加 latent causal factors 的可识别性；这个结果说明干预提供了观察数据没有的信息，不证明语言模型天然满足那些识别条件。[Interventional Causal Representation Learning](https://proceedings.mlr.press/v202/ahuja23a.html)
+
+另一方面，文本并非只有未经处理的共现。它记录了人类实验、反事实讨论、程序执行、因果图和干预后的结果。因此语言模型可以继承人类已经整理的因果知识，并在新措辞中组合这些结构。行为研究也观察到模型能够在若干任务上生成正确的因果论证，但同时存在不可预测的 failure mode，且模型处理的是关于数据的文字信息而非实际观测数据。[Causal Reasoning and Large Language Models](https://arxiv.org/abs/2305.00050) 这类结果支持“模型具有条件性的因果推演能力”，仍无法区分它是在稳定使用抽象因果结构，还是识别题型后复现有效的语言模板。
+
+因而 Evaluation 至少要分开三层结论：能否复述训练分布中的因果知识；能否在给定明确 causal graph、干预与反事实规则时正确推演；能否在新环境中通过主动实验发现并持续修正因果结构。CLadder 把关联、干预和反事实查询建立在有 ground truth 的因果图上，显示形式化因果推理仍是困难任务；它衡量的是受控问题上的行为，不是对模型内部表示的完整读取。[CLadder](https://arxiv.org/abs/2312.04350)
+
+这条边界给 AI System 一个清楚的责任划分：语言模型可以提出因果假设、整理先验和生成候选推演，但 simulator、实验、监控数据或真实环境 observation 才能提供干预后的结果，高风险决策还需要独立验证与可回退的 action authority。纯文本模型在知识综合、低风险解释和已知规则推演中仍是合理路径；主动干预昂贵、缓慢且可能危险，也不能被机械要求用于每个问题。第 25 章拥有 action-conditioned World Model 与 intervention fidelity，第 66 章拥有相应 Evaluation contract；本章只界定 next-token 能力何时可以被称为因果推演，以及为什么它不能自动升级为因果发现。
+
 ## 为什么规模会扩大能力范围
 
 第 7 章讨论了 loss 随参数、数据和 compute 的经验趋势。把它连接到能力时，需要增加中间机制，而不能直接说“loss 下降所以智能涌现”。
@@ -194,6 +213,12 @@ sampling/confidence，第 76 章解释 external evidence path，第 66 章负责
 这也解释了为什么“永不 hallucinate”不是开放世界中的可验证承诺。系统能做的是在声明的 corpus、verifier、时间和
 风险 slice 内，测量 false-answer / abstention trade-off，并在 evidence 不足时拒绝把 fluent continuation 升级为事实。
 
+### 把 Hypothesis Generation 与 Evaluation 分开
+
+模型能够比较给定候选，并不等于它能够自行枚举出关键假设；在已观察域内更新 posterior，也不等于能在未观察域可靠外推。受限实验表明，给定 hypothesis 的 evaluation、自由 hypothesis generation 与 hypothesis-selective extrapolation 是三个不同接口：候选集合已经提供时表现近似 Bayesian，不能证明遗漏候选时仍会“知道自己不知道”。<!-- semantic-body-binding:SF-2026-ARXIV-2605-05851 -->
+
+这个结论来自 number game、一维整数和有限假设族，不能直接充当通用 LLM 认知理论。它给系统设计的稳定启示是：高风险任务应把 candidate generation、外部枚举、evaluation 与 evidence verification 分开，让任何一个阶段的自信都不能代替其余阶段。
+
 ## 关于“理解”和“意识”的边界
 
 模型能够形成有用表示、根据上下文改变行为并解决新任务，这是可观察的工程事实。由此可以研究模型是否建立某种内部世界结构、是否使用因果特征、是否能规划和自我修正。
@@ -258,6 +283,22 @@ scalable architecture
 
 但能力是有条件的。emergence 受指标影响，tool use 把模型能力变成系统能力的同时也放大风险，流畅输出更不等于稳定可靠。AI System 的责任，是把“模型有时能够做到”转化为“系统在明确边界内可以被信任地做到”。
 
+### Context 与 Working Memory 决定可计算的层级深度
+
+规模扩大可以增加模型拟合能力，却不能消除有限可见上下文和有限工作状态的计算边界。在树形 broadcast process 构造出的层级语言中，任务所需依赖深度、可见 context 与显式 reasoning/work memory 之间存在可分析的条件关系：当局部证据不足以恢复上层 latent state 时，仅扩大相同接口的模型并不会自动获得所需信息。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13687 -->
+
+这类结论来自规则树和合成语言，而不是自然语言的完整定律。它的长期意义是把“能力不足”拆成表示容量、可见信息和中间状态三类约束；若 workload 不满足树模型假设，就应回退真实任务的干预实验，而不是把理论 scaling law 当作生产预测。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21488:start -->
+当模型反复更新隐状态时，test-time compute 还可以表现为 task-conditioned attractor：额外深度增加同一状态的
+迭代次数，额外宽度增加并行初态或候选轨迹，二者都可能让表示更接近某个稳定区域。这解释了部分任务为何能从
+depth / breadth scaling 获益，但“轨迹收敛”只说明内部动力学稳定，不说明稳定点对应外部正确答案。
+
+因此系统必须把 latent convergence 与 answer verification 分开。若吸引子对 prompt、初态或分布漂移敏感，或
+外部 evaluator 不支持该结论，就回退固定推理预算、显式中间状态和可核验工具；受控模型与任务上的实验不能被
+外推为所有 LLM 都能靠更多采样获得可靠推理。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21488:end -->
+
 ## Review notes
 
 本章使用 operational capabilities 讨论“智能”，不对意识作结论，也不把 next-token prediction 描述为必然学得真实世界模型。后续 Review 应持续分离 base model、post-training、in-context behavior 与 tool-augmented system 四种能力来源，并在新增 emergence 案例时同时检查指标连续性和反方证据。
@@ -278,3 +319,9 @@ scalable architecture
   https://arxiv.org/abs/2109.07958
 - Stephanie Lin, Jacob Hilton, Owain Evans, "Teaching Models to Express Their Uncertainty in Words", 2022:
   https://arxiv.org/abs/2205.14334
+- Kartik Ahuja et al., "Interventional Causal Representation Learning", 2023:
+  https://proceedings.mlr.press/v202/ahuja23a.html
+- Emre Kiciman et al., "Causal Reasoning and Large Language Models: Opening a New Frontier for Causality", 2023:
+  https://arxiv.org/abs/2305.00050
+- Zhijing Jin et al., "CLadder: Assessing Causal Reasoning in Language Models", 2023:
+  https://arxiv.org/abs/2312.04350

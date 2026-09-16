@@ -141,6 +141,20 @@ Loader 只接受已经 commit 的 manifest，不通过“目录是否存在”�
 
 发布 metadata 时也要区分保证的层次：同一文件系统内写临时文件、`fsync` 文件再原子替换，可以避免 reader 读到被截断的单文件；它不自动构成全部 weights 与 metadata 的事务，也不单独证明掉电后的目录项持久性或多 writer 一致性。上面的第 5、6 步不能被一次 `rename` 或 `replace` 合并替代。2026-09-04 合入的 checkpoint-engine 官方更新示例修复分别展示了这两个局部边界；其证据只覆盖 example path，不代表整个库已经提供完整 checkpoint 事务。
 
+在多节点 local staging 中，`metadata last` 还需要一个全局前提：每个 node leader 的数据复制都已经成功。
+若失败只保存在本 rank，coordinator 仍可能发布 `.metadata`，把缺 shard 的目录伪装成可恢复 checkpoint。
+因此 node-local copy 先产生 success/failure evidence，再由全体 rank 做 fail-closed reduction；只有全局成功时
+coordinator 才能发布 completion metadata，任一失败都必须让所有 rank 看到相同失败终态。metadata 是提交证明，
+不能只是“coordinator 自己没报错”的结果。
+
+Local NVMe staging 可以把大量写入移出共享文件系统 critical path，并由每节点一个 leader 执行 promotion；
+代价是本地容量、二次复制、清理、节点失效和异步 save 组合语义。空间不足、promotion 失败或全局状态无法收敛时，
+应保留未提交目录供诊断并回退上一 committed checkpoint，不能发布部分结果。VeOmni #1164 建立这条 staging/promotion
+路径，#1172 随后修正 rank-local failure 未阻断全局 metadata commit 的缺口；两项合在一起才构成完整证据，
+且公开测试未覆盖真实多节点故障复现与自动空间回退。
+
+<!-- source-family:SF-2026-VEOMNI-1164-1172 -->
+
 `latest` 只能是指针，不能是唯一身份。每个 checkpoint 应有 immutable id，避免重试或并发 job 覆盖已有状态。
 
 ## 分布式 Sharded Checkpoint
@@ -161,6 +175,24 @@ rank-local sharded state
 ```
 
 PyTorch Distributed Checkpoint 与 Megatron distributed checkpoint 都提供面向 sharded state 的 save/load 能力。具体 API 会演化，稳定要求是保存 global tensor identity、local shard offsets、dtype/shape 与 layout metadata。
+
+### 低精度参数恢复要区分数值、编码与更新状态
+
+低精度训练常同时维护两种状态：Optimizer 持有高精度 main parameter，Model 则消费由它量化并同步得到的低精度副本。此时“恢复同一个权重”至少有三种不同的不变量：反量化后的数值相等、量化 codes 与 block scales 相等，以及下一次 optimizer update 从同一高精度状态继续。它们不能由一次宽松的 loss 对比互相替代。
+
+以块缩放格式为例，若 checkpoint 只保存反量化后的 BF16 weight 而不保存 block scales，`MXFP8 → BF16 → MXFP8` 即使保持反量化数值与 GEMM 结果不变，也未必保持原来的编码。只要可恢复的 FP32 main parameter 仍是 canonical update state，较强的恢复路径不是再次量化已保存的低精度 weight，而是在 optimizer state 加载后通过训练时相同的量化、同步与 AllGather 路径重新物化 model parameter：
+
+```text
+checkpoint FP32 main parameter
+→ restore optimizer-owned canonical state
+→ quantize through the training path
+→ synchronize / all-gather derived model parameter
+→ verify the promised invariant
+```
+
+这条路径用一次 load-time copy 与 collective 换取编码可复现性，并避免为派生副本创造第二个真值来源；但它只适用于 checkpoint 确实保存 optimizer/main parameter 的 resume。Weights-only、`no-load-optim`、finetune 或 release artifact 没有该 canonical state 时，系统必须保存足以重建编码的 scale/format metadata，或者明确把合同降为“数值与计算等价”，不能继续声称 bitwise encoding identity。公开实现目前只在特定 MXFP8 路径、4 张 GB300、TP=2 的测试中验证，单元测试约 5 ms 的 warm load 开销也不能外推为模型规模恢复成本。
+
+<!-- source-family:SF-2026-MEGATRON-6666 -->
 
 ## Resharding 为什么比 Load 更难
 
@@ -236,6 +268,15 @@ GPU training state
 - Job 退出前 flush/commit 语义。
 
 若下一次 save 到来时前一次仍未完成，系统必须 block、drop 或 coalesce，不能无限积累 snapshots。
+
+异步 API 返回 `Future` 也不等于 checkpoint 已经完成。训练主循环结束、进程退出或进入发布阶段之前，
+checkpoint owner 必须显式等待最后一个 pending save，并把后台异常传播到 job 终态；否则线程池的退出等待
+可能让健康写入偶然完成，却会吞掉失败 future，使训练以成功状态退出而没有可恢复的最终 checkpoint。等待点
+还必须在所有 ranks 上对称执行，避免只有部分参与者进入 completion barrier。这个规则把 exit 从普通控制流
+提升为 checkpoint commit 的最后一步，代价是训练尾部仍可能暴露存储延迟；若不能在 deadline 内完成，应将
+job 标为失败或无最终 checkpoint，而不是把“已提交异步保存”当成 durable success。
+
+<!-- source-family:SF-2026-VEOMNI-1162 -->
 
 ### 从统一 Object Graph 到 Composable State Providers
 

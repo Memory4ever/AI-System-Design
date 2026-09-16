@@ -145,6 +145,21 @@ KL 到 TV 的自适应 hybrid，或对 `-log(alpha)` 优化，让训练信号更
 shape、batching 和 scheduler cost 仍存在。LK Losses 为这条 objective-to-runtime alignment 提供了实验性证据，
 不证明其固定 mix、head weighting 或作者吞吐结果可跨 workload 外推。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-18810:start -->
+单 token overlap 也不足以指导 parallel block drafter。固定的 head/position loss weight 在 acceptance bottleneck
+长期停在同一位置时简单且可重放；但早位逐渐变准后，限制 accepted prefix 的位置会向后迁移。此时可把 expected
+accepted length 写成可微 surrogate，再按每个位置对 prefix survival 与 continuation value 的边际贡献分配 CE credit。
+这只改变 drafter training owner 的 loss weight；target verifier 仍独占 accept/commit，drafter architecture 与
+inference procedure 也不随之改变。
+
+动态 credit 更接近 runtime 真正消费的 accepted progress，却把训练目标与 target-generated token、draft
+confidence、block size、temperature 和 acceptance surrogate 耦合；累计 survival probability 还会让后位权重消失，
+需要不对称平滑和数值保护。相关性下降、低置信度不稳、训练开销超过收益，或 target/temperature 漂移时，应回退
+固定衰减 CE、普通 Forward-KL/CE，或重新标定后再启用。现有证据只覆盖 exact-v1 披露的 DFlash 单轨迹 parallel
+drafter、有限模型与 benchmark，以及指定 H200 训练和 L40S serving 配置；不能外推到 tree/autoregressive drafter、
+其他 verifier、batch/concurrency 或生产 SLO。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-18810:end -->
+
 这个边界也改变 benchmark baseline。若 verification 只接受 `min-p`、`eta` 等
 truncation policy 所允许的候选，比较对象应是 target model 在**相同 truncation
 policy** 下的 sampling。拿它与未截断 target baseline 比较，会把 truncation 自身的
@@ -167,6 +182,10 @@ collaborative 两类，并报告 draft probability overshoot 是后者的重要 
 该 taxonomy 和经验结论仍属 `Status: Experimental`；本章只吸收更稳定的原则：
 **放宽 exact verification 就是在修改 sampling contract，必须用 matched-policy
 baseline 同时评估速度与质量。**
+
+受 grammar 约束时，当前位置合法也不保证剩余前缀存在任何可完成后缀。若 verifier 只有局部 mask，它可能保持逐 token 合法却采到最终死路，得到的是 projected law 而不是目标 grammar-conditional law。更强的分支用 future-validity function 对局部 transition 做 Doob transform，再执行 exact acceptance：grammar owner 定义语言，validity evaluator 判断可完成性，target verifier 仍独占 commit。<!-- semantic-body-binding:SF-2026-ARXIV-2605-07698 -->
+
+它以未来可完成性换取计算复杂度；一般 CFG 的 exact validity 存在 #P-hard 边界。只能近似时必须显式报告分布误差，或回退可枚举 grammar、普通 constrained decode 与明确的 projected-law 语义。exact-v1 对 Dyck、有限 JSON 等语法给出的理论、TV bound 与实验不证明一般 grammar 可廉价保持目标条件分布。
 
 ## 接受长度小例子
 
@@ -256,6 +275,8 @@ batch fragmentation。BlockPilot v1 的受限实验还显示 label construction 
 controller 可跨硬件、并发或 SLO 直接迁移。若 acceptance 差异小、label 成本高或 scheduler 已能用更便宜的
 online statistic 调整 depth，全局固定或 runtime-level policy 仍更合理。
 
+### Routed Slim Verifier 只接管中等成本分支
+
 两级 draft/full verification 也不是唯一 ownership 结构。当中等置信候选很多时，把所有 rejection
 直接升级到完整 target 会浪费算力；可以在两者之间插入共享 embedding/output head 的 routed slim
 verifier：drafter 提案后，中间层分别选择接受、局部重写或升级到 full verifier，最早重写位置拥有
@@ -276,6 +297,15 @@ fragmentation 与 rollback coordination；更多层在作者受限实验中反�
 ### Verification 可以稀疏化，但 Exactness 不能稀疏化
 
 逐 token 验证最直接且易证明；长 draft block 下，先定位可能分歧的位置再集中 target compute 可减少验证工作，但 acceptance owner 仍须覆盖所有概率质量并保留 exact commit boundary。收益是降低 verify cost，代价是索引/稀疏 kernel 开销和漏检风险；无法证明等价时回退 dense verification。<!-- source-family:SF-2026-ARXIV-2605-19893 --> exact-v1 §3–5 支持论文的 sparse verification，§6 不证明任意模型或硬件都更快。
+
+
+### Memory-limited Speculation 要联合规划树与驻留状态
+
+固定 draft depth 或只最大化 acceptance，在 draft/target state 都能常驻设备时容易实现；内存受限后，扩大候选树会同时增加 KV、intermediate state 与 verification batch 占用。级联自适应树把候选扩展顺序、存活概率和 memory budget 放进同一 plan，scheduler 拥有分配与裁剪权，draft 只提出候选，target verification 仍拥有 commit authority。
+
+联合规划可能提高单位内存的有效接受长度，却带来在线估计、树管理和不规则 kernel 开销；预测偏差会让高价值分支被过早裁掉。短输出、低并发或显存宽裕时，固定 verify length 仍更稳定。`arXiv:2605.11186v1` 的 §4–§6 只支持作者模型、显存和 workload 下的级联树结果，不证明 production serving 的端到端 SLO 必然改善。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11186 -->
 
 ## Drafter 的演进：从辅助模型到受治理的 Serving Artifact
 
@@ -313,6 +343,14 @@ component graph + committed state frontier
 的前提下修正后续候选。第二是 **training distribution**：若 drafter 只在 target/SFT prefixes 上学习，部署时却连续
 消费自己的错误 proposal，就会遇到 exposure mismatch；target-assisted rollout 与 verification-error replay 可以
 把被拒状态重新纳入训练。
+
+### Chain Depth 会累积 Attention Drift
+
+把 drafter 误差只归因于参数量差距，在短 proposal 中常够用；chain depth 增长后，hidden norm 与自生成 token 的 attention share 可能逐步偏移，使候选在进入 verifier 前已经离开 target 的高概率路径。Runtime 可按深度观测漂移，在 calibration 支持的阈值处执行 normalization、缩短 draft 或提前终止，但 target-only acceptance 始终保留唯一 correctness 与 commit authority。
+
+更细的深度监控和归一化会增加统计状态、训练校准与控制分支，阈值漂移也可能过早终止有价值的 proposal。短 draft、接受率稳定或监控成本高时，原有固定策略仍成立；观测失配时应回退短链或关闭 speculation。exact-v1 只支持论文披露的模型、训练和 benchmark，不证明生产尾延迟的普适改善。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-09992 -->
 
 ### Attention 转换必须保持 Draft Function，而不只是压缩 KV
 
@@ -720,12 +758,37 @@ Token-exact speculative decoding 的验证边界清楚：目标模型接受多�
 
 <!-- source-family:SF-2026-ARXIV-2606-20591 -->
 
+### Device–Edge Offload 是受约束的 Proposal Placement
+
+固定在设备端生成相同长度的 draft，适合网络和电量稳定的场景；移动环境中，每个 token 的 entropy、剩余 energy/latency debt 与链路状态都会改变继续本地生成是否值得。Controller 可以据此在线决定继续 draft 或发送到 edge target，但该 action 只改变 proposal placement，不能越过 target verifier 的唯一 commit boundary。
+
+在线控制以额外估计器、网络观测和策略抖动换取资源适应性；模拟中的平均收益不能代表真实无线尾延迟。估计失准、链路剧烈变化或安全预算不足时，应回退固定短 draft、直接 target inference 或保守 offload。exact-v1 证据只覆盖其模拟拓扑、draft/target pair 与资源 envelope。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-10124 -->
+
 ## Stochastic Target 改变了 Block Drafter 的 Factorization
 
 在 greedy target 下，block drafter 可把未来位置近似为较稳定的单一路径；sampling entropy 升高后，各位置存在相关的多模态 continuation，独立预测会组合出 target 几乎不会采样的 block。更合适的 drafter 应显式建模跨位置依赖，并以 expected verified progress 而非逐 token likelihood 作为训练目标。
 
 exact target 仍拥有最终验证与 commit 权，因此该变化提高的是 proposal quality，不改变 correctness owner。它会增加 drafter 复杂度，且收益依赖 target entropy、batch 和验证成本；低熵或短 block 场景仍可使用简单独立 draft。
 <!-- source-family: arxiv:2608.05448v1; daily: 2026-08-07; semantic-body-binding: stochastic-block-draft-factorization -->
+
+### Draft 结构必须同时优化 Coverage 与 Verification Waste
+
+固定宽度 tree draft 易实现，却会在不确定分支上生成大量最终被拒 token；只走一条 greedy draft 成本低，又可能错过高概率替代路径。渐进 tree 分支根据局部置信与剩余验证预算逐层扩展，controller 拥有 expansion policy，target model 仍拥有 acceptance 与最终 token commit。它用额外 tree state 和不规则 kernel 换取更好的 coverage/waste 平衡，短输出或 acceptance 已高时线性 draft 仍更简单。
+
+MoE target 还暴露第二个成本轴：draft 的 token acceptance 高，不代表验证便宜；若候选触发大量分散 Experts，weight movement 与 All-to-All 会吞掉收益。drafter selection 因而需要联合估计 acceptance、verification FLOPs、Expert-set overlap 与通信，并在预测失准时回退普通 Decode。作者实验只覆盖其 MoE、draft 与硬件，不能把某个 Expert 阈值当成通用配置。
+
+<!-- source-family:SF-2026-ARXIV-2607-10661 -->
+<!-- source-family:SF-2026-ARXIV-2607-12696 -->
+
+### Diffusion proposal 与 AR verifier 必须对齐同一个 Prefix 条件分布
+
+masked diffusion 一次给出多个位置的 marginal，AR target 却按已接受 prefix 逐 token factorize。直接按 diffusion marginal 排序候选，会把彼此不一致的未来 token 组合交给 verifier，造成 acceptance 浪费。proposal adapter 应把候选重新条件化到当前 committed prefix，或只提交能够被 target 顺序验证的结构。
+
+对齐增加 proposal 计算和实现复杂度，也不能保证高 acceptance；特定模型与任务结果不能外推。target verifier 始终拥有 exact commit，factorization mismatch 或预算超界时回退普通 AR decode。
+
+<!-- source-family:SF-2026-ARXIV-2607-22634 -->
 
 ## 本章在知识树中的位置
 
@@ -795,13 +858,49 @@ draft 位于边缘、target 位于云端时，经典 acceptance 之外还多了�
 不同 drafter 的调用成本和命中区域不同，若每次都重建候选树，就会重复支付 target state 与验证开销。把新分支非破坏地 graft 到共享 tree，并依据在线接受状态决定 call、skip 或切换更强 drafter，可以把成本集中在最可能被提交的路径。代价是 tree ownership、节点去重和 verifier commit 必须保持一致，错误分支不能污染已经验证的前缀。
 <!-- source-family: arxiv:2608.26112v1; semantic-body-binding: multi-drafter-shared-speculation-tree -->
 
+## Diffusion Draft 需要重新建立可验证前缀
+
+### Draft Capacity 可以借用 Target Feature，但不能借走 Commit Authority
+
+独立小 drafter 成本低，却可能因容量不足产生低 acceptance；直接放大 drafter 又会吞掉 speculation 的收益。对于
+block-diffusion drafter，可以把 target 的只读 hidden feature 按 draft layer 注入，使较宽的并行 proposal 更接近 target，
+同时把 `target revision + feature interface + draft layer + denoising schedule` 固化为 proposal artifact。它改变候选质量，
+不改变 target verification、accepted-prefix commit 与 rejected-suffix rollback。
+
+更多 target feature 会增加内存、带宽和 drafter critical path，并可能在 interface 漂移后产生表面高 acceptance 的错误
+状态。收益必须以 accepted progress 减去 feature extraction、draft 与 verify 总成本衡量；低 acceptance、feature 不兼容
+或 batch 无法摊薄开销时，回退较小 drafter 或普通 target decode。作者证据只覆盖所测模型、任务和实现。
+
+<!-- source-family:SF-DFLARE-DIFFUSION-SPECULATION -->
+
+### 双向 Mask Context 必须先改写成 Temporal-causal Verification Layout
+
+AR target 天然把已确认 prefix 与未来位置分开；diffusion LM 的 mask slots 可以双向交互，若直接套用 token-level
+verification，同一次 forward 中的候选可能互相泄漏未来信息。可验证分支把 reference/data token 与 prediction slot 分开，
+按 denoising temporal order 构造 causal mask，并让 RoPE position 与该顺序一致；draft 只收集候选，target 仍在单次
+forward 后决定可提交集合。mask、position 或 block identity 不一致时，整块候选失效。
+
+这条布局恢复了受限的 verification boundary，却可能降低 diffusion 并行度，并引入额外 KV/layout 与不同 temporal factor
+的质量—吞吐选择。无法证明目标分布保持、tokenizer/position contract 漂移或质量 gate 失败时，应回退原始 blockwise
+denoising，而不是把更快的近似路径标成 exact speculative decoding。
+
+<!-- source-family:SF-2026-ARXIV-2606-02544 -->
+
 ## 小结
 
 Speculative Decoding 没有取消 autoregressive semantics，而是让便宜的 drafter 先提供已知候选，使 target model 能并行验证多个 positions。Exact acceptance 保护输出分布，系统收益则取决于 accepted progress 是否覆盖额外 draft、verification 和状态管理成本。放宽 verification 可以改变速度—质量 operating point，但那是新的 sampling contract，不再是语义透明的纯执行优化。
 
 至此第46～48章分别从 batch membership、KV placement 和 serial target steps 三个正交方向优化 runtime。下一章开始把这些机制映射到实际 Serving stacks。
 
+### AR 与 Diffusion 可以组成双视图 Proposal/Verification
+
+AR 保留精确左到右 factorization，diffusion 则能并行提出多个 token；双视图架构让 diffusion 负责 proposal，AR owner 负责验证和最终 commit，从而把并行机会与输出语义分开。<!-- semantic-body-binding:SF-2026-ARXIV-2605-12825 -->
+
+收益来自更长的可接受 proposal，代价是同时维护两套模型状态、额外内存和一致性协议。所测模型与吞吐结果不能证明所有 workload 都加速；接受率低、状态同步出错或内存超限时，应回退普通 AR decoding 或更小的 draft model。
+
 ## Review notes
+
+- `SF-2026-ARXIV-2605-07698`（Status: Theoretical / Experimental）：[exact-v1](https://arxiv.org/html/2605.07698v1) 支持 future-validity、Doob transform、TV bound 与受限 grammar 实验；一般 CFG 的 exact validity 为 #P-hard，近似函数不自动保持目标条件分布。
 
 - **Ceiling-Clipped Acceptance Histograms — Experimental**：[exact-v1](https://arxiv.org/html/2608.30427v1)§3、§4.1、§5.5、§7.2仅支持接受长度的上限删失、双向horizon改变与重测职责。anchor和proposal计数、EOS过滤、近似相同均值与浮点tie须分开；正文不采用附录A6的普遍保证、硬件条件不明的加速或无条件exactness。
 
@@ -886,7 +985,7 @@ baseline、capacity-aware verification 与 network-aware fallback 三项长期�
 
 ### Daily integration evidence trace
 
-- `2026-05-02 / SF-COMPONENT-AWARE-SELF-SPECULATION` — exact-v1 `arXiv:2605.01106v1`；正文只吸收 component topology 与多状态原子 rollback 的设计约束，不把组件存在写成可用 draft path 的充分条件。
+- `2026-05-05 / SF-COMPONENT-AWARE-SELF-SPECULATION` — exact-v1 `arXiv:2605.01106v1`；正文只吸收 component topology 与多状态原子 rollback 的设计约束，不把组件存在写成可用 draft path 的充分条件。
 
 #### Source-specific exact-v1 Review notes
 
@@ -897,32 +996,6 @@ baseline、capacity-aware verification 与 network-aware fallback 三项长期�
 - SF-2026-ARXIV-2606-24957: `arXiv:2606.24957v1`; exact-v1 URL=`https://arxiv.org/html/2606.24957v1`; Method=`https://arxiv.org/html/2606.24957v1 — §3 Observation; 4 Dustin Sparse Verification`; Evaluation=`https://arxiv.org/html/2606.24957v1 — §5 Experiment; Accuracy and End-to-End Decode Throughput`; Non-proof=`静态/动态 budget、memory capacity、SRH identification 与 configuration search 有成本；模型/任务迁移、低 ARR 或长尾输入应回退 dense target attention。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
 - SF-2026-ARXIV-2606-25091: `arXiv:2606.25091v1`; exact-v1 URL=`https://arxiv.org/html/2606.25091v1`; Method=`https://arxiv.org/html/2606.25091v1 — §II Background and Setting; III Gain Window`; Evaluation=`https://arxiv.org/html/2606.25091v1 — §III-A/B/C comparisons; IV Pipelining`; Non-proof=`这是 closed-form position analysis，不是广泛实测；closed API 无 verifier-only interface 时不可部署，WAN RTT 越界应回退 cloud AR 或 colocated SD。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
 - SF-2026-ARXIV-2606-25097: `arXiv:2606.25097v1`; exact-v1 URL=`https://arxiv.org/html/2606.25097v1`; Method=`https://arxiv.org/html/2606.25097v1 — §3 Methods; Serving-stack Configuration; TAIS Screen`; Evaluation=`https://arxiv.org/html/2606.25097v1 — §4 Results; E0/E1/E2/E5; B Reproducibility`; Non-proof=`证据绑定列出的 Llama target/draft、<=4,006 samples、temperature/framework 与非 tree-speculation 配置；无 matched arm 的 70B probe 不能算 TAIS pass。`; Artifact=`Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`
-
-### Source-family integration record
-
-<!-- recovered-daily-20260623:INFER-SPECULATIVE-DECODING:start -->
-### 2026-06-23 evidence integration — INFER-SPECULATIVE-DECODING
-
-相邻章 `books/part-05-inference-system/49-tensorrt-llm.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-22840**：RLM-Cascade: Response-Level Speculative Decoding for Cost-Efficient LLM API Serving 的 exact-v1 机制为：We present RLM-Cascade, a proxy-layer system that applies speculative decoding at the response level to reduce LLM API costs without requiring model architecture access or a shared vocabulary. 因此 把 draft/verify/bypass 路由、质量门槛、成本和 schema-critical fallback 共同验收。 该 family 的 failure pressure 是：We present RLM-Cascade, a proxy-layer system that applies speculative decoding at the response level to reduce LLM API costs without requiring model architecture access or a shared vocabulary. 披露的 evaluation signal 是：We present RLM-Cascade, a proxy-layer system that applies speculative decoding at the response level to reduce LLM API costs without requiring model architecture access or a shared vocabulary. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-<!-- recovered-daily-20260623:INFER-SPECULATIVE-DECODING:end -->
-
-<!-- recovered-daily-20260624:INFER-SPECULATIVE-DECODING:start -->
-### 2026-06-24 evidence integration — INFER-SPECULATIVE-DECODING
-
-相邻章 `books/part-05-inference-system/49-tensorrt-llm.md` 只接收 handoff，不重复拥有机制。
-
-### Owner-merged minimal text
-
-- **SF-2026-ARXIV-2606-24957**：speculative verification 的 target KV 不再全读；Dustin 混合历史 attention 与 draft lookahead，semantic retrieval heads 在线估计关键 token，只对稀疏 KV 做 target verification。 静态/动态 budget、memory capacity、SRH identification 与 configuration search 有成本；模型/任务迁移、低 ARR 或长尾输入应回退 dense target attention。
-- **SF-2026-ARXIV-2606-25091**：edge-cloud speculative decoding 的准入由 RTT、edge draft time、acceptance 与 target verification time 共同决定；single-request latency 不再是唯一目标，饱和 server 的 multi-tenant capacity 才可能 justify offload。 这是 closed-form position analysis，不是广泛实测；closed API 无 verifier-only interface 时不可部署，WAN RTT 越界应回退 cloud AR 或 colocated SD。
-- **SF-2026-ARXIV-2606-25097**：speculative decoding 上线前增加 target-aligned invariance screen：byte identity、McNemar、TOST 与 matched target-only arm 分离算法安全差异和 dtype/framework 噪声。 证据绑定列出的 Llama target/draft、<=4,006 samples、temperature/framework 与非 tree-speculation 配置；无 matched arm 的 70B probe 不能算 TAIS pass。
-
-<!-- recovered-daily-20260624:INFER-SPECULATIVE-DECODING:end -->
 
 ### Daily Books delta trace（2026-06—08）
 
@@ -963,7 +1036,7 @@ baseline、capacity-aware verification 与 network-aware fallback 三项长期�
 <!-- daily-books-trace:SF-2026-RESISPEC:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-03333:start -->
-- `SF-2026-ARXIV-2607-03333` — Daily `2026-07-04`；primary `arXiv:2607.03333v1`；Books review `books-review:SF-2026-ARXIV-2607-03333`。
+- `SF-2026-ARXIV-2607-03333` — Daily `2026-07-07`；primary `arXiv:2607.03333v1`；Books review `books-review:SF-2026-ARXIV-2607-03333`。
 
   **已吸收的语义增量：** 新增证据边界：Token speculation can be layered with read-only action speculation: fork the main model from shared prefix KV, confidence-gate an early tool probe, execute only read-only calls, and admit the observation only after exact final action match. The main action retains commit authority; mismatches use serial fallback, while verified rejected-prefix tokens may be reused as ordinary draft. This spends probe compute and read traffic and adds calibration, cancellation and side-effect boundaries. 该 delta 已进入 `books/part-05-inference-system/48-speculative-decoding.md#L510`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-03333:end -->
@@ -987,7 +1060,7 @@ baseline、capacity-aware verification 与 network-aware fallback 三项长期�
 <!-- daily-books-trace:SF-2026-ARXIV-2607.25852:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607.27269:start -->
-- `SF-2026-ARXIV-2607.27269` — Daily `2026-07-30`；primary `arXiv:2607.27269v1`；Books review `books-review:SF-2026-ARXIV-2607.27269`。
+- `SF-2026-ARXIV-2607.27269` — Daily `2026-07-31`；primary `arXiv:2607.27269v1`；Books review `books-review:SF-2026-ARXIV-2607.27269`。
 
   **已吸收的语义增量：** 新增证据边界：Functional reconstruction trains an MLA-compatible draft path to preserve target-relevant behavior rather than merely reconstruct KV tensors. Better functional alignment can raise accepted progress, but still requires exact target verification and adds target-specific coupling. 该 delta 已进入 `books/part-05-inference-system/48-speculative-decoding.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607.27269:end -->

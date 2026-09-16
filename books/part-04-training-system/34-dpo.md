@@ -67,6 +67,14 @@ r(x,y)
 
 对同一 prompt 比较两个 responses 时，`log Z(x)` 会相消。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20834:start -->
+上述闭式关系依赖 preference model、reference policy 与 support 条件。条件被破坏时，DPO 可能存在满足 pairwise
+loss 却偏离原 KL-constrained RLHF 目标的解空间；两者不能再被称为同一 objective 的不同实现。系统因此要把
+pair construction、reference、policy support 与 beta 共同冻结，并用 online/held-out outcome 检查等价前提。
+作者理论和实验不证明所有数据都会失配；条件成立且离线可审计时 DPO 仍更简单，失配明显时应回退显式 reward、
+在线 RL 或重新构造 preference data。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20834:end -->
+
 ## 从 Reward Difference 到 Policy Difference
 
 Bradley-Terry preference probability：
@@ -139,6 +147,12 @@ Prompt、padding 和跨样本 tokens 不应进入 response logprob。Chosen/reje
 
 Vanilla DPO 使用 sequence log-probability sum。较长 response 包含更多 token terms，因此 length distribution 会影响 log-ratio。Length normalization 或其他 variant 会改变 objective，不能悄悄加入后仍称为原始公式。
 
+同样地，把 response-level margin 重新分配到不同 tokens，也已经改变了 reward attribution 与局部 KL geometry，而不是实现细节。若 preference 的关键差异确实集中在少数 span，token weighting 可能比等权求和更有效；但权重 policy 必须是可版本化 artifact，并与原始 pair、reference checkpoint 和 reduction 方式一同保存。一种受限方案让冻结 reference 以 chosen/rejected 交换顺序执行两次 pairwise-judge prompt，从 verdict token 的 attention 中提取、归一化权重，并显式处理 attention sink。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21883:start -->
+Pair label owner 仍决定相对偏好，weight extractor 只提出 token credit，objective owner 冻结 reduction，optimizer 才提交更新。Attention 不是因果解释，也不是 preference truth；这种启发式还增加两次 forward、layer/head 选择、顺序敏感性、sink correction 与 judge bias。若 swap invariance、weight stability、chosen/rejected likelihood、KL 或 held-out behavior 回归失败，应回退 vanilla sequence-sum DPO，或只使用经过验证的 token/process labels。现有证据限于作者的 instruction-following 数据和较小模型，不证明 attention 权重可跨模型迁移或更高 judge score 等同更安全的行为。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21883:end -->
+
 ## Reference Policy 仍然存在
 
 DPO 常让 `pi_ref` 是 SFT policy 的 frozen copy。它提供两个作用：
@@ -184,6 +198,12 @@ chosen/rejected likelihood 与独立行为评估，不能因为目标函数在�
 
 旧的单一 `beta` 在固定数据、固定 optimizer 且已有充分 sweep 的场景仍更简单；只有跨 scale 迁移、自动调度或需要解释
 policy displacement 时，分离两种 scale 才值得增加新的配置与校准状态。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-10981:start -->
+即使 preference scale 与 update scale 已分开，SimPO 的 `beta` 仍会通过 sigmoid saturation 隐式过滤样本，而 `gamma` 的有效含义又随数据集 reward-gap 分布变化；因此二者的联合 sweep 很难跨数据复用。一个有界 ratio-margin 分支先把目标从“持续扩大 gap”改写为“接近最优 margin”，再以 chosen/rejected reward ratio 消去 `beta` 对 margin 定义的影响，并用单一、有界的 `xi` 表达期望相对分离。`xi` 可以由训练前 gap 分布的 quantile 提议，但这只是可审计的初始化状态，不是数据无关常数。
+
+这条分支不是给 `beta`、`gamma` 之外再增加第三个旋钮，而是以 `xi` 取代二者对目标 margin 的耦合调节。它减少重复联合试参，却新增 ratio normalization、初始分布估计与可能的 `xi` schedule；分布漂移、后期 target likelihood collapse 或归一化不稳时，仍应回退经过验证的 DPO/SimPO，并同时观察 raw gap、chosen/rejected likelihood、KL 与行为结果。exact-v1 只支持作者四个数据集以及 Mistral-7B-Instruct、Llama3-8B-Instruct、Gemma2-9B-Instruct，不证明免调参或跨数据集普适。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-10981:end -->
 
 ### 从对称 Pair Gradient 到 Probability-geometry Gate
 
@@ -241,6 +261,29 @@ Fine-tuning loop 不再需要：
 
 DPO 更简单，不意味着不需要独立 Evaluation 或迭代数据闭环。
 
+### Preference Pair 选择是实验设计，不只是数据量选择
+
+随机收集 chosen/rejected pairs 在候选来源近似同分布、标注成本充足时容易复现；当生成预算与标注预算都受限时，增加 pair 数并不保证增加有效信息。数据 owner 需要同时决定生成哪些 responses、比较哪些 pairs，以及哪些比较能覆盖当前 policy 与目标行为之间的缺口；训练器只消费已经冻结并带 provenance 的 pairs，不能用 loss 反向改写采样事实。
+
+更有信息量的 pair acquisition 可以减少冗余标注，却会引入 selection bias、设计分布与部署分布错位，以及对离线估计假设的依赖。覆盖不足或设计假设无法验证时，应回到随机或分层抽样并扩大独立评测，而不是把理论效率当作质量保证。现有证据来自理论与离线 randomized-design 条件，只支持把 pair acquisition 纳入实验合同，不证明某一选择策略在真实标注流程中普遍最优。
+<!-- source-family:SF-2026-ARXIV-2606-19607 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22211:start -->
+只用 length reward 或硬 token budget 约束最终长度，会把必要推理和冗余内容一同压缩。一个条件分支先由当前 policy 产生 rollout，只保留被 verifier 判为正确的样本，再局部删除重复、无关、不可读或答案后的探索内容，以 augmented-original pair 的辅助 reference-free DPO 学习内容级差异。正确性 gate、删除规则、policy revision 与 pair distance 必须共同冻结；augmentation 只拥有编辑 proposal，训练数据 owner 才能接受 pair。
+
+该路线需要额外 augmentation model、正确性验证和删除审计；过度编辑会移除必要推理，reference-free objective 也可能学习 style shortcut。exact-v1 只支持作者任务、模型和设置，不证明离线编辑在远离当前 policy 后仍有效。编辑后答案或过程验证失败、pair distance 过大或 held-out accuracy 下降时，应丢弃 pair，回退原 rollout、保守 length control 或只训练经程序/人工验证的局部编辑。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22211:end -->
+
+### 从独立 Pair 到 Preference DAG：只在全局顺序可信时升级
+
+独立 chosen/rejected pairs 在偏好关系局部、每条标签都能单独解释时仍是最清楚的训练事实；但同一 prompt 若存在多个等价答案和可传递的质量层级，重复 pair loss 会惩罚等价样本，也无法保存全局顺序。此时可以先按冻结的 preference signal 聚合 equivalence classes，再以 DAG 保存严格 dominance，只在跨类边上计算 local Plackett-Luce/DPO-style loss。Data owner 负责 graph construction 与 provenance，objective owner 只消费冻结图；graph revision 必须和 dataset、reference policy 一起进入 run identity。
+
+图结构减少重复和相互矛盾的局部比较，却会增加 graph inference、anchor bias，并可能把一次错误的传递性判断系统性放大。偏好非传递、不同主体发生冲突或图证据不足时，应保留未排序集合，回退经过审校的 pairwise DPO，而不是让算法补造不存在的全序。
+
+[受限证据](https://arxiv.org/html/2605.08037v1)来自作者构造的 preference graph、三个 benchmark 与三个 seed；它支持这条条件分支，不证明开放偏好天然满足 DAG，也不把 reward/preference signal 升级为事实真值。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-08037 -->
+
 ## Chosen Probability 也可能下降
 
 DPO 只要求 chosen 相对 rejected 的 policy/reference margin 增大。某些更新可能主要通过大幅降低 rejected probability 实现，chosen absolute likelihood 也可能下降。
@@ -283,6 +326,13 @@ DPO 只要求 chosen 相对 rejected 的 policy/reference margin 增大。某些
 它以较少在线更新换取 selection bias、dataset staleness 与二阶段 objective mismatch；覆盖退化时应恢复在线采样或人工数据修复，不能继续消费陈旧 pairs。`arXiv:2605.21266v1` 的 iterative/hybrid Method 与 §4 实验只支持作者流程；§6、Appendix B 不证明该拆分普遍优于端到端 online RL。
 
 <!-- source-family:SF-2026-ARXIV-2605-21266 -->
+
+### Sequential DPO 必须保留目标关系与训练顺序
+
+连续对多个 preference setting 做 DPO 时，只报告一个 aggregate forgetting 数字会把不同机制混在一起：后续目标可能与前一目标一致、正交或冲突，训练顺序和信号强度也会改变哪些 pairs 受益、哪些受损。Campaign identity 因此必须保存 objective relation、stage order、每阶段 reference revision 与 pair provenance；评测则使用固定 reference slice，分别报告 helped/harmed redistribution，而不是让后一次 evaluator 静默改写前一次结论。
+
+这种分账能解释遗忘来自目标冲突还是顺序效应，却增加评测矩阵和长期 campaign state。目标相近、一次性训练或预算不足时，合并数据后做单阶段 DPO 仍更简单；但只要宣称 continual preference improvement，就不能省略顺序与固定参照。现有证据限一个 8B LoRA 模型和四类 preference regime，不构成普遍遗忘定律。
+<!-- source-family:SF-2026-ARXIV-2606-19744 -->
 
 ```text
 pair dataset
@@ -333,6 +383,31 @@ DPO 把 online rollout 与 critic 移出主路径后，训练状态集中到 pre
 DPO 把 reward difference 参数化为 policy 相对 reference 的 sequence log-ratio difference，从而直接在离线 chosen/rejected pairs 上训练。它保留相对偏好的信息，同时删除显式 Reward Model、critic 和 on-policy rollout loop。
 
 简化的代价是更依赖固定 pair distribution。Preference coverage、reference identity、sequence masking、length effect 和独立 Evaluation 仍决定最终行为是否真正改善。
+
+### Preference Negative 可以在线生成，但必须保留时间扰动身份
+
+固定人工 preference pairs 易复现，却难覆盖视频—音频不同步的连续错误。SyncDPO 用规则化时间扰动为当前正样本生成
+负例，并用 curriculum 逐步增加错位难度；扰动器拥有 negative proposal，独立同步指标与人工/感知 evaluator 才拥有
+偏好判断。它降低标注成本，却可能让模型只识别规则伪影，且时间 metric 与主观质量并不等价。扰动分布偏离部署错误或
+evaluator 不稳定时，应回退真实错位数据、固定 DPO 或分任务训练。现有证据受规则负例、数据、模型和时序指标限制。
+
+<!-- source-family:SF-2026-ARXIV-2605-12179 -->
+
+### Reference-free Convex 分支以表达能力换取优化保证
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23244:start -->
+标准 reference-based DPO 用固定 reference 约束 policy drift，适合需要保持原模型行为的场景；reference-free convex 分支通过重写 policy class 获得更清晰的优化结构。凸性只属于重写后的表示和假设，不能反推原始深网 objective 已变成全局可解。
+
+更强优化保证降低搜索不确定性，却可能限制策略表达能力或改变与基础模型的兼容边界。exact-v1 只支持作者公式、模型与实验；质量、容量或安全回归时，应回退标准 reference-based DPO、SFT 或更受控的 online 路线。arXiv:2605.23244v1
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23244:end -->
+
+### 多轮 DPO 的 Reference 需要保留 Policy Lineage
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23398:start -->
+每轮只使用一个固定 reference，在单次 campaign 中最容易解释；重复 campaign 后，历史 policy 可能分别保留不同能力，trajectory-aware 分支可以保存 lineage 并学习融合权重。融合器只提出 reference candidate，held-out preference 与通用能力回归才决定是否提交。
+
+保留轨迹减少遗忘，却增加 checkpoint 存储、权重不稳定和 preference noise 累积。作者实验不证明迭代次数越多越好；融合权重坍缩、目标冲突或 held-out 回归时，应回退固定 reference、停止 campaign 或重新修复偏好数据。arXiv:2605.23398v1
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23398:end -->
 
 ## Review notes
 

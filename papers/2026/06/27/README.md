@@ -1,133 +1,59 @@
 # Daily Research — 2026-06-27
 
-**Research Date:** 2026-06-27
+**规范：** V3
+**窗口：** 2026-06-26T09:00:00+08:00 ～ 2026-06-27T09:00:00+08:00
+**状态：** 完成
+**Books：** 纳入本次
+**检查时间：** 2026-09-14T09:36:20+08:00
 
-**Timezone:** Asia/Shanghai
+## 1. 结论
 
-**Strict Window:** 2026-06-26 09:00:00 ～ 2026-06-27 09:00:00（北京时间，左闭右开）
+本窗没有可归属的 arXiv 常规公告批次；canonical first-public owner identity 为 0。当前合同再认证已实际回放 13 个机构每日源，而不是按来源注册日期豁免历史扫描；旧报告按 submission 或索引时间出现的 arXiv 条目仍不搬入本窗，撤回项也不进入候选与采用链。
 
-**Contract:** V2.1 Full Replay；Historical Daily 独立于 Weekly
+机构源只恢复 Anthropic 于 2026-06-26 列出的 Economic Index Cadences。其研究对象是 AI 使用节奏的经济/社会测量，不改变大模型或基础设施设计 contract，因此在候选前语义关闭；候选数、Evidence 与 Books 队列仍为 0。
 
-**Status:** Complete；Coverage=Closed、Evidence=Passed、Books=Passed；canonical raw denominator 为 0
+2026-09-14 按当前来源清单重放 13 个机构每日源并复用仍匹配的 arXiv / exact-v1 / Evidence / Books 证据。机构源补查恢复 Anthropic Economic Index Cadences，但其经济/社会测量不改变 AI System 设计 contract，题摘语义关闭；冻结分母仍为 0。详细过程见 [当前合同再认证](../_sources/daily-20260627/CURRENT_CONTRACT_RECERTIFICATION_20260914.md)。/root 非作者独立复核已通过。
 
-## Executive Summary
+## 2. 来源覆盖
 
-本窗口在注册 arXiv category 的 canonical first-announcement owner 重建后没有 raw identity，冻结候选分母为 0，属于 `No Material Update Daily`。该结论来自非空的官方 DOI identity/announcement owner 收据，不继承旧 submission-date 报告中的候选：旧条目已进入跨日报 canonical transfer queue，由各自真实 owner Daily 继续审阅。本日没有 Evidence pending、Books pending 或需要人为提供的 exact-version material，也不为制造差异修改 Books。
+| 来源 | 检查范围与依据 | 结果 | 缺口 |
+| --- | --- | --- | --- |
+| SRC-OPENAI | [当前合同再认证](../_sources/daily-20260627/CURRENT_CONTRACT_RECERTIFICATION_20260914.md)：官方 Research 时间序列与窗口定点检索；本窗无范围内新增 | 已检查 | 无 |
+| SRC-ANTHROPIC | [当前合同再认证](../_sources/daily-20260627/CURRENT_CONTRACT_RECERTIFICATION_20260914.md)：06-26 Economic Index Cadences 属经济/社会测量，不改变 AI System 设计 contract，题摘关闭 | 已检查 | 无 |
+| SRC-GOOGLE-AI | [当前合同再认证](../_sources/daily-20260627/CURRENT_CONTRACT_RECERTIFICATION_20260914.md)：DeepMind / Google Research 官方索引；本窗无范围内新增 | 已检查 | 无 |
+| SRC-META-AI | [当前合同再认证](../_sources/daily-20260627/CURRENT_CONTRACT_RECERTIFICATION_20260914.md)：官方 Research 时间序列；本窗无范围内新增 | 已检查 | 无 |
+| SRC-QWEN | [当前合同再认证](../_sources/daily-20260627/CURRENT_CONTRACT_RECERTIFICATION_20260914.md)：官方博客时间序列；本窗无新 family / 重要 revision | 已检查 | 无 |
+| SRC-DEEPSEEK | [当前合同再认证](../_sources/daily-20260627/CURRENT_CONTRACT_RECERTIFICATION_20260914.md)：官方 Research / 发布索引；本窗无新 family / 重要 revision | 已检查 | 无 |
+| SRC-MOONSHOT | [当前合同再认证](../_sources/daily-20260627/CURRENT_CONTRACT_RECERTIFICATION_20260914.md)：Kimi Blog 与官方仓库发布时序；本窗无范围内新增 | 已检查 | 无 |
+| SRC-TENCENT-HUNYUAN | [当前合同再认证](../_sources/daily-20260627/CURRENT_CONTRACT_RECERTIFICATION_20260914.md)：官方 publicList 8/8 条按展示首发日期检查；本窗无范围内新增 | 已检查 | 无 |
+| SRC-ZAI | [当前合同再认证](../_sources/daily-20260627/CURRENT_CONTRACT_RECERTIFICATION_20260914.md)：官方 Research 时间序列；本窗无范围内新增 | 已检查 | 无 |
+| SRC-BYTEDANCE-SEED | [当前合同再认证](../_sources/daily-20260627/CURRENT_CONTRACT_RECERTIFICATION_20260914.md)：官方 Research、论文目录与发布页；本窗无范围内新增 | 已检查 | 无 |
+| SRC-BAIDU-ERNIE | [当前合同再认证](../_sources/daily-20260627/CURRENT_CONTRACT_RECERTIFICATION_20260914.md)：官方技术博客与仓库发布时序；本窗无范围内新增 | 已检查 | 无 |
+| SRC-XIAOMI-MIMO | [当前合同再认证](../_sources/daily-20260627/CURRENT_CONTRACT_RECERTIFICATION_20260914.md)：官方 Paper / Blog 与仓库；本窗无范围内新增 | 已检查 | 无 |
+| SRC-MINIMAX | [当前合同再认证](../_sources/daily-20260627/CURRENT_CONTRACT_RECERTIFICATION_20260914.md)：中英文博客与 Agent Tech Blog；相邻条目为 06-09/06-01，本窗无新增 | 已检查 | 无 |
+| SRC-ARXIV | [canonical raw inventory](../_sources/daily-20260627/canonical-raw-identity-inventory-v2.1.json.gz) 与 [V3 audit](../_sources/daily-20260627/v3-admission-audit-20260910.json)；本窗无可归属常规公告批次 | 已检查 | 无 |
 
-## 1. Coverage
+本窗没有触发按需来源。
 
-<!-- validator:report-metadata-v2 -->
-| Field | Value |
-| --- | --- |
-| Contract Version | V2.1 |
-| Score Schema | V2 |
-| Report Type | Daily |
-| Window Start | 2026-06-27 |
-| Window End | 2026-06-27 |
-| Registry Version | 2026-08-25 |
-| Coverage Mode | Full Replay |
-| Baseline Report | — |
-| Changed Source IDs | — |
-| Previous Denominator ID | — |
-| Denominator ID | DEN-20260627-0fd3211182967b93aad4 |
-| Denominator Frozen At | 2026-09-03T13:05:00+08:00 |
-| Completion Status | Complete |
-| Coverage Gate | Closed |
-| Evidence Gate | Passed |
-| Books Gate | Passed |
+## 3. 候选与判断
 
-### Source Coverage Receipt
+| 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
+| --- | --- | --- | --- | --- |
 
-<!-- validator:source-coverage-v2 -->
-| Source ID | Window Start | Window End | Executed At | Endpoint / Filter | Result | Hits | Candidate Source Families | Pagination / Cursor | Window Watermark | Closure Evidence | Gap / Limitation ID |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SRC-ARXIV | 2026-06-26T09:00:00+08:00 | 2026-06-27T09:00:00+08:00 | 2026-09-03T13:05:00+08:00 | official arXiv availability schedule + DataCite DOI identity/created reconciliation; registered categories only | no_hit | 0 | — | pages=63 monthly DOI partitions checked once and deduplicated; final_cursor=end; canonical owner bucket empty | 2026-06-27T09:00:00+08:00 | coverage:SRC-ARXIV:20260627 | — |
-<!-- coverage:SRC-ARXIV:20260627:start -->`../_sources/daily-20260627/canonical-raw-identity-inventory-v2.1.json.gz`（SHA-256 `0fd3211182967b93aad487bbe75bdaff4ba837b1a30197d9fd644ee3c83966ee`）记录 0 条 owner identity；`../_sources/daily-20260627/official-arxiv-first-public-owner-receipt-v1.json` 与月级 reconciliation 保存旧候选的迁出路径。新增 Required Daily source 的 Effective Date 晚于本窗口，不倒推为到期 receipt。<!-- coverage:SRC-ARXIV:20260627:end -->
+## 4. 证据与知识整合
 
-### Coverage Limitations
+无候选。零命中只表示约定来源与窗口内没有可归属材料，不表示互联网上没有 AI 研究。
 
-DataCite 在这里承担 DOI identity 与 immutable `created` 交叉核验，不承担论文机制结论；空分母意味着没有候选 claim 需要 exact-v1 review。两条跨月 identifier/DOI-created 冲突不属于本日 owner，已在月级去重 Materials Request 中单独保存。
+## 5. 缺口与下一步
 
-### Materials Request Ledger
+无
 
-<!-- validator:materials-request-v1 -->
-| Request ID | Priority | Source Family ID | Source ID | Gap / Limitation ID | Owner Week | Known Identifiers / URLs | Missing Material | Why Existing Evidence Is Insufficient | Acceptable Substitute | Suggested File Name | Required Review Scope |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+本窗没有可执行未决、外部材料请求或 Books 写回对象。
 
-None — 本日空分母没有 exact-version 材料请求。
+## 6. 复核
 
-## 2. Candidate Ledger
+复核者：V3 恢复语义复核（独立于旧 V2.1 报告作者；2026-09-10）
 
-<!-- validator:candidate-ledger-v2.1 -->
-| Source Family ID | Primary Identifier | Event Identity | Owner Week | First-public Date | Supporting Source IDs | Design Delta | System Reach | Durability | Total | Candidate State | Review Status | Access Status | Review Override | Review Ref | Owner Report Ref | Prior Review Ref | Reconciliation | Stable Node ID | Books Disposition | Books Review Ref | Benchmark Claim |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+结论：通过
 
-冻结候选分母为 0；旧 submission-date 候选已迁往 canonical owner queue，不在本日重复评分。
-
-## 3. Review Completion Receipt
-
-<!-- validator:review-completion-v1 -->
-| Source Family ID | Review Provenance ID | Review Route | Primary Evidence Version | Reviewed Evidence Versions | Method / Identity Locators | Evaluation Locators | Limitations / Counterevidence Locators | Artifact Locators | Claim Boundary Ref | Completion Result |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-
-### Source Reviews
-
-None — denominator 为空。
-
-## 4. Benchmark Contracts
-
-None — denominator 为空。
-
-## 5. Deep Analysis Selection
-
-<!-- validator:deep-analysis-selection-v1 -->
-| Source Family ID | Eligibility | Decision | Analysis Unit ID | Subsumed By | Priority Rationale | Narrative Ref |
-| --- | --- | --- | --- | --- | --- | --- |
-
-None — eligibility pool 为空。
-
-## 6. Books Comparison
-
-<!-- validator:books-comparison-v1 -->
-| Source Family ID | Stable Node ID | Target Chapter Ref | Adjacent Chapter Refs | Existing Proposition | New Evidence Delta | Evolution Relation | Decision | Books Review Ref |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-
-None — 没有通过 Evidence Gate 且可能改变长期知识的 Source Family；本日不修改 Books。
-
-## 7. Semantic Audit
-
-<!-- validator:semantic-audit-v1 -->
-| Audit ID | Auditor | Scope | Reviewed Refs | Findings | Resolution | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| SA-20260627-COVERAGE | fresh-context:canonical-owner-empty-denominator | coverage | coverage:SRC-ARXIV:20260627 | none | nonempty raw inventory and owner receipt prove an empty canonical bucket | passed |
-| SA-20260627-EVIDENCE | fresh-context:canonical-owner-empty-denominator | evidence | validator:review-completion-v1 | none | no candidate requires Source Review | passed |
-| SA-20260627-SELECTION | fresh-context:canonical-owner-empty-denominator | deep_analysis_selection | validator:deep-analysis-selection-v1 | none | empty eligibility pool | passed |
-| SA-20260627-BOOKS | fresh-context:canonical-owner-empty-denominator | books | validator:books-comparison-v1 | none | empty denominator has explicit No Change decision | passed |
-
-## 8. Ignored Noise
-
-- 非本日 canonical owner 的 family 不因旧报告位置而重复计分。
-- withdrawn family `arXiv:2606.24369v1` 已从 selected、candidate 与 Books queue 清除。
-
-## 9. Recommended Action
-
-保持 Books 不变；后续研究从下一个非空 canonical owner Daily 继续。
-
-## 10. Repository Changes
-
-- 重建 `papers/2026/06/27/README.md` 为 canonical owner 的空分母 Daily。
-- 原报告正文已冻结在月级 precanonical snapshot；候选转移由 canonical owner queue 承接。
-- 未修改 Books、ROADMAP、DECISIONS 或 Weekly。
-
-## 11. Open Questions
-
-None — 本日 Gate 已闭合；月级两项 owner 冲突不归本日报告处理。
-
-## 12. Sources
-
-- [arXiv Availability Schedule](https://info.arxiv.org/help/availability.html) — 访问日期：2026-09-03。
-- [DataCite REST API](https://api.datacite.org/) — 访问日期：2026-09-03；仅作 DOI identity/created metadata 交叉核验。
-
-## 13. Final Status
-
-Completion=Complete；Coverage=Closed、Evidence=Passed、Books=Passed；raw identity=0；candidate pending=0；unresolved findings=0；exact external source blockers=0。今日未发现足以修改核心知识库的重要进展。
+独立复核检查 09:00 截点、arXiv 公告边界、相邻日归属、撤回排除与来源历史生效边界；本窗无当窗候选，不存在可执行 Books 工作或外部材料缺口。机器校验只证明结构一致性。

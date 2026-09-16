@@ -1,5 +1,7 @@
 # 2026-05-06 Books Writeback Queue
 
+> **Superseded reconstruction artifact.** 本文件记录更早的 27 项写回批次，不是当前 Books Gate。当前唯一队列为 `NONAUTHOR_BOOKS_RECONCILIATION.md`；其中 `2605.03562` 已按 withdrawal terminal closure 退出正向证据链。
+
 本 author lane 未修改共享 Books。Root 已将 27 项写入目标章节；不同 reviewer 的 post-write semantic audit 已物化为 `post-write-semantic-audit.json`，当前结果为 `Open`。
 
 - Presence: `27/27` 均在目标 owner 的 `Review notes` 之前找到。

@@ -277,6 +277,14 @@ Conversion 后应使用固定 inputs 比较 logits/loss，而不只验证 tensor
 - Peak memory 是否符合分片模型。
 - TP checkpoint save、same-layout resume 和 conversion。
 
+### MLA Sequence Parallelism 不能为省通信破坏 Activation Lifetime
+
+某些 sequence-parallel lowering 会尝试把 MLA 中间状态吸收到相邻算子，以减少一次通信；若 backward 仍需要未被保存的 activation，这种“吸收”会把训练显存或重算成本反向放大，甚至破坏梯度语义。更稳健的路径先写出 forward/backward 的 tensor ownership 与 lifetime，再选择不会消除必要恢复点的通信重排。
+
+通信高效修复用额外分组、局部聚合或新的 collective 时点换取较低峰值显存和正确 backward；代价是实现复杂、拓扑敏感且可能增加小消息。模型、序列短或原实现未触发峰值时，保守的不吸收路径仍成立。作者 Megatron-Core/MLA 设置只证明这一具体 regression 与修复，不是所有 tensor parallel 的统一规则。
+
+<!-- source-family:SF-2026-ARXIV-2607-17644 -->
+
 ## 本章在知识树中的位置
 
 ```text

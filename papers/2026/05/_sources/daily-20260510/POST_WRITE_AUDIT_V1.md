@@ -1,5 +1,10 @@
 # 2026-05-10 Books Post-write Fresh-context Audit
 
+> [!WARNING]
+> V3 owner reconciliation（2026-09-14）：本文件只保留当时对 Books 文本位置的历史观察，不证明这些 family
+> 属于 2026-05-10，也不构成当前 Evidence 或 Books Gate。详见
+> [V3_OWNER_RECONCILIATION.md](./V3_OWNER_RECONCILIATION.md)。
+
 - Auditor: `fresh-context:may2026_day03`
 - Independence: 本 reviewer 未参与 05-10 author packet、independent pre-write audit 或 root Books writeback。
 - Marker / semantic content: `29/29` unique markers，`29/29` 机制正文语义通过。

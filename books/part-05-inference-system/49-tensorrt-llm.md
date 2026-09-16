@@ -19,6 +19,10 @@
 
 理解 TensorRT-LLM 可以先从计算图开始：模型不是一个黑盒函数，而是一张计算图。图里有算子、依赖、常量、临时 tensor 和 kernel launch。
 
+图优化不应在“代数等价”和“硬件 schedule”之间过早提交。Typed equality space 可以先保留多种等价 tensor expression，再让 tile、layout、fusion 与 cost model 选择 implementation；这比固定图后的局部 autotune 搜索更广，却带来 e-graph 膨胀、编译时延和 cost-model 偏差。长期 contract 是让 algebra、shape、dtype、layout 与 target hardware 共享同一 typed state，而不是把某个搜索器的速度数字当成通用结论。
+
+<!-- source-family:SF-2026-ARXIV-2609-12330 -->
+
 朴素执行方式会产生很多额外开销：
 
 - 多个小算子分别 launch kernel。
@@ -27,6 +31,14 @@
 - 独立算子没有被合理并行调度。
 
 图优化的第一性原理是：数学结果不变的前提下，减少运行时不必要的计算、访存和调度开销。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20706:start -->
+同一 execution contract 也适用于浏览器等受限 backend。WebGPU 路径可以为 llama.cpp 风格模型提供跨 weight
+format 的加载、内存管理与 kernel 映射，使本地推理不依赖服务器 GPU；但 browser sandbox、operator coverage、
+shader/compiler 差异和设备内存会显著缩小可执行图。作者模型、浏览器和设备上的性能不证明跨平台 portability。
+构图、dtype、layout 或精度验收失败时，应回退 CPU/WASM、原生 GPU backend 或远端 serving，而不能仅因权重
+成功加载就宣称模型可正确高效执行。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20706:end -->
 
 ## 三类基础优化
 
@@ -40,7 +52,15 @@
 
 ### 从逐 Kernel Launch 到 Persistent Executor
 
+压缩 artifact 只有进入真实 load/decode 数据流才形成系统收益。Weight codebook、KV precision、contextual sparsity 与 prefill/decode schedule 必须共同编译；否则更少 bits 可能被解码、随机访存或不规则稀疏抵消。联合设计提高专用 operating point 的效率，却降低 portability，并可能只在模拟架构上成立；通用 GPU kernel 与较高精度仍是覆盖面更广的 fallback。
+
+<!-- source-family:SF-2026-ARXIV-2609-12208 -->
+
 独立 kernel launch 对大算子、稳定 control flow 和容易 capture 的 shape 最透明，CPU submission 开销相对计算也很小；CUDA Graph 进一步把重复 DAG 的准备成本移出 hot path。动态 inference、attention 辅助操作和 micro-batch 中出现大量短小算子后，单次 CPU→GPU launch 可能比算子本身更贵，而 graph 又要求可重复的结构，此时静态 fusion 与 graph capture 之间出现一个运行时分支。
+
+Agent 生成 persistent megakernel 时，最终 token 正确仍可能掩盖中间 state corruption。更安全的演进是先把候选限制在 progressive typed milestones，再用独立 mid-state oracle 检查各阶段，并在目标 shape/precision 上做性能 admission。它缩小了搜索自由度并增加验证成本，却把 silent error 转成可定位失败；oracle 只能证明所测状态，不等于形式验证或跨架构正确。
+
+<!-- source-family:SF-2026-ARXIV-2609-12379 -->
 
 Persistent executor 在进程启动时常驻少量 GPU resources，由 host 把 typed operator descriptor 写入 ring buffer；常驻 warps 原子领取任务、分派受支持的 operator，再回到队列。Runtime 拥有 descriptor schema、operator registry、queue ordering、resource admission 和错误传播，常驻 kernel 只消费已验证任务，不能自行改变 execution plan。这样避免每个小算子都经过完整 launch path，同时保留比固定 graph 更动态的注入能力。
 
@@ -161,6 +181,15 @@ coarse static layer/expert offload
 内 tensor placement 的计划身份与安全切换。对于稳定主机、小模型、严格可预测性或遥测不足的 workload，静态
 layer placement 仍然更合理。
 
+视觉 MoE 的 offload 还暴露了“输入压缩改变 expert working set”这一特殊分支。固定驻留或只看历史 token 热度在文本
+MoE 中容易复算；视觉 token 经压缩后，后续路由访问集合可能更集中，runtime 可以从已压缩表示生成短期 expert-access
+lookahead，用它驱动 expert cache 和异步 CPU→GPU prefetch。预测器只拥有 placement hint，真实 router 仍拥有 expert
+选择，cache miss 必须回退 host 执行或同步装载，不能改变模型输出语义。
+
+这条分支用较低传输等待换取预测器误差、额外 cache metadata、host 带宽和错误预取污染；收益只在视觉 MoE、给定压缩
+策略和 PCIe/内存条件下成立，也没有自动给出 tail-latency SLO。预测命中率或 overlap 不足时，固定热 expert 驻留和
+同步 fault-in 仍是可审计 fallback。<!-- source-family:SF-2026-ARXIV-2605-05899 -->
+
 异构 SoC 上，placement 还可以从独立算子成本推进到 **dependency-preserving microbatch critical path**。单独把
 每个 operator 放到局部最快 backend，可能因 CPU/GPU/NPU 间同步与统一内存争用拉长整条路径；更完整的 plan
 需要先保留 graph dependency，把可并行 microbatches 和 transfer edge 一起调度，再用 trace 修订关键路径：
@@ -249,6 +278,25 @@ sequence operator semantics
 
 这不是 Speculative Decoding：没有 proposal/acceptance 分支。正确性责任也不是一个由论文提供的形式化 transformation verifier，而是 build/test contract：记录 sequence→recurrent 改写成立的假设，再把 JAX/XLA lowering 与 reference 做 token-for-token greedy decoding 和数值容差下的 differential validation。收益是减少手写特化并复用后端，代价是 IR 语义、数值漂移、unsupported operator 与 compiler-version lifecycle；duality 不成立或验证 Gate 失败时必须回退原始序列执行。Exact-v1 证据只支持 `arXiv:2603.09555v1` §3 的 compiler-suitability 条件、§4.2–§4.3 的 recurrent state/cache 实现与 §5.2–§5.7 的数值和性能评测；§5.8 之外不证明未覆盖精度、算子族或编译目标。<!-- source-family:SF-2026-ARXIV-2603-09555 -->
 
+### Architecture Search 需要 Typed System IR，而不是自由改写配置
+
+手工维护 compute graph、parallel plan 与 hardware placement，在模型和拓扑稳定时最透明；当设计空间同时包含算子分解、并行方式、expert placement 与硬件层级时，分别修改配置会让一次收益无法归因，也无法确认两个候选是否保持相同模型语义。更强的 execution-plan builder 先把 compute graph、hardware graph、placement 与 transformation contract 放进同一个 typed IR，再让搜索器只提交满足前置条件的变换：
+
+```text
+typed compute graph + tensor semantics
++ hardware graph + capacity / topology
++ explicit placement
+→ semantics-preserving transformation proposal
+→ analytical / discrete-event simulation
+→ compile, capacity and numerical verification
+→ measured replay
+→ admit | reject | fallback
+```
+
+搜索 Agent 只拥有 candidate proposal；IR/type checker 与 compiler 拥有语义和可实现性判定，simulator 只提供性能估计，真实 runtime measurement 才能支持部署选择。这个分层扩大了 architecture search 的可审计范围，却新增 graph 建模、变换证明、cost-model calibration 与大规模模拟成本；遗漏 KV append、speculation、multimodal path 或真实负载不均衡时，模拟 Pareto frontier 可能合法但错误。稳定小规模部署、模型无法完整表达或 simulation 未校准时，应回退人工计划与真实硬件基线。
+
+RoofLang 的 exact-v1 §2 支持 typed compute/hardware/placement graph、受约束 transformation 与 simulation 的实现，§3 的百分比只来自作者模拟的代表性模型和硬件；§5 明确披露理想 MoE load balance、遗漏运行路径及大模型模拟的时间/内存压力。因此这里吸收 architecture artifact 和 authority boundary，不把模拟收益写成 runtime speedup。<!-- source-family:SF-2026-ARXIV-2609-12551 -->
+
 即使数学与状态形式已确定，稀疏 Attention 的工作量仍可能随 head 改变。按 head 数静态切分在 token budget 均匀时控制成本最低；S-HPLB 先用 calibration 为不同 head 冻结差异化 token budget，这一步已经选择了 approximation/accuracy trade-off，再以这些预算的估计工作量做 greedy head-to-device assignment，后一步只负责 load balance，不能在运行时悄悄改写预算。收益来自减少 straggler，但代价是 calibration artifact、预算漂移和跨设备通信；负载均匀时静态并行更简单，而分布漂移、互联退化时需要重新校准或回退——这是系统设计推论，不是论文单独证明的 failure guarantee。`arXiv:2603.10353v1` 只在 §3.2–§3.3 和 §5.1–§5.4 所披露的模型、稀疏配置与实验环境中支持预算和放置机制。<!-- source-family:SF-2026-ARXIV-2603-10353 -->
 
 同一条原则也适用于跨 NUMA GPU 的不规则算子，但此时“工作量相等”仍不等于“数据代价相等”。若多个 task 对 operand 的共享范围不同，把它们只按 FLOPs 均分会让全局共享、局部共享和私有数据在互联上反复迁移；execution plan 应先根据共享域与拓扑估算 data movement，再把 task 放到能复用 operand 的 GPU，并把调度决策与 operand generation、layout 和拓扑版本共同冻结。这样用更复杂的全局放置换取较少的远端读和更高 locality，却会增加 profiling、调度开销与拓扑漂移风险；矩阵规则、共享模式均匀或单设备已足够时，静态切分仍更稳妥。`arXiv:2607.28824v1` 只用作者构造的内存访问 trace 与 cycle-level simulation 支持该 NUMA placement 机制，未在真实多 GPU 系统上证明端到端收益、容错行为或生产调度成本。
@@ -287,6 +335,16 @@ HBM/shared-memory traffic
 <!-- source-family:SF-2026-ARXIV-2605-19269 -->
 
 ### 两种稀疏性必须共享地址合同，却不必共享 Kernel
+
+非结构化小权重剪枝能直接表达“哪些参数不重要”，却不一定生成硬件可消费的稀疏布局。一个中间演进是联合优化权重与
+soft mask，用局部二阶敏感度定义保留目标，再通过 progressive annealing 把连续 mask 收敛到明确的 `2:4` pattern。
+训练侧拥有 mask 演化和最终权重，compiler 只接收冻结的结构化 artifact；runtime 还必须证明目标设备确实选择了对应
+sparse kernel，否则参数稀疏只是文件属性而不是执行收益。
+
+逐步硬化减少一次性剪枝的质量冲击，却增加 Hessian 近似误差、annealing schedule、重训练成本和 pattern lock-in。
+作者实验支持其模型与稀疏设置下的质量恢复，不证明所有 layer 都应共享敏感度或任意硬件都能提速。若目标 backend
+没有成熟 `2:4` 路径、恢复失败或 shape 太小，稠密权重与稠密 kernel 仍是正确 fallback；训练过程的 mask/optimizer
+状态归第 28 章，本章只拥有可执行 artifact 与 kernel admission。<!-- source-family:SF-2026-ARXIV-2605-06402 -->
 
 只做 static weight pruning，layout 稳定、容易提前编译，但不会利用 input-dependent activation sparsity；只做 dynamic
 activation pruning，能随请求选择，却仍要读取 dense weights，且索引与分支开销可能吞掉收益。当 small-batch Decode
@@ -497,6 +555,15 @@ FreeBalance 的作者实验只覆盖两类 MoE、8×A800 NVLink、EP=8、batch 1
 覆盖 Decode、跨节点 fabric、continuous batching、迁移故障或 tail SLO。它支持“预测只拥有 placement 建议、
 normal router 继续拥有语义”的机制边界，不支持把预测式迁移写成通用默认方案。
 
+
+#### Expert Placement 必须跟随热度演化
+
+把 expert 静态放在 GPU 或 PIM 上，在 token-to-expert 分布稳定时可提前编译并减少迁移；MoE 服务的 expert 热度随任务和层变化后，会形成热点与冷门路径，静态 placement 可能让执行位置与真实负载错配。动态分支把 recent routing histogram、迁移成本和位置容量作为 placement state，由调度器决定 expert 在何处执行，router 仍只决定 token 路由。
+
+动态放置用监控和迁移换更低的热点等待，却新增分布滞后、thrashing、PIM/GPU 数值差异和恢复复杂度。负载稳定、迁移昂贵或观测窗口不足时，静态 placement 仍是正确回退。`arXiv:2605.11277v1` 的 §3–§7 只证明受测 PIM、MoE 与 trace 下的设计，不允许把作者加速数字外推到其他硬件、精度或并发。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11277 -->
+
 ### 如何比较 cuBLAS 与 DeepGEMM
 
 不能只摘取一个峰值 TFLOPS。至少固定：
@@ -591,6 +658,13 @@ T_step
 
 所以“checkpoint 缩小”“HBM 占用下降”和“端到端推理加速”是三个需要分别验证的结论。
 
+### Post-quantization Recovery 必须同时通过质量与执行 Gate
+
+静态 correction 在量化误差近似由 layer 决定时简单；若误差随 token 和输入变化，同一补偿对所有请求都会浪费容量或过度修正。一个条件分支先用诊断器定位高敏感层，再由 per-token gate 提出 error compensation，runtime 通过 fused kernel 执行；gate 只拥有补偿 proposal，量化回归与 serving SLO 共同决定该 artifact 是否可发布。
+
+这种恢复能缩小低比特质量差距，却增加补偿参数、动态分支、kernel shape 和 TP 同步状态。未覆盖 shape、并行布局或延迟抖动超界时，应回退原 W4 或更高精度路径。作者结果只覆盖披露的 per-channel 量化、模型与 serving 设置，不能把质量恢复率或低于 1% 的内存开销外推为任意 engine 的生产收益。
+<!-- source-family:SF-2026-ARXIV-2606-11244 -->
+
 ### 一个 Anchor Artifact 支撑多格式，不等于一次验收覆盖所有格式
 
 目标位宽和硬件固定时，为每种格式分别训练或校准 artifact，边界最清楚；代价是 checkpoint、训练与发布组合随格式数增长。弹性推理希望根据设备、负载或质量预算在多种 MXINT/MXFP 格式间切换后，可以用 multi-format QAT 产生一个较高精度 anchor，再通过确定的 slice-and-scale 规则派生低精度 artifact。
@@ -617,6 +691,15 @@ Dense 模型用 token-average calibration 估计一组层级 scale，在 activat
 因此 quantization artifact 除了 bit-width、scale 与 calibration corpus，还应绑定 router/expert identity、per-expert activation count 和覆盖阈值。Expert-balanced sampling 可以提高低频路径覆盖，affinity grouping 可以共享相近 expert 的 scale/kernel，但二者分别增加校准成本、grouping drift 与 layout complexity；统一 bit-width 在 expert 行为接近或证据不足时仍是更容易验收的 baseline。MoEQuant 的实验只证明作者模型族、数据集、bit-width 与硬件合同中的质量—内存结果，不证明所有 expert 都应使用同一策略，也不证明端到端 serving 必然加速。
 <!-- semantic-body-binding:SF-2025-ARXIV-250503804-MOEQUANT:end -->
 
+
+#### Analog CIM 的 MoE 校准要同时修 Expert 与 Router
+
+在数字执行上沿用 clean-trained router，只校准权重或 activation scale，默认噪声不会改变 expert 相对选择；analog CIM noise 会同时扰动 expert 输出和 router logits，进而放大 load imbalance。部署 artifact 因而需要把噪声模型、expert replacement、router calibration、placement 和 routing histogram 绑定在一起，校准器只能提出补偿，release gate 仍根据质量与负载证据决定启用。
+
+联合补偿提高受测噪声下的稳定性，却增加备用 expert、校准数据和硬件特定状态，也可能随芯片老化或 workload 漂移失效。噪声低、数字 fallback 充足或 router 稳定时，普通 per-expert calibration 仍更简单。`arXiv:2605.11800v1` 的 §2–§4 与结论只支持其 real-chip-calibrated noise、模型和实验，不代表所有 CIM 或生产流量。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11800 -->
+
 ### Fractional Precision 只有落到 Physical Layout 才是部署预算
 
 整层统一 bit-width 在模型、shape 与设备稳定时仍是最容易验证和部署的方案；问题出现在内存预算落在 W3 与 W4 之间，而少量 activation-salient channel 又确实需要更高精度时。只给每个 channel 分配 2/3/4/8/16 bit，得到的只是逻辑预算：若 Runtime 需要逐元素分支、反复 requantize 或搬运不规则 layout，理论节省会被控制流和内存流量返还。
@@ -640,6 +723,12 @@ aggregate quality / perplexity
 逐例 agreement 说明决策是否发生交换，attention/logit 等 distribution diagnostics 帮助定位漂移发生在哪里；二者都不是普适安全证明。Release evidence 必须绑定 checkpoint、quantizer 与 scale semantics、runtime/hardware、输入输出 slice 和 evaluator。不同 checkpoint、校准集或 kernel 更换后，旧阈值需要重新验证。
 
 更多诊断带来额外推理、存储和 evaluator 成本，也可能在未覆盖 slice 上漏检。作者对四个模型、llama.cpp 量化配置和离线数据集的结果不能推出通用“安全 bit-width”；低比特方案仍可在自己的 workload contract 内通过独立校准后成立。量化机制与 execution artifact 由本章拥有，跨 slice calibration、证据保留与 release governance 交给第 66 章。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22237:start -->
+加密推理又会改变验收目标：FHE-only runtime 只能高效执行加法与乘法，因而常在 activation interval 上局部拟合 ReLU；但当主要成本来自 polynomial depth、发布真正关心的是冻结 classifier 的最终 logit order 时，可以在声明的 calibration set 上直接拟合 decision inequalities。Calibration owner 版本化样本、margin 以及 exact、reduced-hull 或 soft regime，compiler/FHE runtime 拥有 coefficient quantization、CKKS precision 与 circuit cost，release owner 仍需检查 unseen slices 和 ground-truth quality。
+
+只有 positive-margin regime 能对 calibration decisions 给出 exact certificate；reduced-hull 与 soft-margin 是近似替代，calibration agreement 也不是未见输入正确性或端到端 confidentiality。二次多项式可以减少 encrypted multiplication 与 modulus levels，却增加 calibration dependence、margin/outlier sensitivity、系数量化和 CKKS 数值状态。可行性、未见切片、量化或数值 Gate 失败时，应回退高阶近似、hybrid MPC/comparison、重训，或拒绝发布，不能把浅层 frozen head 的证明外推到任意深网。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22237:end -->
 
 逐例交换还需要一个能解释风险变化、但不冒充正确性证明的局部量。量化前的 decision margin 在同一模型、同一位宽与同一 decision family 内，可用于估计扰动把原决定推过边界的概率；不同 family 还可能存在方向性偏移，因此 tool call、拒答与普通选择不能共享一个阈值。Margin 只是经本模型本配置校准的 risk sensor，不是跨模型 certificate；极低位宽下表示本身失真时应回退逐例回归和端到端 effect 测试。
 
@@ -696,6 +785,18 @@ fusion 作为 artifact identity；条件不成立时必须回退到普通量化�
 #### Rotation Scope 与 Quantization Group 必须共同进入 Numeric Plan
 
 全局 rotation 在 coarse group 下简单且稳定；group 变细后，跨组扩散的 outlier 可能反而破坏局部分布。执行计划应把 rotation scope、group size、outlier permutation、scale/zero-point dtype、accumulator 与 output dtype 一起版本化。局部 rotation 或 scope/group 解耦只在校准收益覆盖 permutation、metadata 和专用 kernel 成本时成立；缺少目标硬件实现时，RTL/model 结果不能外推为 GPU 或生产 tail latency。
+
+Rotation 次数也不能脱离 quantizer 的统计假设单独选择。对 scalar quantization，连续两次带随机符号的 Hadamard transform
+可在给定理论条件下让固定坐标更接近高斯；对固定有界 block 的 vector quantization，两次变换仍可能保留块内条件相关，
+需要第三次变换才得到更强的 covariance 衰减保证。执行计划因此应把 quantizer family、block boundary、transform count、
+随机种子和适用维度共同冻结，并可用 `l3` 与 `linfinity` moment check 决定是否升级变换次数。
+
+额外 transform 会增加搬运、随机状态和 kernel 成本，theorem 也只约束声明的 fixed block/codebook 与渐近误差项；它不证明
+任意 adaptive codebook 或真实 backend 更快。统计检查不通过、维度不兼容或执行成本无法摊薄时，应回退更高精度或较简单
+rotation，而不是为了满足高斯假设继续堆叠算子。这里沉淀的是“数值假设必须进入 Numeric Plan”，不是未经实现验证的
+Serving 加速结论。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-06014 -->
 
 共享 scale 还使误差不只属于 outlier 本身：它抬高一组的量化步长后，同组普通值也会失去分辨率。因而在格式与
 group size 固定时，可以用校准统计为 outlier 选择低幅度 companions，对 activation 与 weight 做配对 channel
@@ -815,6 +916,12 @@ SVDQuant / Nunchaku 是这条边界的一个外部案例，而不是 TensorRT-LL
 
 这个案例说明 TensorRT-LLM 章节中的长期问题：执行计划必须共同决定 precision、graph rewrite、kernel 和 hardware mapping。硬件提供 FP4/FP8 能力，不等于业务模型自动可用；软件栈必须把模型转换、执行和质量验证串起来。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-08568:start -->
+静态 SVD rank 在 workload 稳定时简单、可复现；若不同 prompt 实际需要的子空间秩差异很大，固定 rank 会在质量与内存带宽之间长期浪费。一个条件分支让 router 只在 prefill 根据输入提出 rank pattern，decode 复用带模型、prompt family 和版本的已提交 pattern；execution-plan owner 验证 pattern 后才能选择对应聚合与 fused kernel，router 本身不拥有质量 verdict。
+
+动态 rank 用更细的计算分配换来路由误判、pattern-cache 失效、额外 metadata 和聚合开销；这些成本可能完全抵消矩阵压缩收益。现有证据只覆盖作者披露的模型、实现、数据和 evaluator，不证明跨硬件、并发或生产尾延迟的普遍收益。输入漂移、cache identity 不完整或 kernel 没有稳定 pattern 支持时，应回退静态 rank 或原始 dense matmul。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-08568:end -->
+
 ### 从 Routed Activation Materialization 到 Indexed Execution
 
 MoE 的逻辑语义是 token 选择 expert，但最直接的执行会把 routed activations 按 expert 排列成新的
@@ -861,6 +968,12 @@ online reduction 只有在被消除的读写大于 metadata 与不规则访问�
 #### Token-level Width Routing 也必须编译成 Metadata-aware Kernel
 
 Router 产生的 token×group mask 不应先物化 compact activation。可按 routing column 排序 mask/index，让 kernel 从原始 layout indexed read，并在 block admission、load/MMA skipping 与 scatter epilogue 中消费同一 metadata。Router、indices、kernel config 与 model revision 共同构成 execution identity；unsupported shape、metadata cost 或稀疏度不足时回退 dense kernel。
+
+### Query-specific Approximation Risk 决定稀疏路径是否可提交
+
+固定稀疏率在 query 分布稳定、误差预算宽松时容易编译和复现；同一 context 上，不同 query 的 attention sharpness 与被省略 K/V 的影响却可能差异很大。一个条件执行分支可以先对 context K/V 做 saliency 预选，再由 query-specific sharpness 或 error proxy 提议走 full attention，或走 blockwise zeroth-order Taylor sparse attention。proxy 只拥有路径 proposal；runtime 必须同时检查 shape/kernel support、质量预算与 artifact revision，并由 full attention 保留 correctness fallback。<!-- semantic-body-binding:SF-2026-ARXIV-2605-04569 -->
+
+动态路由把计算留给高风险 query，但新增 proxy calibration、双路径维护、切换开销与漂移后的隐性质量损失。作者报告的 attention-module latency 占比与端到端加速只属于 LIVEditor-14B、其视频编辑 workload、硬件和阈值；“near-lossless”不是跨模型保证。proxy 漂移、unsupported shape、误差预算越界或分支成本超过节省时，应立即回退 full attention。模型章节负责 attention 语义，本章只负责 lowering、kernel path 与最终执行提交。
 
 ### Token-level 预算不能由三个独立近似器分别消费
 
@@ -915,6 +1028,10 @@ model revision + operator call graph
 ```
 
 Model probe 拥有可达调用与输入合同，symbolic executor 拥有路径探索，compiler/runtime 最终拥有 admission；任何一层都不能把“未找到 bug”宣称成完备证明。该组合扩大了真实边界覆盖，却受 path explosion、unsupported tensor method、动态控制流和模型配置采样限制；接口简单或 reference kernel 已充分验证时，常规 unit/fuzz test 仍更便宜。`arXiv:2603.24595v1` 的证据只覆盖 §4.1、§4.2、§5 与 §6 所披露的 HFProbe/cuKLEE 实现及缺陷实验，不证明所有 CUDA kernel 或模型调用路径均安全。<!-- source-family:SF-2026-ARXIV-2603-24595 -->
+
+随机数值对照还可能漏掉 DMA、vector、matrix 与 scalar pipeline 之间的可见性 race。执行计划需要声明 program order、sync order、barrier scope 和硬件 happens-before；verifier 检查 barrier 是否足以让 producer 写入对 consumer 可见，compiler/runtime 只接纳通过该内存模型的计划。<!-- semantic-body-binding:SF-2026-ARXIV-2605-07881 -->
+
+形式化检查扩大并发错误覆盖，却只相对参数化硬件模型 sound/complete，并承受模型缺项与状态空间成本。硬件或驱动语义不完整时，应回退保守 barrier、sanitizer、stress test 与 reference kernel。exact-v1 的 CANN/generated kernels 与 mutation 实验不能证明覆盖所有驱动、指令和真实 pipeline。
 
 #### 搜索 Candidate 之前，先选择 Implementation Space
 
@@ -1017,6 +1134,12 @@ address-width failure surface 换旧硬件可执行性。未合并 PR 只能作�
 全局优化获得更低显存或带宽占用，代价是求解、校准和部署矩阵更复杂，且路由漂移可能放大少数 expert 的误差；模型较小或 router 对扰动不敏感时，统一量化仍更简单。arXiv:2605.23078v1 的方法与实验只支持其 MoE、量化配置与评估条件，不证明同一 bit allocation 在其他模型、硬件或 SLO 下最优。
 
 <!-- source-family:SF-2026-ARXIV-2605-23078 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-09281:start -->
+逐 expert、逐矩阵做低秩量化最容易归因；当 expert 数量扩大后，相同子空间、量化 metadata 和大量小 kernel 会重复出现。二维 tiling 分支先按 activation 统计把 experts 聚成可共享的 input/output subspace，再由 fused sparse kernel 一次完成投影、routing-weighted accumulation 与 reconstruction。Calibration 只提出 cluster、tile 和 rank，execution-plan owner 绑定 router、layout、precision 与 kernel revision 后才提交。
+
+共享子空间减少 metadata 和 launch，却会引入 cluster 错配、tile/rank 选择错误、expert 间误差耦合与硬件专用 fusion。现有结果只支持作者披露的 MoE、GPU、模型和 evaluator，不能外推到其他 shape、SLO 或生产负载。Experts 差异大、路由漂移或目标硬件缺少 fused path 时，应回退逐 expert 量化或未量化 expert。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-09281:end -->
 
 ### Layout Plan 必须跨算子优化，并单独验证 Cost Model
 
@@ -1302,16 +1425,38 @@ TensorRT-LLM 这类优化栈的收益通常来自更深的硬件适配，代价�
 
 更深的硬件适配还意味着支持矩阵并非抽象问题。模型架构、GPU generation、precision、kernel 与 TensorRT-LLM 版本需要形成经过验证的组合。升级其中一项可能改变 engine build、数值质量和性能，平台必须把这些信息作为模型部署制品的一部分记录。
 
+### Reasoning Quantization 要验收 Commitment，而不只是 Token Cost
+
+weight-only 低比特量化可以降低 memory traffic，在短输出、非推理任务中仍是成熟基线；reasoning workload 会把小的
+数值误差累积为 loop、迟迟不提交答案或在中间正确后最终改错。量化 release identity 因而需要联合 precision、
+generation budget、termination parser、first-answer/commit gap、hit-limit 与 loop rate，并把 per-token throughput 与
+end-to-end completion 分开。低比特路径只拥有快速 proposal，release gate 根据任务 regime 选择继续、阶段性切回高精度，
+或完全使用 reference plan。
+
+这种 phase-selective fallback 用双执行路径、切换状态与更大的测试矩阵换取对关键 commitment 的保护；loop detector 和
+parseable-answer heuristic 本身会漂移。作者实验绑定特定 Qwen reasoning models、GPTQ-style W4/W2 路径与固定预算，
+不证明任意模型的安全 bit-width，也不覆盖 production batching/tail。无法校准时保留较高精度或 full-precision plan。
+
+<!-- source-family:SF-2026-ARXIV-2606-02011 -->
+
 ### 条件化机制分支与共存边界
 
 主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-15682:start -->
-W4A4KV4 reasoning质量gate应聚焦low-entropy symbolic commitments，并联合trace-aligned QAT、selective entropy loss与RoPE-consistent KV calibration。
+#### W/A/KV 联合量化必须保护关键 Reasoning Commitment
+
+统一 W4A4KV4 可以显著缩小权重、activation 与 KV 的执行 footprint，但 reasoning failure 往往集中在少数低熵 symbolic commitment，平均困惑度或最终准确率会掩盖这些不可恢复转折。Quantization plan 因而需要把 trace-aligned QAT、对关键 commitment 的 selective entropy objective 与 RoPE-consistent KV calibration 放入同一 artifact，并在校准分布、kernel layout 和 Decode 路径上联合验收；QAT 负责提出低比特参数，release gate 才决定是否替换高精度路径。
+
+这种联合计划用训练与校准成本换取更完整的 W/A/KV 压缩，却依赖可识别的 reasoning trace 和任务分布；错误的关键步骤标签会把优化预算投向无关位置。作者结果不证明 4-bit 组合对任意模型、语言或长上下文都保持 full-precision 语义，证据不足时应保留 weight-only、较高 KV 精度或完整高精度 fallback。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-15682:end -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-17566:start -->
-分布式 DiT compiler planner 需先在 pre-compilation IR 高召回剪枝，再用 compiled HLO 与物理互连拓扑排序 sharding/placement；logical mesh 不是最终性能身份。
+#### 分布式 DiT Plan 必须经过编译后拓扑复排
+
+只在 logical mesh 上搜索 DiT sharding 容易把编译器改写、collective lowering 和真实互连成本留到最后，得到语义可行却物理低效的计划。更稳健的 planner 先在 pre-compilation IR 上做高召回可行域剪枝，再用 compiled HLO、设备内存和物理互连拓扑复排候选；compiler 拥有 lowering 后的 execution identity，planner 只在通过 correctness 与容量检查的候选中选择 placement。
+
+两阶段搜索减少完整编译次数，却引入 cost-model 偏差、编译缓存和拓扑版本状态；IR 估计过强会提前删掉优解，物理 profile 过旧又会错误排序。作者实验只覆盖其 DiT 图、编译栈和硬件，动态 shape、故障或未建模通信出现时，应回退已验证的静态计划或扩大搜索，而不能把 logical mesh 名称当作性能证明。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-17566:end -->
 
 ### Binary Lifting 的核心是恢复 Typed State
@@ -1319,6 +1464,23 @@ W4A4KV4 reasoning质量gate应聚焦low-entropy symbolic commitments，并联合
 GPU binary 到可分析 IR 的迁移不是指令文本替换：统一 register file 必须恢复 typed state，分支要重建显式 control flow，多指令 pattern 还要恢复组合语义。类型或控制流冲突时，生成貌似可执行的 IR 会把未知语义静默固化，因此 lifter 必须 fail closed 并保留 unsupported instruction surface。Typed LLVM IR 可成为审计和迁移的中间证据，但受支持架构、MUFU/texture 与完整 SIMT 语义限制；原生二进制验证仍不可删除。
 
 <!-- source-family:SF-2026-ARXIV-2604-27486 -->
+
+### Compiler Frontend 是独立的语义故障层
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-06052:start -->
+### Mixed Precision 可以共享乘法数据通路，但不能共享数值语义
+
+为每种 INT/FP 格式保留独立 MAC，在格式少且资源充足时最容易证明正确；LLM execution plan 需要频繁切换精度时，固定数据路会浪费面积或周期。一条硬件分支把 INT 与 FP mantissa 统一到 shared integer-product datapath，再由 datatype-specific sign、exponent、accumulation 和 dynamic packing 恢复各格式语义。Compiler 选择 dtype/packing，datapath 执行乘积，数值 gate 仍要按算子和模型 slice 验收误差，不能把资源共享当作语义等价。
+
+共享数据路提高 DSP 利用率并支持 cycle-level switching，却增加控制复杂度、累加边界和格式组合验证。现有证据只绑定 AMD Xilinx U55c、披露 formats/kernels 与仿真；component density 不等于 serving goodput，也不能外推 GPU/NPU。shape、dtype 或误差合同越界时，应回退固定精度 MAC 或成熟 backend plan。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-06052:end -->
+
+低层 operator tests 通过，只证明已形成的 IR 或 kernel 在其输入合同下工作；Python control flow、dynamic shape、alias、side effect 与 graph break 在 frontend capture 时就可能被误翻译，随后每一层都只是稳定地执行错误图。Compiler 验收应把 `eager/reference program → captured graph → lowered IR → kernel/runtime` 分阶段做 differential test，并用 root-cause taxonomy 生成 targeted regression；frontend 无法证明等价时回退 eager 或已验证 graph path。
+
+分层测试提高定位性，却增加多表示维护、输入生成和 reference execution 成本；已冻结静态图可把重点留在 lowering/kernel，新模型、dynamic control 或 compiler upgrade 则必须重开 frontend gate。对 TorchDynamo 123 个历史 bug 的分类及由此生成的新 tests 只证明所测 frontend 中该层具有独立 failure surface，不能保证 taxonomy 覆盖未知类别，LLM 也只是归类与生成 proposal，不是 correctness oracle。
+
+<!-- source-family:SF-2026-ARXIV-2607-25651 -->
 
 ### Distributed Tiling 把 Execution Plan 扩展到层次化拓扑
 
@@ -1328,11 +1490,11 @@ GPU binary 到可分析 IR 的迁移不是指令文本替换：统一 register f
 
 <!-- source-family:SF-DITRON-DISTRIBUTED-TILING -->
 
-### Approximate Execution 必须携带 Bounded-error Correction
+### Hardware Fault Recovery 可以从 Bit-exact 降为 Bounded-value
 
-近似 kernel、压缩或低精度执行可以降低成本，但平均 accuracy 无法约束单次请求的最坏偏差。execution plan 应声明允许误差范围、检测点和 correction path：超界时局部重算、提高精度或回退 reference kernel。收益来自大多数请求走快速路径；代价是检测开销、双路径维护与 correction 尾延迟。
+传统 ECC 试图恢复原始 bit，在控制状态、索引或高敏感参数上仍是最清楚的正确性合同；但它的冗余与解码成本会随保护强度增加。神经网络张量的部分数据允许小幅数值偏差，却不能容忍任意 bit flip 把指数位或高位改成极端值。一条受限分支先由数据计算 Range Identifier（RID），再按 RID 生成并保存 ECC 冗余；显式 RID 随后丢弃。读出时从受损数据重新生成 RID、结合冗余解码，在无法 bit-exact 恢复时把结果替换为该范围的代表值，从而把合同改成 bounded approximate recovery。
 
-误差估计没有覆盖当前 shape、数值分布或硬件时，计划不得 commit。全精度稳定库在高风险、低吞吐或缺少校准数据时仍是正确基线；bounded correction 是受控近似分支，不是对 exact execution 的淘汰。
+该机制证明的是指定 fault model 与张量范围下的有界恢复，不是 kernel 数值误差的在线检测，也不包含“超界后局部重算或自动提高精度”的通用执行路径。它用更少保护开销换取非 bit-exact 结果，并新增 RID 重建错误、范围失配、敏感张量误分类与多错误累积风险。范围无法稳定校准、数据不具容错性或请求风险较高时，应回退完整 ECC、冗余校验或重新执行；部署验收仍要把硬件 fault injection 与模型质量共同测量。
 
 <!-- source-family:SF-RANGEGUARD-EFFICIENT-BOUNDED-APPROXIMATE-ERROR-CORRECTION-FOR-RELIABLE-D -->
 
@@ -1354,6 +1516,68 @@ GPU binary 到可分析 IR 的迁移不是指令文本替换：统一 register f
 自由文本 kernel 代码很难表达 tile、memory hierarchy、synchronization 和 target hardware 的约束，错误也只能在最终编译或 benchmark 暴露。typed schedule IR 把这些选择变成可验证对象，由 verifier 检查语义、成本模型估计候选，再用局部诊断驱动修正。
 
 该闭环把 Agent proposal 与 compiler/runtime commit 分开，却依赖 IR 对算子和架构的表达能力；无法表示的新 pattern 仍需人工或回退成熟 kernel。收益必须在完整 model execution plan 中验证，不能用 standalone kernel speedup 替代端到端结果。
+
+### Execution Plan 必须联合逻辑稀疏、Tensor Lifetime 与硬件数据流
+
+模型层声明量化、稀疏或局部依赖，并不自动产生更快执行。权重解量化若仍在通用 compute path materialize 大张量，会把节省重新付给 HBM 流量；sparse attention 若把 indexer 与 TopK 分成多个 kernel，也会被中间写回与 launch 吞噬。更完整的 lowering 把解量化贴近 HBM 读取，把 index generation、selection 与 gather 融合，同时保留 reference kernel 和形状/稀疏度阈值作为 fallback。
+
+Diffusion workload 进一步暴露跨 step 的 tensor lifetime。template-static graph 可提前联合规划 memory mitigation、layout、parallelism、concurrency 与 SLO；区域依赖允许只更新活跃块，但 stale state 必须有误差 guard 和 full-recompute 回退。静态模板与稳定 denoising schedule 能获得最大收益，data-dependent shape 或误差界失效时动态执行仍更正确。
+
+### Chiplet Pool 与 Execution Plan 必须联合演化
+
+同构加速器池在 workload 稳定、采购规模足以摊薄设计成本时，故障域和编译目标都最简单；为每个模型设计专用芯片又会把
+非经常性工程成本和库存碎片放大。模型族同时包含 dense/MoE、Prefill/Decode 与不同 memory/compute ratio 后，固定 chiplet
+pool 仍可能把某个 stage 的瓶颈固化。更完整的 co-design 让平台拥有长期 pool/inventory identity，而 compiler 为每个
+workload 生成可变 execution plan：先联合选择 compute/memory/interconnect chiplet，随后决定 fusion、tensor lifetime 与
+数据搬运，再把 stage 映射到满足等延迟的 pipeline，最后才进行物理布局和布线。Pipeline bottleneck 是两层共享状态，
+不能由芯片 catalog 或单个 kernel 独自决定。
+
+这种联合搜索用更高 compiler、profiling、P&R、热设计和供应链复杂度换取跨 workload 复用；未来模型漂移、cost model 失真
+或布局不可实现会让纸面 Pareto 失效。稳定工作负载或同构器件已满足 SLO 时，成熟单芯片/固定 pool 仍是更可验证的基线；
+新 family 不在支持域时，应增加可替换 chiplet 或回退通用执行路径。`arXiv:2609.10970v1` 的收益来自 Timeloop、Accelergy、
+CENT 与 CACTI 驱动的模拟和所列 Llama/Qwen workloads；相关性与消融支持 co-design 机制，但不等于已制造 silicon 的绝对
+latency、能耗或可靠性证明，Qwen Decode 的有限收益也说明该分支并非处处优胜。
+
+<!-- source-family:SF-2026-ARXIV-2609-10970 -->
+
+### 架构收益必须贯穿完整 Serving Pipeline
+
+Hybrid SWA 的较低理论复杂度只有在 Full/SWA dual KV pool、window-safe prefix identity、layerwise prefetch、跨 tier 一致性和 affinity/load-aware routing 同时成立时才变成生产收益。MoE placement、length bucketing、NUMA 与 multimodal preprocessing 也会重新定义 Prefill/Decode 的 critical path。单独优化 kernel 或 cache 命中率会把瓶颈推给下一阶段，因此 execution plan 的身份必须覆盖模型结构、KV semantics、router、distributed cache、host topology 和 modality pipeline。
+
+硬件选择也不能只比较峰值 FLOPs。Decode 应联合计算强度、权重/KV capacity、memory/fabric bandwidth 与 service arrival shape，并把候选计划放回完整请求生命周期验证；稳定模型和单一平台继续适合人工维护的保守 plan。
+
+这些 source-specific 结果均绑定作者模型、GPU、精度、长度、batch/concurrency 与披露 SLO；未披露项不能被补成通用性能结论。
+
+<!-- source-family:SF-2026-ARXIV-2607-08993 -->
+<!-- source-family:SF-2026-ARXIV-2607-11136 -->
+<!-- source-family:SF-2026-ARXIV-2607-11976 -->
+<!-- source-family:SF-2026-ARXIV-2607-12121 -->
+<!-- source-family:SF-2026-ARXIV-2607-13068 -->
+<!-- source-family:SF-2026-ARXIV-2607-13095 -->
+
+### 量化算法必须区分“选择误差度量”与“忠实执行更新轨迹”
+
+二阶量化常把重点放在 Hessian 或左右 basis 怎样近似误差，却容易把随后 rounding sweep 当成无关实现细节。若矩阵更新彼此依赖，遍历顺序本身就是算法语义；并行化只有在能证明与既定 fixed-order trajectory 等价时，才是安全的 execution-plan 变换。
+
+双侧 Kronecker 度量下的 anti-diagonal sweep 展示了一个受限例子：它可以降低理论执行复杂度，同时保持指定更新序列的等价结果。但该证明不负责 basis 估计，也没有给出 LLM quality、GPU kernel 或端到端 latency 证据；临时状态、数值顺序和硬件映射仍可能吞掉理论收益。因此 compiler/runtime 应分别记录 metric identity、rounding order、arithmetic 与 kernel evidence，缺少端到端验证时回退 reference quantization path。
+
+<!-- source-family:SF-2026-ARXIV-2607-27042 -->
+
+### 代数等价变换可以成为 data-movement 优化，但必须单独验收执行语义
+
+在 PIM 上直接 materialize `N x N` attention intermediate，会让跨 bank traffic 随序列长度二次增长；重排等价算式、只交换 `d x d` 局部聚合可以把通信压力降到线性量级。这里的收益来自改变 materialization 和数据流，而不是减少模型语义工作。
+
+专用组织和模拟结果不能外推 GPU 或现有 PIM 产品；运算重排还会改变舍入、layout、bank capacity 与同步。execution plan 必须同时验证数值等价、bank/interconnect 约束和端到端 workload，超界时保留 dense GPU path。
+
+<!-- source-family:SF-2026-ARXIV-2607-21731 -->
+
+### 数学表示决定 state materialization 与异构硬件划分
+
+矩阵化 state-space duality 便于训练和 dense accelerator，却可能 materialize 大中间量；代数等价的 streaming recurrence 可以让 dense projection 留在 in-memory units，而把有序 state update 交给专用 stream engine。优化对象因而是“同一模型计算采用哪种状态表示”，而不只是把算子搬到新硬件。
+
+模拟/专用 accelerator 假设没有证明可制造性或通用端到端 latency，递归顺序、数值误差、fabric 和 state lifetime 都是新增约束。只有 reference equivalence 与真实 workload 通过时才采用；成熟 GPU 路径仍是兼容、调试和故障回退。
+
+<!-- source-family:SF-2026-ARXIV-2607-22022 -->
 
 ## 本章在知识树中的位置
 
@@ -1424,6 +1648,12 @@ collective 的物理 routing 之前仍有一层逻辑优化空间：根据 reduc
 模型生成的 kernel 或 schedule 不应直接进入性能竞争。先把 shape、dtype、layout、memory effect 和并行决策编成 typed IR，再由 verifier 检查正确性，并用局部 cost feedback 指向需要修改的节点，才能形成可恢复的 compiler loop。验证与 IR 限制会降低搜索自由度，却把“能编译”和“在目标 contract 下正确且更快”分开。
 <!-- source-family: arxiv:2608.12629v1; semantic-body-binding: generated-kernel-typed-schedule-ir -->
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-05023:start -->
+从空白生成完整 CUDA kernel 给模型最大自由度，却让正确性、低层语义和性能搜索同时失控。对已有高质量 kernel 的新 attention 变体，更窄的分支是先把 source kernel 提升为可执行 IR，显式保存 tile、memory movement、同步与 orchestration；模型只迁移语义差异，再由 lowering 和数值 verifier 生成目标实现。这样 source artifact 与 IR owner 保留执行事实，模型只拥有 transformation proposal，benchmark runner 才拥有 acceptance。
+
+该路径把搜索空间缩小为可验证变换，代价是依赖可信 expert kernel、IR 表达力与 target backend lowering；source 不存在、语义超出 IR 或新硬件缺少映射时，仍需通用 compiler、模板或人工实现。`arXiv:2605.05023v1` 的 §3–§4 与 A100/H100 attention 评测支持 CuIR 的 lift–transfer–lower 案例；§Limitations 明确未验证非 attention HPC workload，且非主流硬件缺少源 kernel 时能力受限，因此不能把作者 TFLOPS 外推任意 shape、GPU、并发或生产 SLO。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-05023:end -->
+
 ### MoE 量化损伤要拆成 Compute Error 与 Routing Mediator
 
 router 的 margin 只能说明路由是否容易翻转，不能说明翻转后的 expert 会造成多大输出误差。诊断应分别运行量化、冻结原路由、只替换路由和参考路径，把计算误差与 routing-mediated error 拆开，再决定保护 gate、expert 或执行格式。更细的因果 profiling 增加成本，却避免把高精度预算浪费在无害 route flip 上。
@@ -1447,7 +1677,56 @@ Quantization 只有与明确的 graph mapping、可用 kernels 和目标硬件�
 
 下一章转向 vLLM，观察另一个历史起点：如果首先把 KV allocation 与 scheduler 视为核心，完整 Serving engine 会怎样组织。
 
+### Block Scale 也是可搜索的执行状态
+
+BFP/NVFP4 常用 block max 直接确定 scale，成本低且确定，但 outlier 会让多数值浪费量化区间。ScaleSearch 把 scale 从
+固定 heuristic 变成受误差与执行约束限制的候选搜索；搜索器只提出 scale，真实 kernel 的数值回归、模型质量和 latency
+测试才拥有 artifact commit。收益是更好利用低精度范围，代价是校准搜索、硬件/格式耦合和额外发布矩阵。未命中受测
+分布、kernel 不支持或回归失败时，应回退 max scale、更高精度或已有量化路径；论文只覆盖特定模型、PTQ 与 NVFP4 设置。
+
+<!-- source-family:SF-2026-ARXIV-2605-12464 -->
+
+### Lowering 与低精度执行都需要可回归的 Commit Boundary
+
+手写 GPU kernel 把语义、schedule 与目标硬件揉在同一份代码里，局部极致却难复用。受约束的 source-to-source
+lowering 让高层程序保留语义，变换规则逐步提交 layout、memory 与 CUDA 实现；编译通过只是第一关，数值等价和真实
+workload 性能回归才拥有 artifact commit。收益是复用与可移植性，代价是目标相关假设、变换交互和验证矩阵扩大；
+规则无法证明或 regression 失败时，应回退已知 kernel。exact-v1 只支持作者 §5–7 的变换与评测，不构成通用编译收益。
+
+<!-- source-family:SF-2026-ARXIV-2605-13864 -->
+
+低精度执行中，逐次 dequantization 也可能成为固定前置开销。按 activation 数值范围分解并让不同尺度走不同执行路径，
+可以减少共同 dequant bottleneck；controller 必须版本化分解规则、scale、融合 kernel 与未命中路径。它用更复杂的 kernel
+和额外数值误差换吞吐，硬件适配、outlier 或融合失败时应回退标准 dequant/高精度路径。论文只证明作者 Method 与数值
+实验范围，未证明任意模型、GPU 或并发 SLO 都获益。
+
+<!-- source-family:SF-2026-ARXIV-2605-13915 -->
+
+### Quantization Bit Budget 应按矩阵方向敏感度分配
+
+对所有矩阵和方向使用同一 bit width 最容易部署，却会在低敏感方向浪费码率、在高敏感方向造成误差。Waterfilling-style allocation 可依据方向敏感度分配精度，使 quantization policy 与具体 weight matrix、分解和目标硬件绑定，而不是只记录一个全局 INT4 标签。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13768 -->
+
+敏感度估计、非均匀 layout 和专用 kernel 会增加编译与运行时复杂度；Llama-3-8B 的 weight-only 结果不构成跨模型硬件结论。没有可执行 kernel、校准漂移或端到端质量退化时，应回退统一量化、提高 bit width 或保留关键矩阵高精度。
+
+### 固定部署可以把 MegaKernel 调度上提到编译期
+
+普通 runtime 根据动态 DAG 在执行时分支调度，适合 shape 和配置变化；固定 deployment configuration 下，反复支付分支与 launch 开销并不必要。编译期 search 可以在 shared-memory、K-splitting 和目标 GPU 约束下选择 MegaKernel execution path，runtime 只执行已验收计划。它减少在线控制，却增加离线搜索、架构耦合和配置漂移风险；shape、精度或资源约束变化即使旧计划失效。无法冻结 workload 或搜索证据不足时，应回退普通 kernel graph 与 runtime scheduling。exact-v1 的作者 benchmark 只绑定披露的 Ada GPU 和配置，不构成跨硬件生产承诺。
+
+<!-- semantic-body-binding:SF-ADA-MK-ADAPTIVE-MEGAKERNEL-OPTIMIZATION-VIA-AUTOMATED-DAG-BASED-SEARCH-F -->
+
+### Block Scale 的格式选择也是执行 Artifact
+
+microscaled FP4 为每组固定一张 grid，接口简单但可能浪费局部分布适配空间。允许多 grid 时，quantizer 为每组提出格式，artifact 必须保存 grid/scale identity，runtime 与 kernel 负责忠实解码，质量和端到端性能 gate 才能批准发布。更低量化误差换来 metadata、搜索与 backend coupling；选择错误或 kernel 不支持时，理论收益不会变成速度。系统应能回退单一 NVFP4/MXFP4、较高精度或静态 max-scale，并分别验收模型质量与 latency。exact-v1 只覆盖作者模型、group size 和硬件实现，不证明多 grid 总优于单 grid。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12327 -->
+
 ## Review notes
+
+- `SF-2026-ARXIV-2605-07881`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2605.07881v1) 支持参数化并发语言、barrier-sufficiency 检查与受限 CANN/generated-kernel mutation 结果；sound/complete 只相对其硬件模型，不覆盖所有驱动、指令或真实 pipeline。
+
+- `SF-2026-ARXIV-2605-04569`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2605.04569v1) 支持 K/V saliency 预选、query-risk proxy 与 full/Taylor sparse attention 的动态分支；作者约 60% attention-module latency 与约 1.47× end-to-end 结果绑定 LIVEditor-14B、披露视频编辑 benchmark、硬件和阈值，不证明跨模型质量或生产 SLO。
+
+- [Quantizing With Randomized Hadamard Transforms](https://arxiv.org/html/2605.06014v1)（Theoretical Evidence）：支持 scalar 与 fixed-block vector quantizer 的不同变换次数及 moment-based gate；没有 runtime artifact 或实际加速证据。
 
 - `SF-2026-ARXIV-2609-01730`（HEAT；Status: Experimental）：[exact-v1](https://arxiv.org/html/2609.01730v1) §3–5、Appendix A–F 支持离线 site-wise 迭代预算、固定 mode 与 weight consolidation；训练松弛、range guard 和实际部署电路不是同一对象。作者使用 GPT-2 124M、OpenWebText 与 128 条各 128 token 的 teacher-forced 加密链；正文不采用速度数字，不外推生产 concurrency、SLO、自由生成质量或正式密码安全。精确缓存及作者/独立审阅保存在 Sep03 的 `_sources`；本轮未复跑 artifact。
 
@@ -1565,35 +1844,23 @@ Primary-source 校验入口：
 ### Daily integration evidence trace
 
 - `2026-05-02 / SF-PERSEUS-MEGAKERNEL-SIGNAL-ORDERING` — exact-v1 `arXiv:2605.00686v1`；正文吸收 transfer signal、NIC ordering 与 group fallback 的 ownership 边界，未保留未绑定 workload 的性能 headline。
-- `2026-05-02 / SF-LEAP-EARLY-EXIT-PRETRAINING-CONTRACT` — exact-v1 `arXiv:2605.01058v1`；正文吸收 objective/exit-sensor 对齐与 full-depth fallback，不把 early-exit 近似写成完整深度等价。
+- `2026-05-05 / SF-LEAP-EARLY-EXIT-PRETRAINING-CONTRACT` — exact-v1 `arXiv:2605.01058v1`；正文吸收 objective/exit-sensor 对齐与 full-depth fallback，不把 early-exit 近似写成完整深度等价。
 
 #### 2026-06-25 source-specific Review notes
 
-- **SF-2026-ARXIV-2606-25453**：Primary `arXiv:2606.25453v1`；Method `https://arxiv.org/html/2606.25453v1 — §III EmuGEMM-I; IV EmuGEMM-II`；Evaluation `https://arxiv.org/html/2606.25453v1 — §V Evaluation; V-B Experimental Setup; V-F Precision-Throughput-Memory Trade-off`；未证明边界 `https://arxiv.org/html/2606.25453v1 — §V-G Limitations`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
 - **SF-2026-ARXIV-2606-26344**：Primary `arXiv:2606.26344v1`；Method `https://arxiv.org/html/2606.26344v1 — §Axon synthesizing superoptimizer; tensor-program search and verification`；Evaluation `https://arxiv.org/html/2606.26344v1 — §Kernel synthesis evaluation and generated-program performance`；未证明边界 `https://arxiv.org/html/2606.26344v1 — §Covered tensor operators/hardware only; verifier does not prove arbitrary numerical equivalence`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
 - **SF-2026-ARXIV-2606-26453**：Primary `arXiv:2606.26453v1`；Method `https://arxiv.org/html/2606.26453v1 — §Micro-profiling tools as expert surrogates for LLM CUDA optimization`；Evaluation `https://arxiv.org/html/2606.26453v1 — §Generated-kernel correctness, profiling and speed evaluation`；未证明边界 `https://arxiv.org/html/2606.26453v1 — §Evaluated CUDA tasks and toolchain only; profile-guided generation needs deterministic correctness fallback`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
-
-### Source-family integration record
-
-<!-- recovered-daily-20260625:INFER-TENSORRT-LLM:start -->
-### 2026-06-25 evidence integration — INFER-TENSORRT-LLM
-
-- **SF-2026-ARXIV-2606-25453**：`III EmuGEMM-I; IV EmuGEMM-II` 所定义的源特定机制用于以可验证搜索或 profiling 反馈驱动 kernel 选择，同时保留确定性正确性路径；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `V-G Limitations` 是 `EmuGEMM: Fused Tensor Core Kernels for Precision Emulation in Matrix Multiplication` 的 source-specific 反例/局限边界；若运行条件离开 `V Evaluation; V-B Experimental Setup; V-F Precision-Throughput-Memory Trade-off` 的验证域，`INFER-TENSORRT-LLM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-26344**：`Axon synthesizing superoptimizer; tensor-program search and verification` 所定义的源特定机制用于以可验证搜索或 profiling 反馈驱动 kernel 选择，同时保留确定性正确性路径；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Covered tensor operators/hardware only; verifier does not prove arbitrary numerical equivalence` 是 `Axon: A Synthesizing Superoptimizer for Tensor Programs` 的 source-specific 反例/局限边界；若运行条件离开 `Kernel synthesis evaluation and generated-program performance` 的验证域，`INFER-TENSORRT-LLM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-26453**：`Micro-profiling tools as expert surrogates for LLM CUDA optimization` 所定义的源特定机制用于以可验证搜索或 profiling 反馈驱动 kernel 选择，同时保留确定性正确性路径；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Evaluated CUDA tasks and toolchain only; profile-guided generation needs deterministic correctness fallback` 是 `Optimizing CUDA like a Human: Micro-Profiling Tools as Expert Surrogates for LLM-Based GPU Kernel Optimization` 的 source-specific 反例/局限边界；若运行条件离开 `Generated-kernel correctness, profiling and speed evaluation` 的验证域，`INFER-TENSORRT-LLM` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-<!-- recovered-daily-20260625:INFER-TENSORRT-LLM:end -->
 
 ### Daily Books delta trace（2026-06—08）
 
 <!-- daily-books-trace:SF-VDCORES-ASYNC-GPU-RESOURCE-DECOUPLING:start -->
-- `SF-VDCORES-ASYNC-GPU-RESOURCE-DECOUPLING` — Daily `2026-05-05`；primary `arXiv:2605.03190v1`；Books review `books-review:SF-VDCORES-ASYNC-GPU-RESOURCE-DECOUPLING`。
+- `SF-VDCORES-ASYNC-GPU-RESOURCE-DECOUPLING` — Daily `2026-05-06`；primary `arXiv:2605.03190v1`；Books review `books-review:SF-VDCORES-ASYNC-GPU-RESOURCE-DECOUPLING`。
 
   **已吸收的语义增量：** asynchronous work 可先拥有 virtual execution-resource identity，再由 runtime 按 readiness 绑定 physical cores；completion、memory visibility 与 output commit 仍属于 execution-plan contract。
 <!-- daily-books-trace:SF-VDCORES-ASYNC-GPU-RESOURCE-DECOUPLING:end -->
 
 <!-- daily-books-trace:SF-P-CAST-PRECISION-FP8-ATTENTION-SINK-INDUCED:start -->
-- `SF-P-CAST-PRECISION-FP8-ATTENTION-SINK-INDUCED` — Daily `2026-06-03`；primary `arXiv:2606.06521v1`；Books review `books-review:SF-P-CAST-PRECISION-FP8-ATTENTION-SINK-INDUCED`。
+- `SF-P-CAST-PRECISION-FP8-ATTENTION-SINK-INDUCED` — Daily `2026-06-08`；primary `arXiv:2606.06521v1`；Books review `books-review:SF-P-CAST-PRECISION-FP8-ATTENTION-SINK-INDUCED`。
 
   **已吸收的语义增量：** We consider a single attention head with query length q q , KV length N N , and head dimension d d . KV blocks have size B B (typically 64 or 128). The first k sink k_{\text{sink}} positions are sink tokens with logit scores Δ \Delta above the mean. Boundary: Both optimizations address the identical failure mode: P values falling below E4M3’s representable range. Once either fix is applied, P-collapse is eliminated and the residual MSE is set by the inherent E4M3 quantization noise on representable values. Paired t t -tests over 100 instances confirm that Forward+S=256 and Reverse+S=256 are statistically indistinguishable wherever P-collapse is active ( Δ ≤ 9 \Delta\leq 9 ); for Δ ≥ 10 \Delta\geq 10 the residuals diverge with reverse marginally better, but the absolute gap is ∼ 10 − 8 \sim 10^{-8} , three orders of magnitude below the MSE itself, so the practical conclusion is unchanged (Appendix B ).
 <!-- daily-books-trace:SF-P-CAST-PRECISION-FP8-ATTENTION-SINK-INDUCED:end -->
@@ -1665,13 +1932,13 @@ Primary-source 校验入口：
 <!-- daily-books-trace:SF-2026-ARXIV-2606-18421:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-04302:start -->
-- `SF-2026-ARXIV-2607-04302` — Daily `2026-07-06`；primary `arXiv:2607.04302v1`；Books review `books-review:SF-2026-ARXIV-2607-04302`。
+- `SF-2026-ARXIV-2607-04302` — Daily `2026-07-07`；primary `arXiv:2607.04302v1`；Books review `books-review:SF-2026-ARXIV-2607-04302`。
 
   **已吸收的语义增量：** 新增证据边界：Attention quantization should first diagnose asymmetric Q/K structure. When calibration confirms the K-outlier regime, a paired diagonal transform can scale Q and inversely scale K while preserving the unquantized attention score; a quantized-P reordering can then make the softmax numerator and denominator consume the same quantized tensor. The equality does not preserve the final quantized output, and the reordering removes one coherent error component rather than proving all Q/K/V error harmless. 该 delta 已进入 `books/part-05-inference-system/49-tensorrt-llm.md#L441`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-04302:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-05475:start -->
-- `SF-2026-ARXIV-2607-05475` — Daily `2026-07-07`；primary `arXiv:2607.05475v1`；Books review `books-review:SF-2026-ARXIV-2607-05475`。
+- `SF-2026-ARXIV-2607-05475` — Daily `2026-07-08`；primary `arXiv:2607.05475v1`；Books review `books-review:SF-2026-ARXIV-2607-05475`。
 
   **已吸收的语义增量：** 新增证据边界：Mobile backend choice is phase dependent: prefill exposes large compute-dense shapes that can fit NPU strengths, while single-token decode exposes small dynamic kernels and memory traffic that can favor CPU. Framework offload coverage, graph/static-shape constraints, quantization support, tensor-layout conversion, host polling, sleep latency, DVFS and affinity determine whether nominal NPU capability becomes end-to-end efficiency. The framework owns operator partition/offload and layout conversions; backend runtimes own executable graph/quantization constraints; host CPU owns polling, wake/sleep and thread scheduling; request phase and KV state determine current shape. A backend switch is therefore a state-transfer/control decision, not a free dispatch choice. 该 delta 已进入 `books/part-05-inference-system/49-tensorrt-llm.md#L109`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-05475:end -->
@@ -1683,7 +1950,7 @@ Primary-source 校验入口：
 <!-- daily-books-trace:SF-2026-ARXIV-2607-07046:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-07964:start -->
-- `SF-2026-ARXIV-2607-07964` — Daily `2026-07-09`；primary `arXiv:2607.07964v1`；Books review `books-review:SF-2026-ARXIV-2607-07964`。
+- `SF-2026-ARXIV-2607-07964` — Daily `2026-07-10`；primary `arXiv:2607.07964v1`；Books review `books-review:SF-2026-ARXIV-2607-07964`。
 
   **已吸收的语义增量：** 新增证据边界：KronQ approximates second-order weight sensitivity as output-gradient covariance Kronecker activation covariance, then uses two-sided incoherence transforms and Hessian-trace sensitivity for mixed-bit allocation. After preprocessing, the output-gradient factor cancels from the column update algebra, but it still influences the transformed representation and layer sensitivity decision. 该 delta 已进入 `books/part-05-inference-system/49-tensorrt-llm.md#L475`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-07964:end -->
@@ -1695,7 +1962,7 @@ Primary-source 校验入口：
 <!-- daily-books-trace:SF-2026-ARXIV-2607-08734:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-08973:start -->
-- `SF-2026-ARXIV-2607-08973` — Daily `2026-07-10`；primary `arXiv:2607.08973v1`；Books review `books-review:SF-2026-ARXIV-2607-08973`。
+- `SF-2026-ARXIV-2607-08973` — Daily `2026-07-13`；primary `arXiv:2607.08973v1`；Books review `books-review:SF-2026-ARXIV-2607-08973`。
 
   **已吸收的语义增量：** 新增证据边界：For small-payload low-batch TP decode, remove the bottom barrier with dual buffers, reduce transfer with switch-assisted redundant pull, and replace the top readiness barrier with speculative fetch plus a reduced validation flag; retry on mis-speculation before committing the collective result. 该 delta 已进入 `books/part-05-inference-system/49-tensorrt-llm.md#L370`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-08973:end -->
@@ -1731,7 +1998,7 @@ Primary-source 校验入口：
 <!-- daily-books-trace:SF-2026-ARXIV-2607-17415:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-21985:start -->
-- `SF-2026-ARXIV-2607-21985` — Daily `2026-07-25`；primary `arXiv:2607.21985v1`；Books review `books-review:SF-2026-ARXIV-2607-21985`。
+- `SF-2026-ARXIV-2607-21985` — Daily `2026-07-27`；primary `arXiv:2607.21985v1`；Books review `books-review:SF-2026-ARXIV-2607-21985`。
 
   **已吸收的语义增量：** 新增证据边界：Static weight sparsity and input-dependent activation sparsity become composable through a shared column-addressable representation with phase-specific decode and prefill kernels. 该 delta 已进入 `books/part-05-inference-system/49-tensorrt-llm.md#L172`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-21985:end -->
@@ -1786,3 +2053,8 @@ Primary-source 校验入口：
 
 - `SF-2026-ARXIV-2609-00049`，REAL-Q（Status: Experimental）：[exact-v1 §4–7](https://arxiv.org/html/2609.00049v1)。采用冻结二阶近似与当前 residual 梯度补偿的区分；W4A16、Llama3.1/Qwen3、WikiText2校准，KL/PPL与下游任务分报。SGD分析不构成Adam保证，离线成本不等于serving收益。
 - `SF-2026-ARXIV-2609-00066`，OCGQuant（Status: Experimental）：[exact-v1 §3–5](https://arxiv.org/html/2609.00066v1)。采用共享scale的collateral error、配对permutation、weight重建与融合执行链；原生NVFP4 group16、单RTX5090，其他group的pseudo-quantization不证明相同硬件收益，RMS与activation优先顺序仍有局限。
+
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25651:start -->
+- `SF-2026-ARXIV-2607-25651` — Daily `2026-07-29`；primary `arXiv:2607.25651v1`；正文锚点“Compiler Frontend 是独立的语义故障层”。
+  证据限 TorchDynamo 的 123 个历史 bug、七类 root cause 与作者生成的新 tests；不保证 taxonomy 覆盖未知类别，LLM 也不是 correctness oracle。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25651:end -->

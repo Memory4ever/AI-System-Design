@@ -26,11 +26,27 @@ Context + observation --write policy--> M_(t+1)
 
 Context 只在当前 call 中可见；Memory 可跨 turns、sessions 或 tasks 存在。把全部 conversation 永久追加既不是可扩展 memory，也没有遗忘和纠错语义。
 
+判断一个状态是否真的需要进入 Memory，可以从 action ambiguity 出发：若两个 run 的当前 observation 完全相同，
+但由于所属 domain、先前 transition 或未显式可见的 goal 不同，近似最优 action 必须不同，那么仅靠当前 Context
+不存在稳定的无记忆策略；系统至少要保存能区分这些历史条件的状态。反过来，若当前 observation 已足以决定 action，
+增加长期 Memory 只会引入读取成本、错误召回和污染面。
+
+这种可区分状态可以是 domain identity、局部 transition evidence 或 task-scoped belief，不等于复制完整历史，也不
+自动取得事实 authority。形式化结果只能在其 observation/domain 假设下说明“某类区分信息是必要的”，不能证明
+某种向量表示、摘要或 value state 在开放环境中真实、可授权或可长期维护。无法验证适用假设时，应保留最小 typed
+state 与原始 evidence，并让 Planner/环境 observation 决定行动；短任务、完全可观测环境仍以无长期 Memory 为基线。
+
 模型架构中的 test-time neural memory 也不属于本章的 Agent Memory。前者在 forward 期间按
 surprise/gradient 更新模型内部参数化 state，owner 是 sequence model，主要目标是压缩和利用
 长输入；后者由平台跨调用持久化，必须具备 provenance、authorization、correction 与 deletion。
 二者共享“write、retain、forget”的 `Principle Reuse`，但 truth authority 与生命周期不同。
 第 22 章讨论 Titans/MIRAS 这类模型内部路线，本章只处理外部 durable state。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22814:start -->
+长时域环境进一步要求把两种状态拆开：跨 episode 保存的 world reference 回答“哪里可能仍值得探索”，近期 episodic context 回答“当前策略怎样到达那里”。Persistent map 或 novelty estimate 可以帮助策略跨 episode 复用空间信息，但 mapper 只能提交可修订的环境估计，policy 只能提出 action；新的 observation 与受控 controller 才拥有环境事实和 effect commit。把这两类状态合并，会让陈旧地图自我强化为错误目标，也会让短期动作历史污染长期世界表示。
+
+在线 3D reconstruction 用计算、显存与持续校正成本换取更稳定的 novelty reference，定位误差和场景变化则会累积 stale-map failure。现有证据只覆盖静态室内场景、特定 3DGS 表示和两个生成式 OOD world，不证明地图是真实 world model，也不证明 novelty 等于任务价值。Map consistency、localization 或 stationarity 失效时，应重新锚定直接 observation，清除陈旧 episodic state，并回退短时 egocentric context、经过验证的显式地图或安全控制器。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22814:end -->
 
 ## Memory 类型是用途，不只是存储介质
 
@@ -102,6 +118,12 @@ binary label 不能恢复唯一 next state，并报告了 typed actions 的改�
 所有生产场景，也没有处理多用户 authority、真实并发和故障恢复。因此正文吸收状态机原则，
 不把论文 taxonomy 或 benchmark 写成平台规范。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22142:start -->
+有限容量和部分可观测性又把问题从“动作类型”推进到“对哪个 item 做动作”。FIFO、recency 或手写规则在环境稳定、身份简单时透明可靠；当每一步的候选集合大小变化、同一列表位置承载不同事实时，固定槽位的 value 会把 item identity 与排列顺序混淆。可学习的条件分支可以为每个候选分别估计 transfer/retain value，并在时序更新时按 item identity 对齐可变集合。它只拥有写入提议，Memory owner 仍执行 provenance、conflict、capacity 与 durable commit；value 不是 truth score。
+
+这种 per-item policy 能在受控环境中优于固定启发式，却引入 reward shaping、value drift、训练和集合匹配成本，错误 value 还可能在硬容量下永久挤掉必要前提。现有结果限于 capacity 128 的 RoomKG 与符号 triples，没有覆盖开放文本、对抗写入、隐私、删除或生产 Agent。Reward 校准、item identity 或 held-out transfer 失败时，应保留原始 episodic evidence，回退显式 heuristic/recency、重新核验或扩容，而不是让学习策略直接提交 semantic memory。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22142:end -->
+
 ### 失败反思先是待审候选，不是可直接复用的程序记忆
 
 在开放式、低风险任务中，把模型对失败的自然语言反思直接写回 procedural memory，是一种便宜且合理的
@@ -125,7 +147,19 @@ ALFWorld、HumanEval 及论文定义的 extractor 和对照实验，不支持通
 
 公开实验绑定 Qwen3-4B、LongMemEval training、LoCoMo/PerLTQA OOD、4×H800 80GB、3000 SFT samples、400 RL samples 与 max sequence length 6000；代码和 checkpoint 在 v1 中仅承诺 acceptance 后公开。该证据说明 content-level credit 可以作为训练 proxy，不证明它能识别唯一正确的 memory，或可以跳过 provenance、poisoning 与 deletion gate。
 
+<!-- semantic-body-binding:SF-2026-SEED-TASKMEM:start -->
+统一的 memory-quality policy 在任务分布稳定、评估预算有限时最简单；任务类型变化后，同一条历史对不同目标的效用可能相反。一个轻量分支保留通用 base policy，再为当前任务训练小型 task-conditioned adapter，并用最近任务样本形成可撤销的 selection proxy。Raw episode 与 provenance 仍由 memory store 拥有，adapter 只拥有 retain/rank proposal，task evaluator 决定是否采用，durable memory owner 才能提交写入或淘汰；“对当前任务有用”不能升级为事实真值。
+
+这种适配用额外 task identity、recent-task buffer、adapter revision 与回归评测换取更细的选择，却会放大短期分布偏差、遗忘旧任务，并让 proxy 与 working model 一起漂移。当前证据绑定官方披露的 Qwen3-VL、作者 benchmark 与离线设置，不证明生产耐久性、真值权威、语义/视觉 memory 的普适表示或 embodied 闭环。任务证据不足、跨任务回归或 adapter 漂移时，应停用 adapter，回退通用 policy、原始 evidence 与显式人工/规则校验。
+<!-- semantic-body-binding:SF-2026-SEED-TASKMEM:end -->
+
 ## Memory Read 是受约束检索
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-25092:start -->
+长期记忆增长后，固定执行 sparse+dense+fusion 会把每次读取成本绑定到语料规模。一个 workload-adaptive 分支先运行 BM25，用 top-k margin 判断 sparse 证据是否已足够；只有不确定 query 才启用 dense channel，并按 query 选择 fusion。Time-partitioned index 再把活跃增量与历史分区分开，使物理检索成本不必随全部历史同步增长。Router 只拥有执行计划，不能把 margin 当成事实置信度。
+
+该 cascade 节省的是不必要的 dense 计算，却引入 router 校准、分区索引、fusion state 和 workload drift。错误 skip 会漏掉 dense 独有证据，因此分布越界、margin 不稳或高风险读取必须强制 dense+RRF，或回退经验证的 BM25/全量检索。作者的 LongMemEval、LoCoMo 与亚 10ms 目标只定义所测 envelope，不构成所有长期记忆系统的延迟保证。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-25092:end -->
 
 检索可综合：
 
@@ -551,6 +585,14 @@ episodes and failures
 
 它把“记什么”推进为“如何形成和更新记忆”，同时新增 operator drift、循环自修改、错误适用范围和 deletion propagation。稳定领域中固定规则继续合理；学习到的 memory operator 只能在独立 outcome evaluation 与回滚存在时获得有限 authority。
 
+### Edge-local Episode 与 Cloud-derived Guidance 必须分离所有权
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-00756:start -->
+单设备保存自己的 episode/history，在离线、低延迟和隐私边界清楚时最可靠；把所有轨迹上传云端再统一生成建议，能复用跨 Agent 经验，却会把原始事实、派生洞察和下发控制混成一个共享状态。更稳健的双层结构让 edge owner 保留原始 episode、当前 observation 与 action outcome，cloud critic 只从已授权摘要生成带版本、来源范围和适用 subgoal 的 guidance；dispatch receipt 记录哪条 guidance 在何时、以何种 revision 到达哪个 episode，edge policy 再决定是否采用。
+
+异步 critic 隐藏中心推理延迟并共享经验，但新增 stale guidance、跨租户泄漏、语义 subgoal 错配、中心故障和“建议被误当事实”的风险。Cloud-derived insight 只能作为 advisory state，不能覆盖 edge observation 或获得 action authority；它应绑定 tenant、expiry、critic/model revision 与 source episode lineage。断网、超时、版本不兼容或本地证据冲突时，应回退 local-only memory/policy。现有证据只支持论文披露的协作环境和 agent 配置，不证明生产隐私、开放网络可靠性或长期迁移。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-00756:end -->
+
 异构任务进一步暴露了“一套固定 extraction prompt”与“每个任务一套规则”之间的张力。前者易部署，却会让
 不相似的反馈相互抵消；后者局部准确，却产生规则碎片和维护成本。更稳健的中间层是先把 extraction feedback
 按 scenario 形成可修订 clusters，再分别总结成功与失败模式，最后合成一个带适用条件的 versioned operator：
@@ -775,6 +817,17 @@ feedback source and consent
 + action or outcome that triggered it
 + supersedes / conflicts-with relation
 ```
+
+参数化个性化也必须分离“用户事实”与“如何使用事实”。如果每位用户都持有一整份 LoRA，身份内容、推理能力与 base-model drift 会混在同一不可寻址对象中，撤销和迁移都很困难。一种更清楚的边界是把用户内容写入局部、hash-addressed rows，共享 adapter 只承载通用 reasoning；memory service 持有 row identity、consent、版本与删除，模型只在明确用户作用域中读取。
+
+这种表示减少 per-user adapter 成本并允许组合，但新增 hash collision、row growth、base migration 和删除证明问题，也不能保证任意事实都能忠实写入参数。需要来源追踪、频繁更正或强删除证明时，external memory 仍是主路径；parametric row 只承担低延迟、受限的派生状态。
+
+文档级 parametric memory 也不必压进一个 monolithic adapter。可以把每份文档编译成带 semantic type 与 provenance key 的 micro-LoRA atom，由 query router 只选择候选 atoms、composer 形成 query-specific adapter，冻结 base model 再执行。Atom identity 必须绑定 source revision、compiler、base-model revision 与组合顺序；router 只拥有选择 proposal，memory service 保留来源、撤销和冲突处理。
+
+细粒度组合减少整文档重训和无关参数干扰，却新增 router miss、atom conflict、组合非交换性与 base migration。来源需要逐句引用、文档频繁更新或组合校验失败时，应回退原文 retrieval/完整 context；有限 QA 结果不能证明参数原子忠实保存全部文档事实。
+<!-- source-family:SF-2026-ARXIV-2606-12400 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606.19172 -->
 
 自动 merge 可以减少下一次询问，却会引入 stale preference、过度个性化和错误持久化。高风险或跨域偏好仍应请求确认；用户摩擦成本也要与 task outcome 一起评估。PAHF 的双反馈实验支持“行动前 clarification 与行动后 correction 应分层”的机制，但其 persona simulation 和理想化 regret 假设不证明生产用户偏好可以自动成为真值。
 
@@ -1037,6 +1090,16 @@ synthetic-to-real gap。若环境真值不可获得，应回退真实日志、�
 
 <!-- source-family:SF-2026-ARXIV-2605-24579 -->
 
+### Memory Content 与 Visible Length 必须用匹配干预分账
+
+扩大可见历史在信息可能相关时是合理基线，但历史也可能重复放大背叛、失败或 evaluator 偏差；观察到性能下降，不能直接归因于“窗口太长”。在上述组件干预矩阵之外，还应做两组匹配控制：在相同 visible length 下替换或净化指定历史内容，在相同 content 下改变可见长度。前者估计 content effect，后者估计 length/attention effect，剩余差异才属于 reader residual。
+
+Memory owner 仍保存原始事件与 provenance；sanitized view 只是带生成规则和版本的可回滚派生状态，不能删除负面证据或取得事实权威。这种分账提高诊断力，却增加反事实构造、语义污染和错误净化风险。无法构造可信 matched control 时，应保留原历史、缩短窗口并报告未分解混杂，而不是宣布“更多记忆有害”。
+
+[受限证据](https://arxiv.org/html/2605.08060v1)来自受控社会博弈、特定模型行为与 sanitization ablation；相关 lexical ratio 不是因果机制，结果也不证明真实协作中内容净化安全或可泛化。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-08060 -->
+
 ### 顺序任务要拆开 Acquisition、Retention、Forgetting 与 Transfer
 
 一次性问答准确率会把“没有写入”“写入后丢失”“被新信息干扰”和“无法迁移到新任务”混成同一个失败。对持续到达的任务，更有诊断力的协议应固定 episode 与版本边界，分别测新知识获得、延迟后保留、旧知识被覆盖、跨任务迁移和冲突消解：
@@ -1173,11 +1236,11 @@ procedural cases 上验证，而且使用已诊断 fault identifiers；它证明
 多 agent 记忆从各自 transcript 变为 transactive directory：agent 保存谁知道什么与证据位置，查询先路由到 memory owner 再取内容；目录过期时回落到广播/共享检索。其收益以额外索引维护、错误 expertise attribution 和隐私边界为代价。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-19911:end -->
 
-### 共享 Memory 的 Credit 必须沿状态树回传
+### Memory-construction Policy 的 Credit 可以沿搜索树估计
 
-多 Agent memory 不是一条扁平日志：某个结论可能来自上游委派、多个中间摘要和最终写入。只给最终回答分配 credit，会让错误或成功回写到错误的记忆节点。系统应保存 parent/child state transition，把 outcome 沿树分配给共享与 delegated change，同时区分 evidence contribution 与 coordination effect。
+当 memory builder、summarizer 与 retriever 由不同策略共同决定最终可用上下文时，只给整条 pipeline 一个下游 reward，无法判断哪一个组件选择值得保留。一个受限训练分支把组件决策展开为搜索树：不同分支代表候选构建、压缩或检索动作，再用分支后续的 Monte Carlo return 为各组件策略估计 credit。变化发生在 **memory-construction policy 的训练信号**，不是把最终 reward 回写成某个长期记忆节点的事实权威。
 
-树状 credit 提高可追责性，却依赖完整 lineage，并可能把相关贡献误当因果。缺少 trace 时应降低写入权重或转人工复核，而不是更新长期 memory。简单单 Agent、单步写入仍可使用线性 provenance。
+树搜索提供更细的相对 credit，却增加分支采样、下游评测和方差成本；共同变化的组件仍可能让相关性被误当因果。它也不提供线上 memory lineage、写入授权或证据 provenance。组件少、可做逐项消融时，冻结其他策略的 matched comparison 更容易解释；环境昂贵或 return 噪声较大时，应回退共享 reward、较浅搜索或人工设计的组件 Gate，并由独立评测决定新策略能否进入生产。
 
 <!-- source-family:SF-TREE-BASED-CREDIT-ASSIGNMENT-FOR-MULTI-AGENT-MEMORY-SYSTEM -->
 
@@ -1199,6 +1262,19 @@ Memory owner 负责提供带 provenance 的候选事实，commitment policy 才�
 ### Temporal Index 可以把生成式整理移出 Write Critical Path
 
 Eviction 也必须沿 dependency closure 进行。删除一个看似低价值的 prerequisite，可能让仍保留的 summary、plan 或 derived skill 失去可重建依据；memory owner 应先追踪依赖者，选择级联失效、重新派生或保留最小支持集。它比独立 item 的 LRU/LFU 昂贵，却防止后续 retrieval 返回“有结论、无前提”的孤儿状态；无派生关系的短期 cache 仍可用简单淘汰。<!-- semantic-body-binding:SF-2026-ARXIV-2608-20400 -->
+
+只比较 memory budget 与最终准确率，还无法知道错误发生在写入、淘汰、检索还是 reader 使用阶段。一个可执行的
+counterfactual 是在同一 query 上把 gold evidence 重新注入 read-time context：若答案恢复且证据已被淘汰，才支持
+不可逆 eviction loss；证据仍在但原运行漏取，属于 retrieval failure；重新注入仍答错，则是 reader/utilization residual。
+这种 decomposition 不选择最佳淘汰 policy，却能避免把“检索没找到”误写成“记忆已经被永久破坏”。
+
+恢复实验增加 paired rerun 与 gold-evidence oracle 成本，并依赖 benchmark 标注、reader/judge 与 injection protocol。
+`arXiv:2609.08279v1` 在 LongMemEval-S、两种 reader 与三个预算上展示该 instrument，并明确 top-k retrieval 与
+forced-gold injection 的结果不能直接混比；研究只覆盖单一 benchmark、一个 primary judge，matched-accuracy 分析也没有
+分辨出被测 policy 的稳定差异。因此生产 memory 仍需同时报告 evidence retained、retrieval regime、restore outcome 与
+最终任务结果，低风险短会话才可只看平均准确率。
+
+<!-- source-family:SF-2026-ARXIV-2609-08279 -->
 
 每次写入都让模型重写完整 summary，适合小 memory，却让 freshness latency 随历史增长，并让一次生成错误覆盖大量状态。分层时间索引可以先以低成本 append immutable episode，在后台按时间层级聚合索引；读取根据时间范围和查询只展开必要节点。
 
@@ -1226,6 +1302,23 @@ append/get/update/delete 的 record abstraction 适合 CRUD，却无法表达 de
 
 一次读取后的处理结果不能只有“写入/不写入”。更可控的 commit 状态至少区分 `persist`、`current-session only`、`reverify` 与 `clarify`：稳定且有来源的事实才持久化，临时工作状态只留本轮，证据冲突进入复核，缺少用户意图则请求澄清。分类器只提出 disposition，policy owner 结合风险、保留期和权限提交；分类不确定时默认不升级为长期事实。它增加状态机和交互成本，却阻止所有有用文本被无差别沉淀。<!-- semantic-body-binding:SF-2026-ARXIV-2608-19564 -->
 
+### Stable 与 Transient State 不能共用无条件覆写路径
+
+上面的 lifecycle disposition 若只停留在 metadata，而所有写入仍更新同一 latent/summary state，临时上下文仍可能覆盖长期事实。一个受限的实现分支把有限 memory capacity 划成 stable 与 plastic 子空间：temporary write 只允许修改 plastic rows，permanent write 才可在 policy commit 后更新两类子空间；read path 再依据 query lifecycle 融合，而不是默认把最新状态当作最可信状态。
+
+```text
+candidate memory + provenance + lifecycle evidence
+→ learned router proposes stable / transient route
+→ policy validates persist authority
+→ scoped write to stable and/or plastic state
+→ protected readout with lifecycle identity
+→ retention / overwrite audit
+```
+
+learned router 只拥有 route proposal，不能从语言相似度自行获得 durable-write authority。错误的 permanent label 会把噪声固化进受保护区域，错误的 temporary label 则会阻止必要持久化；固定 capacity split、正交约束、route supervision 与 protected readout 还会牺牲可用容量和实现简单性。生命周期未知时应保留原始 evidence 并进入 `clarify/reverify`，短会话或无长期覆盖风险时，统一 state 加显式版本仍可能更便宜。
+
+LifeFuse-Mem 的 exact-v1 §4.2–§4.5 支持 rank-8 memory 中 stable/plastic 分区、lifecycle-supervised routing、temporary-write 抑制和 protected readout；受控 anti-overwrite、LoCoMo 与 MemoryAgentBench 实验支持该实现分支，但不证明系统能从开放对话可靠推断 `persist`，也不证明固定四行/四行分配适用于任意 workload。因此这里吸收 state partition 与写入权边界，不把 classifier proposal 升级为 policy decision。<!-- source-family:SF-2026-ARXIV-2609-12436 -->
+
 Memory 的表示还必须与目标 reader 的消费接口兼容。为某个模型压缩出的 latent、summary 或 procedural state，可能依赖它的 tokenizer、提示约定、隐藏空间和工具协议；换 reader 后“内容仍在”并不等于新模型能可靠读取。可迁移的 memory artifact 应显式绑定 writer、目标 reader family、schema、生成策略与验证任务，迁移时先做兼容性测试，不兼容则回退到带 provenance 的原始 evidence。专用表示能降低 token 与检索成本，却以可移植性和升级成本为代价。<!-- semantic-body-binding:SF-2026-ARXIV-2608-17050 -->
 
 遗忘也不应等价于立即删除。长期状态可先从 active 降为 dormant，再按保留策略进入 retired；每次转换保留原因、依赖与可逆窗口，使错误遗忘能恢复，同时让默认检索不再消费陈旧内容。它用额外索引、存储和治理换可审计性；法定删除、已证实污染或密钥撤销仍需不可逆清理，短会话则不必支付多阶段生命周期成本。<!-- semantic-body-binding:SF-2026-ARXIV-2608-18177 -->
@@ -1238,6 +1331,38 @@ Memory 的表示还必须与目标 reader 的消费接口兼容。为某个模�
 <!-- source-family: arxiv:2608.02843v1; daily: 2026-08-05; semantic-body-binding: authorized-memory-mutation-lineage -->
 
 这使 memory identity 与 content truth 分离。immutable record 负责来源，versioned view 负责当前可见状态，retriever 负责选择，模型只消费受限视图。额外 lineage 会增加存储、验证和撤销成本，但换来可审计 rollback，并阻止重复转述把低信任输入升级成高权限事实。
+
+### 共享 Memory 需要分离选择性写入、访问权与事实状态
+
+把所有 Agent observation 自动并入共享 Memory，协作最直接，却会传播误差、泄漏 tenant 信息并让多数重复记录伪装成多源共识。写入控制器应先判断长期 utility 与 provenance，RBAC/ABAC owner 再决定谁可读写，belief state 保存 competing claims 与证据而不是立即覆盖。选择性写入减少噪声，却可能漏掉以后有用的低频事实，因此需要可恢复 archive 与 periodic audit。
+
+Memory 进一步可被建模为带观测反馈的受控过程：write、retain、retrieve、revise、delete 是不同 action，controller 根据任务 outcome 与干预证据更新 policy；治理层仍拥有权限、保留期和删除 commit。Learned controller 能适应 workload，却可能 reward hack、遗忘少数用户或删除尚未验证的信息。低规模、规则稳定或高风险数据继续优先 deterministic policy。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20926:start -->
+Memory validity 不是记录自身的固定属性，而是 query-conditioned fitness-for-use：同一条事实可能对一个请求仍新鲜、
+对另一个请求已经冲突或缺少必要粒度。MemConflict 类 diagnostic 把 competing memory、query 与最终答案共同送入
+受控对照，定位系统是在检索、冲突解析还是推理阶段失效。它增加成对构造和 judge 成本，且 benchmark 冲突不等于
+生产世界真值；诊断不可校准时，应保留原始 source、显示冲突并请求外部证据或人工确认。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20926:end -->
+
+<!-- source-family:SF-2026-ARXIV-2607-09493 -->
+<!-- source-family:SF-2026-ARXIV-2607-13591 -->
+
+### 写入时保留 lossless source，读取时再构造 derived memory
+
+一条更结构化的实现是把 immutable episode 及其时间、来源和 interaction context 写入 append-only
+store，再由 semantic graph 提取可撤销的 gist、entity 与 relation。Episode 拥有发生过什么，semantic
+projection 只拥有派生索引；新证据可以增加或失效 graph edge，但不能重写原事件。它用图模式、投影误差
+和合并冲突换跨 episode 的组合检索；证据稀疏、schema 不稳或短会话下，按时间追加原文仍更可靠。
+现有工作主要是 architecture proposal、分析和 evaluation pathway，不证明这种 episodic-semantic graph
+已经在生产长程记忆中优于受治理的 RAG。
+<!-- source-family:SF-2026-ARXIV-2605-02106 -->
+
+写入即摘要能控制存储，却会在未来 query 尚未知时永久丢失细节。Lazy construction 把 source artifact 以 provenance/version 保留，query 到达后才选择、压缩或组合成工作 memory，并把 derived state 与 source revision 绑定。它用更多 backing-store 和 query latency 换可恢复性与 task-specific relevance。
+
+如果 source 敏感、保留昂贵或访问时延严格，eager summary 仍可能更合适；但必须保留删改证据和明确 fidelity boundary。query-time constructor 只是 proposal，state owner 负责验证预算、权限与引用后提交，不得把派生摘要冒充原始事实。
+
+<!-- source-family:SF-2026-ARXIV-2607-22690 -->
 
 ## 本章在知识树中的位置
 
@@ -1334,9 +1459,82 @@ Agent Memory 从追加历史演进成受治理的持久状态系统。写入前�
 grow-only replicated store 可以用 content hash 保证各副本最终拥有同一 KV fragments，但存储收敛不等于查询能找到所需状态，也不保证一次读取不会混入无关片段。routing tag、addressing、hard read mask、recovery 与 final composition 应分别验收。基于 lexical connectivity 的寻址成本低，却会在连接断裂时确定性漏读，因此必须保留可诊断的 fallback。
 <!-- source-family: arxiv:2608.11218v1; semantic-body-binding: replicated-memory-addressing-isolation -->
 
+## 从轨迹总结到 Propose-Probe-Commit
+
+### 连续 Consolidation 必须保留可回放的 Episodic Evidence
+
+把每批轨迹持续改写成一份紧凑“经验手册”，在存储和检索预算有限时很合理；但后一次摘要会把前一次摘要当输入，小的归类和抽象错误因此会递归放大，最终让更多经验产生更差的 Memory。更稳健的 owner 划分是：episodic store 保存不可变原始轨迹与 provenance，consolidator 只提出带支持集和适用条件的派生规则，promotion gate 用旧任务与反例回放后再提交。派生规则可以退休或重建，不能反向覆盖其证据。
+
+这种路径用额外存储、回放和版本治理换可纠错性，也不能消除轨迹本身错误。经验稀少、任务稳定或无需跨会话复用时，简单 episodic retrieval 仍更合适；无法定位支持 episode 或回归变差时，应撤回 abstraction 而不是继续重写。exact-v1 的 agent benchmark 与 ARC-AGI Stream 只揭示所测 consolidation loop 的退化，不证明所有文本 Memory 都会随更新必然恶化。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12978 -->
+
+### 显式 Memory 的稳定性同时受梯度动力学与访问结构约束
+
+外部可写 Memory 早期难以扩展，不只是容量问题：跨长序列反向传播会反复缩放状态梯度，访问全部槽位又把成本绑定到 Memory 大小。受限的新分支用局部滑窗处理短程依赖，以稀疏层次路由选择少量全局槽位，并让 unitary/phasor update 主要旋转而非缩放梯度。路由器拥有访问 proposal，Memory module 拥有可写状态，训练器仍负责验证梯度与优化稳定性；它不能被误写成 Agent 的事实型长期记忆。
+
+稳定梯度和稀疏访问以更复杂的路由、复数状态、专用 kernel 需求和错误寻址为代价。作者的纯 PyTorch 实现仍慢于高度优化基线，证据也局限于约 100M 参数和披露序列设置；因此标准 Attention、SSM 或检索式 Memory 在硬件优化、规模证据或随机访问需求更成熟时仍是合理旧路径。该结果说明一种可行机制，不证明它已能替代大规模固定上下文模型。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-13370 -->
+
+### Always-on Consolidation 必须暴露路径依赖和价值缺口
+
+流式事件若只在查询时检索，系统无法主动形成跨事件的概念和意图；分层 folding 可以依次保留 episodic trace、合并重复模式并生成更高层 intent，使长期 Memory 从被动仓库演进为持续派生结构。但每次 fold 都依赖已有图，输入顺序和早期错误会改变后续 state；因此 graph builder 只能提交可追溯的 derived node，并保存支持事件、fold revision、冲突和 raw fallback，不能把压缩率或“主动性”分数当成事实正确性。
+
+持续折叠减少默认检索负担，却增加 path dependence、误归因、过早目标化和后台计算；缺少价值估计与抑制控制时，高层 intent 也不代表值得执行。短会话、隐私敏感或无法回放事件时，应保留按需检索或人工确认。exact-v1 的指标只支持作者系统在其评测中的行为，不证明生物类比、长期稳定性或真实用户意图推断成立。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-13438 -->
+
+只让 post-task curator 阅读成功/失败轨迹，成本低且不进入在线关键路径，但单条轨迹无法证明某个经验是正确、可迁移或仍然有效。
+passing grade 也只能证明终局，不会自动验证中间假设。更可靠的写入链先蒸馏证据，再允许 curator 通过最小权限的只读工具检查
+候选记忆，最后才 create、merge、narrow、delete 或 skip：
+
+```text
+completed trajectory + terminal feedback
+-> non-writing distillation
+-> propose a scoped memory
+-> read-only probes for counterexample, precondition and freshness
+-> commit by the sole memory writer
+```
+
+这里要刻意分离三种权限：task agent 只读 memory 并执行当前任务；distiller 不能写 memory；curator 是唯一 memory writer，
+其环境工具又必须只读。这样 probe 提高的是 write-time evidence quality，而不是偷偷扩大 task-time capability。代价是额外离线调用、
+connector 授权、审计与 stale-read 风险；没有安全 read surface 时应回退 trajectory-only curation，并给记录更窄 scope，而不是开放生产写权限。
+
+公开实验只覆盖 GitHub Copilot SDK harness、CLBench 的数据库漂移和 adapted APEX 文档任务，以及所列模型；它支持“只读探查能改善这些
+curation 条件”的结论，不证明所有 probed memory 都正确，也不提供跨环境的通用置信阈值。
+
+<!-- source-family:SF-2026-ARXIV-2609-11060 -->
+
+### 长轨迹压缩应先 Shadow，再 Commit
+
+同步压缩整段历史的做法在轨迹短、延迟宽松时容易保持一致；长时 Agent 中，它会阻塞当前行动，并可能把一次有损摘要立即升级成唯一状态。更稳健的路径是让旧轨迹继续服务当前动作，在 shadow path 生成 compacted state，再用未来动作的 counterfactual probe 检查关键信息是否仍可恢复；只有通过后才原子切换，失败时保留旧状态。
+
+这种 Propose–Probe–Commit 增加双份状态、探测预算和提交协调，也不能证明 probe 覆盖了所有未来用途。上下文很短、原文可廉价重读或风险很低时，直接压缩仍更简单；probe 不完备或 lineage 不清时，应缩小摘要适用范围或继续引用原轨迹，而不是把压缩记录冒充无损 memory。exact-v1 证据只支持披露的长轨迹任务和压缩评测。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-08580 -->
+
 ## 小结
 
 Memory 的价值来自受治理的保存、选择和遗忘，而非积累最多文本。可靠 Memory 保留 provenance、confidence、authorization、target identity、update history 和修正路径，并在多目标干扰下分别验收检索、冲突消解与聚合。下一章从信息状态进入外部行动。
+
+### Procedural Memory 应保存可展开的依赖图
+
+独立 skill 条目按语义相似度检索，在数量少时简单有效；长期积累后却无法表达前置依赖、兼容性和 merge/split/retire。typed skill graph 可以把 trajectory evidence 变成 mutation proposal，由 memory controller 管理版本和关系，workflow runtime 仍验证当前状态并提交执行。组合性换来图漂移、循环依赖、错误合并和 RL feedback 固化偏差；证据不足时应回退孤立 versioned skills、人工依赖和只读快照。exact-v1 的环境结果不证明图关系具有因果性、跨 Agent 可移植或在线更新一致。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12039 -->
+
+GUI routine 也可以被编译为可搜索 transition graph，避免每屏从头解释；Q/value 只排序 path proposal，observer 与 runtime 必须验证当前 screen state 和 action precondition。它减少重复推理，却增加状态 alias、图陈旧、搜索成本和错误 routine 复用；不匹配时应回退逐步 observation/planning 与可撤销 checkpoint。exact-v1 只支持 AndroidWorld，不证明真实桌面安全或跨应用迁移。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12294 -->
+
+### 群体经验广播必须把 Champion 选择与 Memory Admission 分开
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-16233:start -->
+每个 Agent 保留本地经验在任务独立、错误不会跨实例传播时最安全；多实例反复探索同一阶段后，完全隔离会重复支付搜索成本。一个条件分支按阶段选择表现最好的 champion，将其自然语言经验广播给同群实例，并在经验稳定后让阶段“毕业”，停止重复探索。performance selector 只提出 champion，memory controller 决定广播、版本和有效期，各 Agent 的真实 task outcome 仍负责验证经验是否可复用。
+
+广播 ablation 支持共享经验是作者设置中的有效机制，但单一 CAGE-2 B-line、有限任务和 evaluator 不能证明跨域普适。错误 champion、表面高分策略或过期经验会把局部偏差扩散到整群；自然语言摘要还会丢失原 trajectory 的约束。选择置信度不足、环境变化或回归升高时，应隔离该条 memory，回退 local experience、raw trace 验证和重新探索，而不是继续全局传播。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-16233:end -->
 
 ## Review notes
 
@@ -1470,48 +1668,6 @@ Primary-source 入口：
 - **SF-2026-ARXIV-2606-25449**：Primary `arXiv:2606.25449v1`；Method `https://arxiv.org/html/2606.25449v1 — §3 Brittle Memory and Reclaim Evaluation; 3.2 Reclaim Protocol`；Evaluation `https://arxiv.org/html/2606.25449v1 — §4 Experimental Setup; 5 Results; 5.7 Boundary of the Fix`；未证明边界 `https://arxiv.org/html/2606.25449v1 — §7 Limitations`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
 - **SF-2026-ARXIV-2606-25658**：Primary `arXiv:2606.25658v1`；Method `https://arxiv.org/html/2606.25658v1 — §3 Method; 3.2 Online Semantic Basis; 3.3 Dynamic Visual Memory Bank`；Evaluation `https://arxiv.org/html/2606.25658v1 — §4 Experiment; 4.1 Benchmarks and Metrics; 4.2 Implementation`；未证明边界 `https://arxiv.org/html/2606.25658v1 — §A Limitations`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
 
-### Source-family integration record
-
-<!-- recovered-daily-20260623:AGENT-MEMORY:start -->
-### 2026-06-23 evidence integration — AGENT-MEMORY
-
-相邻章 `books/part-07-agent/78-tool-calling.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-22844**：RaMem: Contextual Reinstatement for Long-term Agentic Memory 的 exact-v1 机制为：To address this problem, we propose Contextual Reinstatement for Agentic Memory (RaMem), a framework that turns retrieved memory fragments into contextually verifiable evidence. 因此 把事件时间、来源、有效条件、版本、检索决策与写入 authority 分开。 该 family 的 failure pressure 是：We refer to this failure as context collapse: memories lose the surrounding context needed to judge whether they provide valid evidence for the current query. 披露的 evaluation signal 是：Experiments on long-term memory benchmarks show that RaMem consistently improves performance over strong memory baselines, with average F1 gains of more than 10% across several backbones. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-23195**：Memory Contagion: Cross-Temporal Propagation of Evaluator Bias via Agent Memory 的 exact-v1 机制为：Recent work shows that agent memories degrade during continuous consolidation. 因此 把事件时间、来源、有效条件、版本、检索决策与写入 authority 分开。 该 family 的 failure pressure 是：However, existing research assumes memories are derived from unbiased experiences. 披露的 evaluation signal 是：Recent work shows that agent memories degrade during continuous consolidation. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-23283**：Towards Root Memories: Benchmarking and Enhancing Implicit Logical Memory Retrieval for Personalized LLMs 的 exact-v1 机制为：Motivated by this challenge, we introduce root memory, a structured, decision-preserving representation that distills reusable personalized logic from long-term user histories. 因此 把事件时间、来源、有效条件、版本、检索决策与写入 authority 分开。 该 family 的 failure pressure 是：However, existing retrieval methods in these systems primarily rely on semantic similarity, potentially missing logically critical memories with limited semantic overlap. 披露的 evaluation signal 是：Current benchmarks remain inadequate for evaluating this problem. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-23525**：Self-Compacting Language Model Agents 的 exact-v1 机制为：We propose SelfCompact, a scaffold that allows the model itself to decide when and how to compact. 因此 把事件时间、来源、有效条件、版本、检索决策与写入 authority 分开。 该 family 的 failure pressure 是：Such triggers pay no heed to trajectory structure, risking discard of partial results mid-derivation or mid-search. 披露的 evaluation signal 是：Such triggers pay no heed to trajectory structure, risking discard of partial results mid-derivation or mid-search. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-23752**：ESAA-Conversational: An Event-Sourced Memory Layer for Continuity, Handoff, and Curation Across Heterogeneous LLM Coding Agents 的 exact-v1 机制为：Each agent, however, persists its conversation in a private and vendor-specific log. 因此 把事件时间、来源、有效条件、版本、检索决策与写入 authority 分开。 该 family 的 failure pressure 是：Each agent, however, persists its conversation in a private and vendor-specific log. 披露的 evaluation signal 是：The result is conversational state drift: goals, decisions, open tasks, and rationales established with one agent are not reliably available when another agent takes over. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-24040**：Towards Version-aware Operations and Transaction Memories for Multi-layer MeMo 的 exact-v1 机制为：We propose a version-aware operation layer in which high-level operations such as replace, obsolete, keep-history, rollback, and trace are compiled into MeMo-native primitive calls over sequences and tokens. 因此 把事件时间、来源、有效条件、版本、检索决策与写入 authority 分开。 该 family 的 failure pressure 是：MeMo proposes language models with explicit multi-layer correlation matrix memories (CMMs), where memorization, retrieval, and forgetting are architectural operations. 披露的 evaluation signal 是：This paper asks how such memories can reduce the need for retraining when knowledge changes. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；来源/时间/版本不足时隔离 candidate memory，保留原始轨迹且禁止自动覆盖。旧路径在其原约束成立时继续共存。
-
-<!-- recovered-daily-20260623:AGENT-MEMORY:end -->
-
-<!-- recovered-daily-20260624:AGENT-MEMORY:start -->
-### 2026-06-24 evidence integration — AGENT-MEMORY
-
-相邻章 `books/part-07-agent/76-rag.md` 只接收 handoff，不重复拥有机制。
-
-### Owner-merged minimal text
-
-- **SF-2026-ARXIV-2606-24151**：不在设计时固定 text 或 code memory；memory manager 先保存 plan/fact/pitfall 文本，只有重复且验证通过的 plan 才 crystallize 为 callable tool，同时保留构建成本与 provenance。 AppWorld 与同一 experience set 只显示两种表示在 construction cost、execution efficiency、transferability 上互补；不证明生成工具在未知 API、权限变化或污染经验下安全。
-- **SF-2026-ARXIV-2606-24428**：经验写入从同一 agent 自我总结改为 Execute 的异构并行轨迹、第三方 contrastive Distill 与 consensus Verify；只有通过独立验证的经验才能进入 storage/retrieval。 多 agent consensus 仍可能相关失败，且 tau2-Bench/Mind2Web/MMTB 与论文 temperature/retrieval 配置不证明开放任务；不确定时保存 raw trajectories 或拒绝写入。
-- **SF-2026-ARXIV-2606-24535**：多 Agent 共享记忆增加 explicit scope、valid time、provenance graph 与 policy-gated retrieval；矛盾在 write-time resolution，reader 只消费已提交版本，传播由 privilege gate 控制。 self-evaluation、single tenant、focused scope probe、有限 workload 且无 comparand；staleness-after-supersession 与 visibility 延迟未完整测量，冲突时回退 tenant-local memory 或 single writer。
-- **SF-2026-ARXIV-2606-24775**：把 agent memory 评价拆成 logical representation、physical storage/index、extraction、query routing 与 maintenance 五个 ownerable stage，并分别测 retrieval fidelity、evolution robustness、long-horizon stability 和 operation cost。 现有系统/benchmark 比较不证明单一实现普适最优；缺少生产 authorization、deletion SLA、并发一致性或真实 workload 时只能作为 lifecycle checklist。
-- **SF-2026-ARXIV-2606-25115**：一个 value-minus-harm-per-byte score 同时控制 KEEP eviction、SHARE uplink 与 TRUST provenance gate；RAM、energy、uplink budget 与 poison risk 成为 memory lifecycle state。 task-drift benchmark 与 Jetson 两臂/Hub testbed 不证明 score 跨设备、用户或攻击迁移；低校准或高风险 entry 应拒绝共享并回退本地可信 memory。
-- **SF-2026-ARXIV-2606-25161**：memory update 不再只按最终问答 reward；transition verifier 对 coverage、preservation、faithfulness 打分，同一旧 state 下比较候选 write/revise/delete，并用 preference-guided RL 训练 writer。 MemoryAgentBench/HaluMem/Mem-alpha 与 verifier judge 不证明真实用户 consent、并发 writer、poisoning 或 judge drift；低置信 transition 应拒写并保留旧版本。
-
-<!-- recovered-daily-20260624:AGENT-MEMORY:end -->
-
-<!-- recovered-daily-20260625:AGENT-MEMORY:start -->
-### 2026-06-25 evidence integration — AGENT-MEMORY
-
-- **SF-2026-ARXIV-2606-25449**：`3 Brittle Memory and Reclaim Evaluation; 3.2 Reclaim Protocol` 所定义的源特定机制用于把动态记忆写入、回收与失效变成有 owner 的持久状态迁移；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `7 Limitations` 是 `Reclaim Evaluation: A Lossy Memory Is Worse Than an Empty One` 的 source-specific 反例/局限边界；若运行条件离开 `4 Experimental Setup; 5 Results; 5.7 Boundary of the Fix` 的验证域，`AGENT-MEMORY` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-25658**：`3 Method; 3.2 Online Semantic Basis; 3.3 Dynamic Visual Memory Bank` 所定义的源特定机制用于把动态记忆写入、回收与失效变成有 owner 的持久状态迁移；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `A Limitations` 是 `Towards a Dynamic and Fixed-budget Memory Bank for Efficient Streaming Video Understanding` 的 source-specific 反例/局限边界；若运行条件离开 `4 Experiment; 4.1 Benchmarks and Metrics; 4.2 Implementation` 的验证域，`AGENT-MEMORY` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-<!-- recovered-daily-20260625:AGENT-MEMORY:end -->
-
 ### Daily Books delta trace（2026-06—08）
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-06090:start -->
@@ -1592,11 +1748,6 @@ Primary-source 入口：
   **已吸收的语义增量：** Verbal RL 的持久状态应分 rules、episode evidence 与 compositional skills，并支持置信更新、冲突处理、停用和重新激活，而非单调追加经验摘要。
 <!-- daily-books-trace:SF-2026-ARXIV-2606-17591:end -->
 
-<!-- daily-books-trace:SF-2026-ARXIV-2606-18144:start -->
-- `SF-2026-ARXIV-2606-18144` — Daily `2026-06-17`；primary `arXiv:2606.18144v1`；Books review `books-review:SF-2026-ARXIV-2606-18144`。
-
-  **已吸收的语义增量：** Embodied memory tiering 要把 flash write endurance 作为随时间耗损的预算，以 shadow price 协调 RAM/NVM/cloud placement、eviction 与 capture fidelity。
-<!-- daily-books-trace:SF-2026-ARXIV-2606-18144:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-19847:start -->
 - `SF-2026-ARXIV-2606-19847` — Daily `2026-06-19`；primary `arXiv:2606.19847v1`；Books review `books-review:SF-2026-ARXIV-2606-19847`。
@@ -1629,7 +1780,7 @@ Primary-source 入口：
 <!-- daily-books-trace:SF-2026-ARXIV-2606-20954:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-05708:start -->
-- `SF-2026-ARXIV-2607-05708` — Daily `2026-07-07`；primary `arXiv:2607.05708v1`；Books review `books-review:SF-2026-ARXIV-2607-05708`。
+- `SF-2026-ARXIV-2607-05708` — Daily `2026-07-08`；primary `arXiv:2607.05708v1`；Books review `books-review:SF-2026-ARXIV-2607-05708`。
 
   **已吸收的语义增量：** 新增证据边界：Instead of rewriting full memory or independently summarizing fixed segments, MemAttention compacts one bounded chunk and reconciles it against a small related set before commit. The Memory Manager then observes co-access and physically co-locates likely co-retrieved chunks, using out-of-place relocation and garbage collection to reduce fragmentation without changing logical memory identity. Logical memory units own semantic identity, provenance and revision; the reconciliation policy owns derived cross-chunk updates; retrieval owns the selected evidence set; the storage manager owns physical placement, relocation and GC. Physical moves must not create a second semantic truth or silently change authorization/deletion state. 该 delta 已进入 `books/part-07-agent/77-memory.md#L348`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-05708:end -->
@@ -1641,7 +1792,7 @@ Primary-source 入口：
 <!-- daily-books-trace:SF-2026-ARXIV-2607-08716:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2607-22690:start -->
-- `SF-2026-ARXIV-2607-22690` — Daily `2026-07-18`；primary `arXiv:2607.22690v1`；Books review `books-review:SF-2026-ARXIV-2607-22690`。
+- `SF-2026-ARXIV-2607-22690` — Daily `2026-07-28`；primary `arXiv:2607.22690v1`；Books review `books-review:SF-2026-ARXIV-2607-22690`。
 
   **已吸收的语义增量：** 新增证据边界：Memory construction can be deferred until the query: retrieve a broad evidence superset, then construct a small query-specific view in bounded parallel windows. This preserves raw archive authority while making the constructed memory disposable, versioned and recoverable. 该 delta 已进入 `books/part-07-agent/77-memory.md#L1`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-22690:end -->

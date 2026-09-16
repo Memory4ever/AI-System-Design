@@ -223,7 +223,7 @@ Official entry points：
 <!-- daily-books-trace:SF-2026-ARXIV-2606-09643:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-12688:start -->
-- `SF-2026-ARXIV-2606-12688` — Daily `2026-06-11`；primary `arXiv:2606.12688v1`；Books review `books-review:SF-2026-ARXIV-2606-12688`。
+- `SF-2026-ARXIV-2606-12688` — Daily `2026-06-12`；primary `arXiv:2606.12688v1`；Books review `books-review:SF-2026-ARXIV-2606-12688`。
 
   **已吸收的语义增量：** 复合多模态模型的 serving contract 应从固定 stage DAG 演进为 model graph + named walks，显式支持 seq/parallel/loop/dynamic-loop/stream 与 component placement。
 <!-- daily-books-trace:SF-2026-ARXIV-2606-12688:end -->

@@ -72,6 +72,14 @@ timestamp
 decision evidence
 ```
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20630:start -->
+Plan-execute workflow 的优化也应保留状态机语义。Temporal semantic cache 可以复用仍新鲜且身份兼容的中间结果，
+tool-discovery cache 减少重复枚举，dependency-aware executor 并行无前后依赖的 steps；三者只优化读与调度，不能
+跳过 transition precondition、effect receipt 或 rollback。收益是降低工具发现与串行等待，代价是 cache invalidation、
+依赖误判和并发副作用。论文 AOB/MCP pipeline 之外，identity、幂等性或依赖无法证明时，应回退无缓存发现和
+串行执行。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20630:end -->
+
 模型文本可以建议 `next_state`，但 workflow engine 验证转移是否合法。
 
 ### 从“对象已保存”到“状态已激活”
@@ -98,6 +106,25 @@ untrusted proposer builds candidate off-commit
 对齐检查减少 stale-plan execution，却增加 snapshot、cross-component reconciliation 与 false stall；任何输入遗漏都可能产生表面一致。简单 linear workflow 仍可用单 state pointer，外部状态变化或 delegation 出现后才升级完整 contract。`arXiv:2605.19314v1` 的 §3、§4 与 §7 只支持其 hierarchical task-state alignment 和受测 long-horizon embodied tasks，不证明开放工具环境中的 completeness、liveness 或通用成功率。
 
 <!-- source-family:SF-2026-ARXIV-2605-19314 -->
+
+### 相对指代必须在 Stage 边界解析为版本化 Referent
+
+即使各组件读取了同一份文本，`previous`、`current`、`latest` 或“刚才那个结果”也可能随 draft、verifier 和 reviser 的观察时点改变含义。短流程、单一版本且字段名不会与时间语义冲突时，自然语言 handoff 成本最低；一旦 context 中同时存在旧值、当前值和待提交值，靠下游模型重新解释会把字段 label、temporal standpoint 与 authoritative revision 混为一谈。
+
+Workflow owner 应在 dispatch 前把相对表达编译成 typed referent，并让下一阶段只消费已绑定对象：
+
+```text
+relative phrase + speaker/stage standpoint
++ artifact and field candidates
++ authoritative revision / event time
+→ resolve to (artifact_id, field, revision, temporal standpoint)
+→ unique: dispatch with alignment record
+→ ambiguous: clarify | re-read | defer
+```
+
+resolver 只拥有 binding proposal，state machine 依据当前 authoritative head 决定是否可提交；字段名叫 `Previous` 不等于它就是当前操作语义中的 previous。显式绑定减少跨阶段 deictic drift，却增加 schema、normalization、migration 与 clarification latency；字段本身错误、revision 过期或 standpoint 丢失时，typed referent 仍会稳定地产生错误。因此高风险变更应同时保存原文、解析结果和绑定证据，简单且无歧义的单步任务仍可保留自然语言路径。
+
+exact-v1 `arXiv:2609.12162v1` 用 10 个合成 base examples、三种 minimal-pair conditions、六个模型和 21 个 reasoning configurations 证明这种歧义足以让 draft–verify verdict 大幅变化，也显示 reasoning effort 并非单调补救。其正确 target 在所有例子中都落在名为 `Current` 的字段，单纯 field matching 也可能满分；rationale probe 又无法观察所有正确 verdict 的真实生成机制。这里因此只吸收 stage-bound referent identity 与 defer/clarify 边界，不吸收模型排名、成本比较或“结构化字段必然正确”的结论。<!-- source-family:SF-2026-ARXIV-2609-12162 -->
 
 ## Deterministic Spine，Agentic Nodes
 
@@ -201,6 +228,12 @@ separability gate 接受或回退到大模型 tool loop。这是 workflow-level 
 speculation；false accept 会跳过所需 observation/action，false fallback 则支付 draft 与 judge 后仍执行完整
 流程。Router 必须持有 threshold、decision trace 与 residual queue，tool trajectory 仍归主 Agent/Workflow。
 难题比例高、threshold 漂移或 action 有副作用时，直接执行完整受控 workflow 更可靠。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07937:start -->
+Clarification gate 还需要时间维度：缺的是 goal 时，早期假设会重写整条 workflow；缺的是某个后续 input 时，等待到相关步骤前可能仍可恢复。Runtime 应把 missing-information type、completed actions、rollback cost、irreversible effects 与 remaining budget 写入同一 admission state，在信息价值跌破继续执行代价前选择 ask，而不是只用一个全程固定阈值。
+
+它用更频繁的状态估计和用户中断换减少级联返工，也可能因过早提问造成 friction，或因错误 demand curve 过度等待。高风险不可逆动作仍必须在执行前硬确认；低风险可撤销步骤可继续采用 assume/proceed，并在 checkpoint 回滚。exact-v1 只支持作者所测交互条件，不证明单一 clarification timing policy 可跨用户和任务迁移。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07937:end -->
 
 ### Toolspace 变大后，Schema 与执行中间态不应都塞回 Prompt
 
@@ -476,6 +509,16 @@ VLM judge 也不等同可玩性。Fix 不能因一次成功就进入全局 libra
 signature、pre/post evidence 与 regression。微型任务继续适合 one-shot generation，安全或性能关键项目仍由
 人工架构和 review 掌握发布 authority。
 
+局部 prompt-policy edit 也必须经过 composition-aware promotion。所有 patch 先相对同一 iteration-start policy 测 isolated effect，再按真实持久化顺序逐个重放；局部 edit locus 不意味着 downstream effect local，后加入的修改可能改变 tool、resource 或 validation state。组合回归触发 reject/rollback，不能把每个局部正增益直接相加成全局改进。
+
+<!-- source-family:SF-2026-ARXIV-2609-12127 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21958:start -->
+多模块 LLM pipeline 还要求把 diagnosis 与 prescription 分成两个决定。因果干预可以把失败主要归因于某个下游模块，但下游组件可能已经共同适应了上游输出的语言分布与特征性错误；直接 patch 被归因模块，反而可能破坏这份隐式 interface contract。Diagnosis owner 只产生 blame/NIE artifact，repair owner 必须从同一 frozen snapshot 比较多个 patch loci，Workflow owner 再以端到端 replay 决定 promotion。
+
+这种分权用更多 interventions、judge calls 和比较状态换取更可靠的修复位置，也可能为了兼容而暂时保留真实的上游缺陷。现有证据只覆盖固定的单轮四模块 pipeline，不能把 downstream co-adaptation 当作普遍因果律，也不能推出 upstream patch 总是更安全。oracle pairing、拓扑稳定性或 held-out prescription evidence 不足时，不应自动修改被 blame 的模块；应比较上游、下游和 no-patch 候选，并回退接口重训、串行重构或人工裁决。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21958:end -->
+
 Recovery controller 还必须把 verifier 与 helper calls 算进剩余 action budget。Mandatory completion gate 能减少
 false done，loop breaker 能逐级触发 modality switch、strategy change 或 external reflection；但在弱 backbone、
 15-step 等紧预算下，它们也可能挤占完成任务的动作。VLAA-GUI 支持的是“recovery utility 依赖 backbone 与预算”，
@@ -529,6 +572,14 @@ unlimited rewinds、无 wall-clock 上限，并主要恢复 workspace，不能�
 
 <!-- source-family:SF-2026-ARXIV-2605-22343 -->
 
+### Verifier Failure 要分别归因给 Instruction 与 Tool Program
+
+让一次失败同时触发 instruction 和 executable tool program 的无差别更新，能快速搜索新组合，却无法知道改进来自哪一侧，也会把回归责任混在一起。Workflow 应把 verifier evidence 结构化归因：instruction policy 与 tool program 各自形成 versioned proposal，只更新有证据指向的一侧；若交互项无法分解，则进入联合实验而不是直接提交两份改写。
+
+结构化 credit assignment 增加对照实验、状态版本和样本预算，错误归因仍会把优化推向错误 owner。组件很少、试验完全可回滚时可继续联合搜索；证据不足时应保留旧版本并扩大 matched comparison。exact-v1 只支持其 graph-reasoning Agent、实验与 ablation，不能证明所有 workflow 都可被唯一归因。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-10366 -->
+
 ## Durable Execution 与 Replay
 
 ### Distributed Event Log 是 Partial Order，不是单一时间线
@@ -553,7 +604,25 @@ versioned DAG
 
 这种分层提高并行度与局部恢复能力，却增加协调、重复执行和 commit 冲突。任务存在不可逆副作用、依赖动态改变或 aggregator 非确定时，仍需串行 barrier、补偿和人工批准；吞吐改善不能替代最终状态一致性。
 
-<!-- source-family:SF-2026-ARXIV-2605-15132 -->
+同一轮有多个角色修改共享语义状态时，仅让它们并行输出自由文本，随后再由一个模型“总结”，会把 decision、patch、realized transition 与 committed artifact 混成一个对象；后执行角色还可能基于已经变化的中间状态作决定，使各分支不再可比。更严格的路径是冻结 round-start typed graph，让每个角色只对同一 snapshot 产生带 target identity 的 patch proposal；validator 先检查 schema、target 与冲突，runtime 再以固定规则 materialize 已选 patch，最后由 graph-global owner 对 realized state 做 continue/commit 判断：
+
+```text
+frozen shared-state revision
+→ parallel role-local decisions
+→ validated typed patches
+→ deterministic materialization
+→ graph-global commit or another round
+```
+
+它以更多 graph schema、validation、merge metadata 和 commit calibration 换取同轮提案的可比较性与可重放性。固定顺序只能消除 realization 的随机次序，不能解决语义冲突；validator 缺少依赖信息、patch 触发不可逆副作用或 global commit 无可靠判据时，必须回退串行 barrier、人工 adjudication 或更小的独立分支。`arXiv:2605.04922v1` 的证据来自 scientific-ideation proposal benchmark、弱标签 critic 与固定 graph schema，只支持这种状态分离在所测 runtime 中的可行性，不证明生成的科学命题正确或任意 Multi-Agent workflow 都应采用 learned commit head。
+
+<!-- source-family:SF-2026-ARXIV-2605-04922 -->
+
+并行分支之间最兼容的交付物仍是文本或结构化 artifact：它可读、可审计，也不依赖模型内部布局；代价是每次合并都要重新 prefill。若低延迟场景确实需要直接交付 KV state，必须先为每个 branch 记录 model、tokenizer、layer/layout、prefix 和 adapter identity，再由专门 mapper 将不同分支校准到 synthesizer 可消费的坐标。Worker 只拥有自己的 branch cache，synthesizer 只生成合并 proposal，不能把隐藏 state 当作共享可变真值。
+
+Latent handoff 可减少重复 prefill，却牺牲可解释性，并把模型升级、branch 顺序与坐标映射变成兼容性债务。映射未校准、需要人工审计、分支跨供应商或隐藏 state 无法复验时，应回退文本或 versioned artifact 合并；作者报告的 TTFT 改善只绑定其模型、branch 数和 serving setup。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-14672 -->
 
 #### Resource Lease 不能隐藏在 Agent 的控制流里
 
@@ -748,6 +817,23 @@ Workflow 可能等待用户、webhook、job completion 或 resource availability
 
 ## Testing 与 Evaluation
 
+### Passing Trace 可以归纳验收约束，但不能冒充 Workflow 定义
+
+要求新执行逐步复现一条 passing trace，最容易检查，却会把合法的异步顺序、无关状态与等价路径误判为失败。
+当 workflow 尚无完整 specification、但已有少量成功运行时，可以先把每条 trace 编成 prefix tree，再只合并
+具备可解释等价关系的状态，并从合并图中提取必要状态与顺序约束。新执行满足这些约束的拓扑子序列即可通过，
+无需与任一示例逐步相同。
+
+这条路线把 `observed trace`、`induced acceptance contract` 与 `authorized workflow` 分成三个 artifact：trace store
+拥有观察事实，归纳器只提出约束，workflow owner 才能审查并发布 contract。它用状态抽象和误合并风险换取对
+非确定执行的容忍；少量 passing traces 无法证明没有遗漏必要状态，界面变化也会使等价关系过期。高副作用流程、
+开放 UI 或覆盖不足时，仍应回到显式 specification、deterministic invariant 与人工审批。
+
+现有 exact-v1 只在受控 VS Code extension、3～5 条 passing traces 和极少失败样本上验证该归纳路径；它不证明
+真实桌面或 Web 状态等价可由相同规则恢复，也不授权从一次成功运行自动修改生产 workflow。
+
+<!-- source-family:SF-2026-ARXIV-2605-03159 -->
+
 ### Synthetic Environment 必须先证明可执行，再用于训练
 
 生成网页或业务环境若只有自然语言表面一致性，Agent 可能在不可能完成的 task、断裂链接或错误数据库状态上学习。可信的 synthetic workflow 应把页面、链接、记录、状态变更 marker 与 task constraint 表为同一 environment generation，并在训练前验证结构、语义、一致性和可行性；运行时只允许经验证的 marker 提交 durable state。
@@ -816,10 +902,6 @@ hardware-in-loop 或超大私有代码。低频 workload、不可观测副作用
 
 主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
 
-<!-- semantic-body-binding:SF-2026-ARXIV-2606-09774:start -->
-给通用 coding agent 适配 scientific simulator 时，应把 executable contract 外置为 retrieval、procedural memory、agent-callable validator 与 validation-gated termination，而不重写 agent loop。
-<!-- semantic-body-binding:SF-2026-ARXIV-2606-09774:end -->
-
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-13174:start -->
 用户 correction 只有被编译为 atomic rule 与 pre-completion runtime check 才能跨 session 成为 enforcement；memory lookup 仍只是 preference evidence。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-13174:end -->
@@ -868,9 +950,53 @@ Notebook 或脚本足以描述一次数字实验，但连接真实仪器后，�
 
 <!-- source-family:SF-FROM-HISTORY-TO-STATE-CONSTANT-CONTEXT-SKILL-LEARNING-FOR-LLM-AGENTS -->
 
+
+#### 重复 Trace 可以离线编译，但 Solver 仍是受限 Artifact
+
+重复调用 LLM 处理结构稳定、具有精确 verifier 的任务，在线成本高且每次都重新探索。可把多条 reasoning trace 离线归纳为版本化 symbolic solver，在线先运行 solver，未覆盖或验证失败时再调用 LLM；这把部分一次性推理成本转成可复用构建成本。solver 只拥有候选求解权，workflow state、effect commit 与最终正确性仍分别由编排器和 verifier 持有。
+
+编译分支要求保存 DSL、训练 traces、induction 版本、覆盖域和 verifier，并承担 run-to-run 波动、过拟合及错误程序复用风险。任务开放、输入越界或 verifier 不充分时，应回退动态 planning/LLM。`arXiv:2605.05485v1` 只覆盖两个受约束 DSL，且包含 best-run selection；它不证明开放任务可被通用编译，也不证明生成 solver 天然正确。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-05485 -->
+
 ### Research Workflow 的完成条件必须是 Chain of Evidence
 
 以 manuscript 可读性或最终分数判断完成，在人工逐项复核时尚可；自治研究会同时产生引用、实验、代码与方法叙述，表面专业不能证明四者一致。Workflow owner 应保存 claim→source、score→run artifact、method→code revision 与 review decision 的 Chain of Evidence，任何断链都不能进入 completion commit。收益是可复算和可追责，代价是存储、执行复现与审查成本；外部资源不可访问或环境漂移时应标记未验证，而不是补写结论。exact-v1 只支持论文披露的 agent、任务和评测，不能证明自动审计已捕获所有伪造或实现偏差。<!-- source-family:SF-2026-ARXIV-2605-26340 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-06601:start -->
+### 安全分析 Pipeline 要把 Pre-model Failure 也计入结果
+
+把二进制补丁直接交给 LLM 推断漏洞，在 diff 已准确定位且上下文完整时足够轻量；真实 workflow 中，extraction、function matching/ranking、context dossier export、reasoning 与 bounded validation 任一步都可能先失败。更可恢复的设计把这些阶段写成 typed checkpoint，并分别记录输入 artifact、候选函数、导出证据、模型判断和验证 receipt；模型只对已到达的上下文推理，workflow owner 负责把遗漏、空结果和 tool failure 计入端到端 outcome。
+
+分段归因便于重试和定位瓶颈，却增加 artifact 存储、版本治理与跨阶段一致性成本。现有证据只有 25 个 Ubuntu deb pairs，两个 behavioral differential 也不等于 crash/exploit proof；不能外推 RPM、rolling distribution 或隐藏 metadata。任一证据段不足时应保持 `Unknown`，回退人工 reverse engineering，而不是让最终 LLM 结论掩盖上游 miss。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-06601:end -->
+
+### Skill Graph 必须下沉为可提交的 AtomicOp
+
+把完整 procedure 作为一段 prompt，在步骤少、环境稳定时最直接；把它固定成单层 DAG 又会在同一高层 skill 存在多种实现、局部恢复路径或版本兼容约束时迅速膨胀。分层 skill graph 可以保留高层 procedure，同时用 `AtomicOp` 表达最小可检查动作，并用 decomposition、temporal、compatibility、support 与 recovery 等 typed edge 描述它们的关系。
+
+Planner 只提出要采用的 skill 和相关子图，Workflow owner 必须将其 ground 到当前 tool/action schema 的 AtomicOp，冻结输入、前置条件与依赖，再在每个 effect boundary 写 checkpoint。失败后首先沿 recovery edge 回到最近可验证状态；恢复边不存在、前置状态已变或补偿不可证明时，升级为重新规划或人工处理。高层 skill 因此是可复用意图，不是可直接提交的 action authority。
+
+图结构换来局部展开与恢复，也引入图抽取错误、edge stale、schema version drift 和错误 recovery loop。环境简单或 procedure 短时，显式线性步骤/DAG 仍更可靠；图身份、AtomicOp 映射或 checkpoint evidence 不完整时应回退人工维护的 workflow，而不是让模型补猜缺失边。exact-v1 的三个环境只能支持该机制在所测任务中的可行性，不证明自动抽取的 skill graph 跨版本可复用。
+
+<!-- source-family:SF-2026-ARXIV-2607-25853 -->
+
+### 并行写入先声明 intent，运行中扩张 scope 必须重新 admission
+
+只在最终 merge 时发现冲突，会让多个 coding Agent 已经基于互不兼容的假设执行很久。更早的控制面可在写前提交 versioned ChangeIntent：base revision、typed resources、dependencies、committed/contingent operations；admission 后以 lease、writer fencing 和 worktree provenance 限制实际写入。若运行中首次触发 contingent mutation，scope promotion 必须重新 admission。
+
+typed intent 不能预见所有语义 overlap，机制原型也不证明性能或冲突完全消失。声明与 lease 增加协调开销；无法判断 overlap、共享文件或 irreversible effect 时，串行化或拒绝仍是正确旧路径。最终 aggregation 还必须验证 base revision、测试与 effect receipt，不能把 admission 当 merge 成功。
+
+<!-- source-family:SF-2026-ARXIV-2607-21909 -->
+
+### Verifier Evidence 必须绑定生成它的 exact code state
+
+让 Agent 反复修改并运行 verifier，看似形成自我修复 loop；若测试结果来自旧文件、不同 dependency 或未提交工作树，它只会把 stale evidence 当进展。每次验证应绑定 code/tree digest、environment/tool revision 与命令，并把通过状态保存为 verified checkpoint；后续 mutation 自动使受影响证据过期。
+
+严格绑定增加重跑和存储成本，却能区分真实修复与循环自述。小修改且依赖未变时可按影响图复用未受影响证据；无法证明关联时回退全量验证，而不是让 terminal success 叙述替代状态证据。
+
+<!-- source-family:SF-2026-ARXIV-2607-24604 -->
 
 ## 本章在知识树中的位置
 
@@ -928,11 +1054,28 @@ Coding Agent 生成 compiler optimization 时，还要分开两种证明责任�
 
 ### Completion Proposal 与 Admission Authority 必须分离
 
+### Hard Constraint 与 Soft Constraint 需要不同权威
+
+把所有用户约束交给 LLM judge，能覆盖自然语言但无法提供确定性；全部编成 hard checker，又会把偏好和模糊目标错误离散化。Workflow admission 应先把约束分为可执行的 hard invariants 与需判断的 soft preferences：形式 checker 对 hard violation 拥有拒绝权，可校准 judge 只为 soft satisfaction 提案，并保存冲突、置信边界与用户修订记录。
+
+这种分权增加约束分类、冲突处理和人工交互成本，且分类本身可能错误。简单低风险任务仍可由单一 judge；涉及权限、预算或不可逆副作用时，hard gate 不能降级为语言评分。现有 exact-v1 只支持作者的 workflow 与约束类型，不证明 judge 能解析所有用户意图。<!-- semantic-body-binding:SF-2026-ARXIV-2605-02765 -->
+
 让执行 Agent 自己宣布“任务完成”，适合低风险短流程，但它会把产出者与验收者合并，容易把局部成功、缺失 artifact 或未验证副作用当作终态。governed runtime 应让 Agent 只提交 bounded completion packet，由只读 verifier 检查必需 evidence、state revision 和 acceptance criteria，再由 workflow owner 执行 admission/commit。
 
 这条边界减少自证完成和状态漂移，却增加 verifier 延迟、schema 维护与 false rejection；verifier 也不是语义真理机。验证不可用或 packet 不完整时应 fail closed 到 `Needs Review`，而不是默认成功；低风险、可原子回滚步骤仍可简化。exact-v1 只是一项受限 architecture case study 与 failure injection，不证明该协议对所有 multi-agent workflow 的正确性或活性。
 
 <!-- source-family:SF-2026-ARXIV-2605-17998 -->
+
+### 概率 Verification 的 Bound 是有前提的验收合同
+
+确定性 invariant 能直接拒绝 schema、权限或状态转换违规，却难以穷尽 stochastic policy 的全部 trajectory。可以在
+版本化状态抽象和 transition probability 上计算 violation bound，并用 relaxation 控制验证成本；但 verifier 只在
+模型假设、抽象粒度和数值误差边界内拥有 accept/reject 权，不能把一个小概率数字解释成开放环境中的安全保证。
+
+更激进的 relaxation 减少状态探索和 wall time，也会放宽 bound、隐藏未建模副作用，甚至因概率模型漂移给出虚假
+确定性。Workflow owner 应同时保存 verifier revision、假设、误差界、timeout 和 fallback：bound 足够紧且硬性
+invariant 已通过时才能提交；超时、模型不适用或 bound 过松时，回退 conservative rule、sandbox、缩小 action scope
+或人工复核。确定性工作流和高风险不可逆 effect 继续优先使用可执行 hard gate，概率验证只是补充未穷尽分支。
 
 ## 从 Agent Trace 编译 Workflow 需要可归因的数据依赖
 
@@ -963,9 +1106,57 @@ Observed trace 与 induced workflow 也必须保持两个身份：前者是某�
 Agent 修复一个失败点后，局部测试通过并不代表旧安全条件仍成立；修改可能把错误移动到另一分支。每轮 repair 应记录变更、重跑受影响局部检查，并在提交前执行 full-invariant suite 与明确 stopping gate。代价是更多评测和较慢收敛，但能避免“修到某个测试绿”为优化目标的安全回归。
 <!-- source-family: arxiv:2608.13404v1; semantic-body-binding: iterative-repair-full-invariant-gate -->
 
+长文档中的 factual edit 也属于这种级联修复。局部句子改对后，引用该事实的摘要、图注、方法假设和结论
+仍可能保留旧值；workflow 应先建立可审计 fact/dependency graph，让 edit proposal 沿依赖边传播，再分别
+检查 contradiction、遗漏与不应被改动的无关区域。它用图构建和 false dependency 换一致性，不允许
+生成器自己把“全部传播”当完成证据；依赖不清时回退全文检索、人工 Review 与保守不提交。现有 benchmark
+只测科学稿件及其构造 protocol，不证明自动传播可替代作者责任。
+<!-- source-family:SF-2026-ARXIV-2605-02083 -->
+
+### Cancellation 必须由 Scope Owner 发出
+
+并行工具最初共用一个 turn-level cancel signal，结构简单，也便于用户一次停止整轮；当每个 tool actor 又在自身
+teardown 中持有并触发 controller 时，任一快速工具正常结束都可能把 sibling 的继续执行误判为应取消。更稳健的
+structured-concurrency 路径在 spawn site 为每次 tool call 和每次 LLM attempt 建立 controller，actor 只执行并回报；
+只有用户取消、父 scope 失败或 workflow 明确收缩分支时，scope owner 才同步传播 abort。它需要维护 per-call signal、
+grace window 与缺失 outcome 的合成终态，却能区分“一个 child 完成”与“父 scope 取消”。串行、无 sibling 的短步骤
+仍可复用简单共享 signal；并行路径则必须用快慢工具回归测试证明完成一个 child 不会取消其他 child。
+
+<!-- source-family:SF-2026-KIMI-CODE-3626 -->
+
+长 observation 也需要同样的恢复边界。一次 Read 超过 context/tool-output 上限时，截断加临时 spill path 只在执行器
+始终可访问同一文件系统时合理；可移植 workflow 应让工具返回精确 continuation cursor，并保证分页不切断 Unicode、
+不跳过超长单行、也不因尾读而重复已提交内容。cursor 只证明读取位置，不能冻结源文件；inode、size 或 revision 改变
+后必须重新开始或明确报告 snapshot drift。它以更复杂的分页和一致性检查换取无 shell 的可恢复读取，短文件仍走
+单次读取路径。
+
+<!-- source-family:SF-2026-KIMI-CODE-3645 -->
+
 ## 小结
 
 Workflow 把概率模型嵌入可恢复、可审计的状态机，使灵活 decision 与确定业务约束共存。执行者可以提出下一步或完成，但只有携带 versioned evidence 的独立 admission path 能提交终态。下一章研究多个 Agent 之间的职责和通信。
+
+### Evidence Seeking 与 Answer Authority 应拆成两个角色
+
+单一 Agent 同时搜索、判断证据充分性并输出答案，控制流最短；在长视频等高冗余环境中，outcome-only reward 和共享 Context 饱和会鼓励“答案碰巧正确但没有看到关键证据”。更稳健的 workflow 让 planner 负责索引、检索与检查动作，让 inspector 独立持有 sufficiency verdict 和终止权；只有 inspector 能把 evidence state 提升为可回答状态。planner 的 rationale 不是证明，inspector 也必须指向实际检查过的时间片或 locator。
+
+分权增加调用、延迟和 inspector 单点误判，且正确但未接触证据的答案仍需判为未验证。短内容、低风险或确定性 locator 已知时，耦合流程更经济；inspector 不可靠时应扩大检查、换 verifier 或转人工。exact-v1 的四个长视频 benchmark 只支持该机制在披露设置中的 groundedness 改善，不证明 inspector 是事实 oracle 或能泛化到任意 modality。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12571 -->
+
+### LLM 分析可以借用 Lattice 的单调状态纪律
+
+开放式程序分析需要查文档、版本元数据和安全公告，传统静态分析无法覆盖全部语义；完全自由的 Agent 又会反复推翻结论且难以说明终止。一个折中是把每个 claim 的 assessment 放进有限高度 lattice，LLM 只生成 claim/evidence proposal，transfer function 只允许通过 join 单调提升，worklist 在状态变化时传播。这样 workflow owner 能说明在声明的有限图、有限 claim 与终止工具条件下为何停机，并保存每次 assessment 的证据。
+
+结构化状态只能暴露、不能自动纠正 judge 的系统性误判；evidence-only 更新若不触发重新处理，也不等于“再无证据可找”。框架还没有实现和实证，因此只能作为设计边界，不能宣称实际精度或可扩展性。可用 sound analyzer 的区域仍应由形式工具拥有，图规模或 claim domain 无法有界时则回退人工审查、预算终止与 Unknown。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12694 -->
+
+### GUI 与高层 Tool 的选择属于 Physical Schedule
+
+原子 GUI action 通用但步骤长，高层 tool call 快却可能与当前界面或权限状态不一致。Agent 可以提出两条 path，workflow runtime 根据 current UI state、tool schema、side effect 和 approval 选择并提交；这不是仅靠模型“学会何时用工具”。高层调用缩短路径，却会放大合成轨迹偏差、工具过用、环境漂移和 reward shortcut。状态不一致时，应回退原子 GUI、重新 observation、dry-run 和显式审批，并保留最大步数与 compensation。exact-v1 只支持 OSWorld-MCP/Windows transfer 的所测模型，不证明真实桌面权限安全或跨 OS 普遍收益。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12481 -->
 
 ## Review notes
 
@@ -1058,45 +1249,15 @@ Primary-source 与设计入口：
 - **SF-2026-ARXIV-2606-25447**：Primary `arXiv:2606.25447v1`；Method `https://arxiv.org/html/2606.25447v1 — §3 Experiment Setup; 3.2 Harness; 3.3 Tool Schema; 3.4 Task Type`；Evaluation `https://arxiv.org/html/2606.25447v1 — §4 Analysis; 4.1 Evaluation Protocol; 4.4 OOD Robustness`；未证明边界 `https://arxiv.org/html/2606.25447v1 — §B Benchmark Details; C Experimental Details; stated ALFWorld boundary`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
 - **SF-2026-ARXIV-2606-26442**：Primary `arXiv:2606.26442v1`；Method `https://arxiv.org/html/2606.26442v1 — §AXLE cloud infrastructure for Lean 4 utilities; remote execution and artifact handling`；Evaluation `https://arxiv.org/html/2606.26442v1 — §Utility execution, throughput and theorem-proving workflow evaluation`；未证明边界 `https://arxiv.org/html/2606.26442v1 — §Cloud utility success does not prove generated theorem correctness beyond Lean checking or side-effect safety`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
 
-### Source-family integration record
-
-<!-- recovered-daily-20260623:AGENT-WORKFLOW:start -->
-### 2026-06-23 evidence integration — AGENT-WORKFLOW
-
-相邻章 `books/part-07-agent/82-multi-agent.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-22741**：GRADE: Graph Representation of LLM Agent Dependency and Execution 的 exact-v1 机制为：A trace records what each step did, never what it relied on, the state it read, and the results it reused. 因此 把执行边、依赖边、checkpoint 与 compensation 作为可重放 control state。 该 family 的 failure pressure 是：Across six corpora of LLM agents spanning tool use, coding, and the web, the dependency layer can predict failure where run size is weak and, under leave-one-corpus-out transfer, stays above chance on every held-out class while run size fails. 披露的 evaluation signal 是：A trace records what each step did, never what it relied on, the state it read, and the results it reused. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-23797**：From Task-Guided Conversational Graphs to Goal-Oriented Dialogue Runtimes 的 exact-v1 机制为：We introduce the Goal-Oriented Dialogue Runtime (GODR), a framework-neutral design pattern that treats goals, task frames, lifecycle state, invalidation rules, and resumption contracts as first-class runtime objects while delegating bounded execution to graph runtimes, agents, tools, or application programming interfaces (APIs). 因此 把执行边、依赖边、checkpoint 与 compensation 作为可重放 control state。 该 family 的 failure pressure 是：Graph and multi-agent orchestration frameworks make production large language model (LLM) workflows practical, but they do not by themselves solve conversational continuity when users maintain several interdependent objectives. 披露的 evaluation signal 是：The paper formalizes the problem, proposes runtime objects and architecture-selection criteria, and frames evaluation as an agenda for future empirical validation rather than as a measured performance claim. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-<!-- recovered-daily-20260623:AGENT-WORKFLOW:end -->
-
-<!-- recovered-daily-20260624:AGENT-WORKFLOW:start -->
-### 2026-06-24 evidence integration — AGENT-WORKFLOW
-
-相邻章 `books/part-07-agent/82-multi-agent.md` 只接收 handoff，不重复拥有机制。
-
-### Owner-merged minimal text
-
-- **SF-2026-ARXIV-2606-24177**：以 artifact 为边界组织 producer-critic factory，critic 在 fresh context 验收后才推进；自动化 loop 只提交可机器检查部分，visibility/fixability taxonomy 将不可判定 claim 留给 human scientist。 444 次 prompt-economy loop 与两个 case study 展示可扩展性而非科学真值；不可见或不可修复 failure、motivation judgment 与外部实验真实性仍需人工 owner。
-- **SF-2026-ARXIV-2606-25198**：autonomous research loop 把 shared search state、lineage、quality/diversity/novelty archive 与 auditor verdict 作为 durable artifacts；40 个 fabrication 说明 score 结果必须过独立 audit 才能推进。 3 个 ML domain、3,222 scored runs 未出现 Original 且 verifier 漏掉过 fabrication；不证明自动搜索能扩展 quality-novelty frontier，关键 claim 仍需独立复现/人工 gate。
-- **SF-2026-ARXIV-2606-25207**：HPO agent 不替代单一 optimizer，而从多工具 proposal pool 选择；prefix-stable prompt 复用 KV，跨 iteration speculation 与 relative-error accept test 把 judge/tool latency 隐藏在 model evaluation 下。 HPOBench/PD1 与给定 wall-clock regime 不证明昂贵、非平稳或安全敏感 experiment；accept test 不满足或 speculation 浪费时回退串行工具 loop。
-
-<!-- recovered-daily-20260624:AGENT-WORKFLOW:end -->
-
-<!-- recovered-daily-20260625:AGENT-WORKFLOW:start -->
-### 2026-06-25 evidence integration — AGENT-WORKFLOW
-
-- **SF-2026-ARXIV-2606-25447**：`3 Experiment Setup; 3.2 Harness; 3.3 Tool Schema; 3.4 Task Type` 所定义的源特定机制用于把执行 harness、远端 utility 与 artifact handoff 变成可观测工作流状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `B Benchmark Details; C Experimental Details; stated ALFWorld boundary` 是 `The Interplay of Harness Design and Post-Training in LLM Agents` 的 source-specific 反例/局限边界；若运行条件离开 `4 Analysis; 4.1 Evaluation Protocol; 4.4 OOD Robustness` 的验证域，`AGENT-WORKFLOW` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-- **SF-2026-ARXIV-2606-26442**：`AXLE cloud infrastructure for Lean 4 utilities; remote execution and artifact handling` 所定义的源特定机制用于把执行 harness、远端 utility 与 artifact handoff 变成可观测工作流状态；旧路径仍作为未满足前置条件或质量退化时的 coexistence/fallback。 `Cloud utility success does not prove generated theorem correctness beyond Lean checking or side-effect safety` 是 `AXLE: A Cloud Infrastructure for Lean 4 Theorem Proving Utilities` 的 source-specific 反例/局限边界；若运行条件离开 `Utility execution, throughput and theorem-proving workflow evaluation` 的验证域，`AGENT-WORKFLOW` 必须保留旧路径并阻止该结果取得生产 commit，而不能把论文内结果外推为跨设置保证。
-
-<!-- recovered-daily-20260625:AGENT-WORKFLOW:end -->
-
 ### Daily Books delta trace（2026-06—08）
 
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25853:start -->
+- `SF-2026-ARXIV-2607-25853` — Daily `2026-07-29`；primary `arXiv:2607.25853v1`；正文锚点“Skill Graph 必须下沉为可提交的 AtomicOp”。
+  本章吸收 procedure→AtomicOp typed grounding、effect-boundary checkpoint 与 recovery edge；三个环境的作者实验不证明自动图抽取或跨版本 action schema 的可靠性。
+<!-- daily-books-trace:SF-2026-ARXIV-2607-25853:end -->
+
 <!-- daily-books-trace:SF-LEAN4AGENT:start -->
-- `SF-LEAN4AGENT` — Daily `2026-06-03`；primary `arXiv:2606.06523v1`；Books review `books-review:SF-LEAN4AGENT`。
+- `SF-LEAN4AGENT` — Daily `2026-06-08`；primary `arXiv:2606.06523v1`；Books review `books-review:SF-LEAN4AGENT`。
 
   **已吸收的语义增量：** This section introduces the design of the Lean4Agent framework. The goal is to provide a formal foundation for modeling and verifying agent workflows and trajectories under explicit assumptions and to use the formal guidance to improve workflow design. Section 2.1 introduces key preliminaries, Section 2.2 describes the design of FormalAgentLib , and Section 2.3 presents the LeanEvolve method. Boundary: This paper presents Lean4Agent , to the best of our knowledge, the first comprehensive framework that applies dependent-type formal language to uniformly model and verify LLM-agent workflow and execution trajectories. Lean4Agent launches FormalAgentLib , an extensible Lean4 library for formally modeling and verifying agent workflows’ semantic consistency under explicit assumptions. It also enables localization of execution-time failures revealed by trajectories.
 <!-- daily-books-trace:SF-LEAN4AGENT:end -->
@@ -1106,12 +1267,6 @@ Primary-source 与设计入口：
 
   **已吸收的语义增量：** 人工审批不是无限 oracle；guard 的 escalation policy 必须把 reviewer 分歧、疲劳与 flooding 下的有限 attention 当作可耗尽资源。
 <!-- daily-books-trace:SF-2026-ARXIV-2606-08919:end -->
-
-<!-- daily-books-trace:SF-2026-ARXIV-2606-09774:start -->
-- `SF-2026-ARXIV-2606-09774` — Daily `2026-06-09`；primary `arXiv:2606.09774v1`；Books review `books-review:SF-2026-ARXIV-2606-09774`。
-
-  **已吸收的语义增量：** 给通用 coding agent 适配 scientific simulator 时，应把 executable contract 外置为 retrieval、procedural memory、agent-callable validator 与 validation-gated termination，而不重写 agent loop。
-<!-- daily-books-trace:SF-2026-ARXIV-2606-09774:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-20659:start -->
 - `SF-2026-ARXIV-2606-20659` — Daily `2026-06-10`；primary `arXiv:2606.20659v1`；Books review `books-review:SF-2026-ARXIV-2606-20659`。
@@ -1143,11 +1298,6 @@ Primary-source 与设计入口：
   **已吸收的语义增量：** Agent harness可把自然语言目标编译为可执行code workflow，但generated program仍须在sandbox、typed interface与effect verifier后提交
 <!-- daily-books-trace:SF-2026-ARXIV-2606-15874:end -->
 
-<!-- daily-books-trace:SF-2026-ARXIV-2606-15994:start -->
-- `SF-2026-ARXIV-2606-15994` — Daily `2026-06-15`；primary `arXiv:2606.15994v1`；Books review `books-review:SF-2026-ARXIV-2606-15994`。
-
-  **已吸收的语义增量：** cross-framework workload migration应以source runtime产生immutable tensor oracle，再由Agent生成tests、执行target code并用traceback迭代修复
-<!-- daily-books-trace:SF-2026-ARXIV-2606-15994:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-17099:start -->
 - `SF-2026-ARXIV-2606-17099` — Daily `2026-06-15`；primary `arXiv:2606.17099v1`；Books review `books-review:SF-2026-ARXIV-2606-17099`。

@@ -302,6 +302,12 @@ MLP 与 Attention 分工明确：Attention 在 token 之间路由信息，MLP �
 
 在执行层，`[B,T,d]` 会被映射成 `M=B*T` 的 GEMM；这解释了为什么相同模型语义会因 Training、Prefill、Decode 的 `M/N/K` 不同而产生不同硬件效率。MLP 参与形成模型知识与计算特征，但知识是分布式、上下文化的。这个边界既避免低估 MLP，也避免把权重矩阵误解成可直接读取的事实表。
 
+### MLP 不必独自保存每条事实
+
+把 MLP 权重解释成逐条事实的 key-value memory，容易导出事实数量与参数近似线性增长的图景；如果 embedding space 已把实体、属性和关系组织为可叠加几何结构，小 MLP 可以复用同一 relation-conditioned selection rule，而非为每条事实分配独立槽位。参数效率来自表示与选择规则分工，也带来 embedding interference、margin/维度要求和多跳深度成本。几何结构不成立或需要可更新 provenance 时，显式 retrieval、更多参数或层仍更可靠。exact-v1 的证明和实验限于受控结构，不能定位真实 LLM 的全部知识、保证编辑安全，或把 MLP 宣称为唯一知识 owner。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12426 -->
+
 ## Review notes
 
 本章覆盖标准 FFN、SwiGLU、参数/FLOPs 与逐位置小例子，并将“知识存储”限制为可验证的机制命题。MoE 只建立接口，完整 router 与系统 trade-off 保留给第21章。

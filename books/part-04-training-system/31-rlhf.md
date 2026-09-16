@@ -61,6 +61,14 @@ reference model  anchors policy behavior
 
 PPO 实现还常加入 value/critic model。于是 RLHF 不只是一个 loss function，而是跨数据生成、标注、多个 checkpoints、rollout 与 Evaluation 的迭代系统。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20863:start -->
+当 RLVR rollout 包含长尾生成与工具等待时，job-local 的同步、异步或 colocated 优化仍可能让 trainer 与 rollout
+资源交替空闲。Cluster-level orchestrator 可以跨任务调度 rollout、training 与 tool capacity，并用 backlog 和阶段
+状态重分配资源；它改变的是集群控制面，不改变 reward truth。收益是减少阶段性 idle，代价是 policy lag、跨任务
+公平、抢占恢复和状态传输。作者集群与 workload 之外，若 lineage、隔离或 SLO 无法保证，应回退 job-local pipeline
+或静态资源预留。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20863:end -->
+
 ## Reward Model 怎样学习相对判断
 
 常见做法让 Reward Model 对整个 `(x,y)` 输出一个 scalar：
@@ -127,6 +135,19 @@ Preference dataset 需要控制：
 
 Candidate distribution 也会随 policy 更新而漂移。旧 Reward Model 在新 policy 产生的 out-of-distribution outputs 上可能不可靠，因此 RLHF 常具有数据闭环，而不是一次离线训练后永久有效。
 
+### Preference Admission 不必强迫所有样本进入 Reward Model
+
+对全部 preference pairs 做 strict mass-conserving matching，在数据近似干净且每条标注都应被解释时最直接；混入 outlier、
+冲突标签或语义不一致样本后，这条约束会强迫 Reward Model 拟合本应拒绝的质量。Partial optimal transport 提供一个条件
+分支：只匹配与语义一致性相容的 preference mass，把剩余部分作为被拒绝样本保留，而不是把 rejection 偷换成负标签。
+Admission owner 保存原始 pair、selection mask、embedding/reward-model revision 与 dispute path，trainer 只消费冻结后的
+admitted set。<!-- semantic-body-binding:SF-2026-ARXIV-2605-06036 -->
+
+它用更少的错误监督换来两两距离计算、selection bias 和新的超参数；“干净样本语义更一致”本身也只是可检验假设，
+systematic 或 adversarial noise 可能同样形成紧密 cluster。现有理论只约束 selected subset，作者实验也限于三套 preference
+data、7B–72B 模型与其 judge，未解决 online `O(N²)` 成本。无法独立验证 selection quality 时，应回退原始数据、人工争议处理
+或带噪声鲁棒但不丢弃样本的 baseline，而不能把被过滤数据静默消失。
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-01831:start -->
 Preference contract 还必须显式包含“谁偏好什么”。把所有 pair 压成一个 universal-quality ranking，在用户目标一致时最简单；当用户对长度、风格、风险或领域有不同取舍时，同一 response pair 可能出现相反标签。Reward Model 的输入因此可以加入版本化 preference profile，并用语义等价的 profile paraphrases 检查表示是否稳定：
 
@@ -142,6 +163,12 @@ prompt + candidate pair + explicit preference contract
 
 ### Pluralistic Aggregation 不能把 Group State 压成一个平均 Reward
 
+#### Reward Basis、Jury 与时间权重是三种不同状态
+
+直接为每个人群训练独立 reward model，能保留差异却难以扩展；把所有偏好平均又会抹掉少数群体。一个中间分支先学习低秩 reward basis，再由显式规则筛选 jury membership，并随时间更新各群体权重与策略。Basis owner 只表示可复用偏好方向，governance owner 决定谁进入 jury，deployment policy 持有当前权重；三者不能由同一聚合器静默改写。
+
+这种分解提高可追踪性，却引入 basis 误设、代表性偏差、时间漂移与治理成本。群体少且目标稳定时，独立模型或固定多目标 reward 仍可用；无法证明代表性时，应报告分组结果并保留人工决策。现有 exact-v1 只支持作者的偏好数据与民主过滤设定，不建立普遍社会合法性。<!-- semantic-body-binding:SF-2026-ARXIV-2605-01642 -->
+
 Federated RLHF 用平均 group reward 聚合更新，在群体偏好近似同质且每组信号质量相当时简单有效；群体对齐程度、样本量和历史收益不同后，平均会让多数或高分群体持续主导，直接取最差群体又可能牺牲整体可用性并放大噪声。
 
 自适应 pluralistic aggregation 可以根据每个 group 的历史 alignment reward 调整 federated PPO 权重。聚合 owner 必须保存 group identity、reward/evaluator revision、历史窗口、权重变化和 fairness/utility decision；客户端只贡献受本地数据支持的更新，不能自行改变全局公平目标。收益是把 worst-group 与 overall alignment 放入同一显式 trade-off，代价是 group 定义错误、历史漂移、权重振荡和隐私泄露。
@@ -150,7 +177,67 @@ Federated RLHF 用平均 group reward 聚合更新，在群体偏好近似同质
 
 <!-- source-family:SF-2026-ARXIV-2604-04261 -->
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21822:start -->
+当不平衡 crowd preference 同时混入 user-specific goal 与真正共享的 safety penalty，单一平均 reward 可能让多数
+context 接管排序，调权也无法解开两种责任。一个条件分支先验证 shared-safety 假设，再从 preference data 学习
+一组低层 behavior skills，冻结 skill policy，由 downstream controller 只在该 support 内组合任务行为。Preference
+owner、skill owner、task controller 与 hard-safety gate 必须分权。它用较少 scalar entanglement 换取 offline data、
+skill coverage 与 latent-basis 成本；共同安全目标或 skill expressivity 不成立时，应回退分组报告、显式 safety cost /
+hard gate、独立 task baseline 与人工裁决。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21822:end -->
+
+### 多目标 Reward 的 Bottleneck 聚合不能冒充 Hard Constraint
+
+算术均值在多个 reward channel 尺度相近、允许相互补偿时最简单，却不能证明每个 must-have criterion 都满足：一个目标的高分
+可以掩盖另一个目标的失败。SoftMin 或 variance-penalized aggregation 可作为 risk-sensitive 分支，让最低或分歧最大的 channel
+获得更多更新权重；aggregation owner 必须版本化 channel 定义、归一化、temperature/penalty 与 schedule，optimizer 只消费
+冻结的合成 reward。<!-- semantic-body-binding:SF-2026-ARXIV-2605-05750 -->
+
+这种分支提高 bottleneck adherence，却按“当前难度”而非 policy 声明的优先级分配控制权，容易放大 noisy reward channel；过高
+temperature 或过早启用还可能导致 collapse。真正不可补偿的 safety、schema 或 execution constraint 仍需逐项报告并由
+deterministic gate 拒绝。作者证据只覆盖 HealthBench、GPQA、tool-calling、Qwen2.5 和其 17/2-channel 配置，且对 group size、
+schedule 与噪声敏感；channel 校准不足时回退分项 reward、保守均值或 hard gate。
+
+### 从 Reward 混合演进到 Gradient-space Harmonization
+
+标量加权或根据噪声动态调整 reward 权重，在各 channel 的梯度大体同向时简单有效；当 specialist samples 的优势被总
+reward 稀释，或不同目标在参数空间直接冲突时，仅在 reward 数值层混合不足以说明最终 update direction。更强的分支先为
+每个 reward 独立估计 advantage 和 policy gradient，再由受约束优化器选择共同方向，并周期性求解、用 EMA 平滑系数，
+把每步 `R+1` 次 backward 的成本转化为可摊销的 controller state。
+
+这要求明确分开四种所有权：reward/evaluator 定义目标证据，advantage estimator 估计每路信用，gradient controller 提议
+组合方向，optimizer 才提交参数更新。收益是让冲突成为可观测、可治理的状态；代价是额外 backward、QP 数值不稳定、
+系数滞后和 evaluator correlation。现有证据只覆盖 SD3.5-M、rank-32 LoRA、五个 rewards、16 张 H200 与作者图像指标，
+不证明更大模型、视频或生产训练普遍获得 Pareto 改善。reward 同尺度且方向稳定，或控制器成本与抖动不可接受时，应回退
+固定 scalarization、sequential curriculum 或单 reward specialist。
+
+<!-- source-family:SF-2026-ARXIV-2605-06507 -->
+
+### Demonstration-derived Reward 仍需要可识别性与多重验收
+
+成对偏好标注能直接表达相对选择，却昂贵且可能覆盖有限。另一条分支从 demonstrations 与当前 policy samples
+在一个显式 response-feature 空间中的分布差异恢复 reward，再用于 reranking 或 on-policy 更新。它减少人工 pair，
+却把目标强烈绑定到 feature/evaluator：多个 reward 都可能解释同一 demonstrations，policy 也可能学会利用未观测
+维度。因而 reward proposal 必须在 held-out 行为、adversarial samples 和更新后 policy 上重验；不可识别或被利用时，
+回退人工 preference、verifiable reward 或冻结 reranking。
+<!-- source-family:SF-2026-ARXIV-2607-24900; daily-trace:papers/2026/07/29/README.md -->
+
+更保守的演进是先由目标 policy 生成候选，分别用 helpfulness、factuality、conciseness 等 rubric 和 process critic
+校正，再只接纳多评审高共识样本进入训练。这个 Gate 把数据质量置于 objective 之前，但不会让 evaluator 变成
+真值：同源评审可能共同误判，多路调用也增加成本。低共识样本应保留为未决或交给人类，而不是靠平均分强制纳入。
+<!-- source-family:SF-2026-ARXIV-2607-25136; daily-trace:papers/2026/07/29/README.md -->
+
 ## 从 Reward 到 Policy objective
+
+### Solver 与 Auditor 让 Reward Design 成为双层激励问题
+
+单一 reward model 直接给 solver 打分，在 evaluator 稳定且错误成本低时最简单；当 auditor 还要发现
+并纠正 solver 的错误时，奖励只鼓励“首次答对”会让发现问题、接受修正和诚实暴露不确定性缺少激励。
+更完整的设计分别定义 solver proposal、auditor finding 与成功 correction event，再由上层选择奖励
+参数，使局部最优行为仍指向系统目标。它用机制设计和额外交互换更可解释的监督，却引入均衡选择、
+collusion、auditor 误判与固定默认策略依赖；无法独立验证纠错时，应回退确定性 verifier 或人工审阅。
+作者博弈模型与有限实验只支持其假设内的 incentive pattern，不证明开放 Agent 系统已经对齐。
+<!-- source-family:SF-2026-ARXIV-2605-01643 -->
 
 如果只最大化 learned reward：
 
@@ -176,6 +263,10 @@ max_theta E_(x, y ~ pi_theta)
 
 只要 policy update 真正生效，条件分布就不再与 reference 完全相同：某些候选 response 的概率上升，另一些必然相对下降。Preference optimization 不是在原模型外面附加一个“更喜欢”的标签，而是在重写给定 prompt 下的 action probability。
 
+KL reference 只定义更新坐标，不能单独控制偏好数据未覆盖区域的 distortion。若 preference sampling distribution 与 reference policy 的 density 差异很大，平均 KL 很小也可能隐藏局部行为重写；系统应保存两者的覆盖关系、density-ratio 假设和被裁剪区域。匹配分布可以收紧理论边界，却会牺牲长尾价值覆盖，因而仍需 held-out behavior 与独立安全评估。
+
+<!-- source-family:SF-2026-ARXIV-2609-12651 -->
+
 ```text
 pi_ref(y | x)
 -> reward / preference-weighted update
@@ -188,12 +279,29 @@ KL constraint 只限制这种重写的平均幅度。若它是在某个 prompt d
 
 所以能力边界不能由 reward curve 或平均 KL 推断，必须比较 base/SFT/reference 与新 policy 在相同 decoding contract 下的多切片 Evaluation，并单独记录 capability gain、behavior shift 与 regression。InstructGPT 的原始实验同时报告目标 prompt distribution 上的人类偏好和公开 NLP evaluations，正体现了这两类证据不能互相替代。
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22156:start -->
+当 verifier 已证明某个 deviation 优于陈旧 reference，symmetric KL 仍可能把更新方向拉回 prior。One-way trust-region
+分支让 verifier-signed advantage 决定方向，reference log-ratio 只以正权重调节幅度：inferior deviation 加速，
+superior deviation 降幅而不反转，并把 reference refresh 作为可回滚 ratchet state。它增加 reference forward、
+active-sample、clip 与 refresh 状态，也会放大 false-positive verifier 并锁入漂移。Qwen/math binary-verifier 证据不
+证明单调自我改进；verifier confusion、非可验证能力回归或 coverage/KL 漂移时，应冻结最后通过的 reference，
+回退 symmetric KL / plain GRPO，并由独立 held-out 与 safety Gate 决定下一次 refresh。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-22156:end -->
+
 ### Reverse KL 会把“找到高奖励”收缩成单一路径
 
 KL 约束最初合理，因为它限制 policy 远离 SFT reference 的速度；但 reverse KL 倾向于追随当前高概率、高奖励 mode，训练稳定并不等于保留了可替代行为。当目标分布本身包含多条有效解时，优化 owner 需要同时观察 reward 与 response-distribution coverage，并把 forward/group distribution matching 作为条件分支：它可保留更多 mode，却增加采样、密度估计和 group construction 成本，也可能把低质量 mode 一并保留。若任务只要求一个可验证答案或目标分布不可可靠估计，reverse-KL baseline 仍更简单；coverage 下降时再启用分布匹配，并以独立 verifier 和 diversity slice 作回退 Gate。
 
 <!-- source-family:SF-2026-ARXIV-2605-19461 -->
 exact-v1 的 Method §3 只证明其 forward/group distribution-matching objective，§4–5 的实验只覆盖作者披露的模型、prompt 与偏好数据；Appendix B 的设定不能证明该分支普遍优于 reverse KL，也不能把 diversity 当作正确性。
+
+Binary verifier 还暴露了更基础的退化：reward 只区分 valid/invalid 时，所有完全落在 valid support 上的分布都具有相同 expected reward；真正决定 valid outputs 之间相对概率的，是 base/reference distribution 与 divergence。KL-to-base 因而不只是“限制更新幅度”，还隐式选择了一个按 base mass 归一化的 filtered target。随着正则压力减弱，forward KL 可以趋近该 target；但 target 在 invalid outputs 上具有零支撑，任何 full-support autoregressive policy 对它的 reverse KL 都可能为无穷。模型族又无法精确表示 target 时，低 `beta` 压力便可能选择更容易达到的近 Dirac valid path，把“找到一个高奖励答案”误当成完整目标分布。
+
+所以 verifier 只拥有有效性判定权，reference distribution 保留 valid support 内的相对概率先验，optimizer 只在可表示 policy family 中更新；evaluation owner 必须并列记录 validity、entropy/coverage、KL direction、model family 与 optimization path。Forward KL 或 alpha-divergence 能把 coverage 纳入目标，却需要从 filtered target 采样或近似密度，也可能保留低质量但 valid 的 modes。任务只需一个可验证答案、target 无法可靠估计或额外采样成本不可接受时，reverse-KL baseline 仍合理；只有 coverage 退化且独立 verifier/diversity slice 能稳定复现时，才启用替代分支。
+
+`arXiv:2605.02375v1` 的 §2.3–§2.4、§3.1/§3.3–§3.4、§4.1–§4.4、§5.1 与 Appendix A–B 支持上述 binary-reward degeneracy、KL 方向与 toy n-gram 示范；它没有给出规模化 LLM RLVR 证据，也不证明真实系统必然 mode collapse，或 forward/alpha divergence 普遍优于 reverse KL。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-02375 -->
 
 ## Reward hacking 与 Goodhart's Law
 
@@ -240,6 +348,22 @@ r = r_phi(x,y)
 训练需要把 sequence-level outcome 转成各 token action 的更新信号。PPO 通过 return、value estimate 和 advantage 处理 credit assignment；GRPO 用同一 prompt 下组内 rewards 构造相对 advantage。
 
 Reward Model score 本身没有告诉系统哪个 token 导致好坏。长序列、稀疏 reward 和延迟反馈会增加方差。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24517:start -->
+在 agent rollout 中只对 action token 使用 task reward，能保持 policy objective 清晰，却把 environment 返回的 observation 当作不可学习的只读 context；当终局 verifier 稀疏时，这会丢掉一条密集信号。受限分支可增加对下一段 observation token 的辅助预测目标：environment 仍拥有真实 transition，task verifier 仍拥有成功判定，world-model loss 只帮助 representation 学习 action-conditioned dynamics，不能替代 policy gradient 或把预测 observation 当成真实执行结果。
+
+辅助目标提供更密集的学习信号，也可能奖励“容易预测”而非“有助于控制”的环境，或让 observation loss 压过 action objective。训练 artifact 因此要绑定两类 token mask、loss weight、environment revision 与 held-out dynamics/task gates；任务成功、校准或 action quality 下降时，应减小或移除辅助项并回退标准 GRPO/PPO。现有证据只支持论文披露的 terminal-agent objective、TerminalBench 与实验，不能证明 observation prediction 在任意工具环境都免费改善控制。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24517:end -->
+<!-- source-family:SF-2026-ARXIV-2605-24517 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21654:start -->
+Critic-free actor update 也不等于完全没有 value-like temporal signal。对连续可微、additive-noise rollout，actor
+backward 的 hidden-state sensitivity 可解释为 empirical costate，其条件期望在论文假设下对应 value gradient；
+离散 Transformer 只沿 attention path 近似传播，token sampling path 缺失，误差还受 entropy 与 sampling gap 影响。
+Reward/verifier 拥有 outcome，autodiff 只提出 credit，optimizer 才提交更新。该诊断需要 hidden gradients 与 matched
+rollout，并存在低熵减小近似误差却损伤探索的张力；假设或预测不成立时，应回退标准 score-function/advantage、
+process reward、显式 critic 或 held-out checkpoint sweep。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-21654:end -->
 
 ### Harm Horizon：Sequence Reward 的 Gradient 可能天然局部
 
@@ -289,7 +413,21 @@ preference data + input/output feature dictionaries
 奖励 style。没有稳定 feature basis、需要持久 alignment 或 runtime overhead 敏感时，权重更新仍合理；这类
 intervention 只能是 policy 下的 actuator，不能替代 safety training、access control 或独立 Evaluation。
 
+即使单个 feature intervention 可解释，多个方向也不能默认线性叠加。稀疏字典中的 feature 往往非正交，ReLU 截断又会让连续 steering 沿锥边界积累；分别有效的方向共同施加时，可能出现目标相互抵消、无关 feature 被激活或更新幅度的单向 ratchet。组合控制因此要把 feature set、系数、顺序与 residual checkpoint 作为一个整体 artifact，先做 joint intervention 与未目标行为回归，再决定是否提升为 runtime policy。它用更细的可撤销控制换组合搜索、共激活污染和字典漂移；组合证据不足时回退单方向、较小幅度或权重级后训练。exact-v1 的理论使用随机过完备字典，实验使用 CLEVR 结构化语义 feature；它不证明 SAE 坐标是普适因果 basis，也不证明真实偏好空间遵循同一坍塌阈值。
+
+<!-- source-family:SF-2026-ARXIV-2605-05223 -->
+
 ### Reward Model 也有 Policy-relative State
+
+固定 scalar 或 rubric 还会在 policy 分布改变后失效。把 criteria 表为版本化 Reward DAG，允许设计器依据 on-policy response 与 node-level trace 提出节点/边更新，可以定位 coverage 与 reliability 的变化；但设计器不是 truth owner，自演化也会制造新的 reward hacking。任何 graph mutation 都必须经过 held-out、人类或确定性 verifier 的 promotion gate，并保留旧 rubric 作为可回滚基线。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-08703:start -->
+开放式任务还可能要求 reward contract 随失败证据演进。冻结 Reward Model 在目标稳定时最易校准；当视觉编辑等任务不断暴露新的判据和工具缺口时，orchestrator 可以依据失败轨迹提出 skill/tool library 与验证 rubric 的版本变更，但 subagent 只执行冻结版本，独立 validation Gate 才拥有提交权。这样把“自我改进”拆成 proposal、execution 和 promotion 三种责任，避免同一个模型既生成规则又宣布自己通过。
+
+自演化 reward path 会引入同源自评、library 膨胀、小验证集过拟合和版本漂移；当前证据还依赖专有 orchestrator、单一图像编辑领域与有限 validation。无法提供独立 held-out evidence、工具身份不稳定或更新频率低时，应回退冻结 Reward Model、人工 rubric 和阶段性离线更新。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-08703:end -->
+
+<!-- source-family:SF-2026-ARXIV-2609-12459 -->
 
 冻结 RM 把 reward interface 固定下来，最容易部署和复现；policy 持续更新后却可能进入 RM 未覆盖的
 representation region。周期性全量 retraining 能跟随 drift，但成本高且同时移动 feature space。一条实验性
@@ -327,6 +465,49 @@ exact-v1 §3 描述 selective-feedback 机制，§4 只在 ALFWorld/WebShop 验�
 
 <!-- source-family:SF-2026-ARXIV-2605-20061 -->
 exact-v1 §3 给出 belief-based credit，§4 与 Appendix C 只证明作者环境中的归因改善，不证明 belief state 等于真实因果状态。
+
+#### 优化单元必须匹配可观测 Outcome 的粒度
+
+逐候选反馈只有在每个候选都被独立展示并产生 outcome 时才成立。若系统先生成一组候选、再由 filter/ranker 只曝光其中一部分，未曝光项没有可观察结果；为它们补 item-level 正负标签会把选择偏差伪装成监督。更诚实的更新单元是绑定 generator、filter/ranker、exposure log 与 outcome window 的完整候选集合，并且只在集合中至少一项真实曝光后，才消费 set-level outcome。Generator 提出集合，ranker 决定曝光，日志系统拥有 exposure/click 事实，learner 只能在这个可观测边界内更新；click 仍不拥有质量、安全或 release 判断。
+
+Set-level feedback 避免伪造隐藏标签，却牺牲集合内部 attribution，并可能继承 ranker bias、位置效应和活跃用户偏差。Rolling-window 更新能追踪近期行为，也会增加 policy-ranker co-adaptation、版本漂移与反馈回路；因此 identity 还要保存 serialized set、exposure/ranker revision、权重策略和窗口。若每项都有独立 outcome，回退 item-level supervision 更精确；若曝光事实也不完整，则应拒绝更新而不是制造标签。exact-v1 的生产 A/B 只证明该机制在作者 assistant 流量和 click proxy 下可运行，不证明 click 等于长期效用，或选择偏差已经消除。
+
+<!-- source-family:SF-2026-ARXIV-2609-11953 -->
+
+### Weak-to-Strong 不能只用 Capacity Mismatch 解释
+
+较强 student 从较弱 teacher 的反馈中超过 teacher，常被解释为 student capacity 足以恢复 teacher 没有表达的知识。这个解释可能成立，却不是必要条件：在线性 logistic regression 与 approximate ellipticity 等明确假设下，weak-to-strong 可以在较广的 student-teacher 组合中出现，并不要求 capacity mismatch。<!-- semantic-body-binding:SF-2026-ARXIV-2605-05742 -->
+
+这只是对“必要机制”的反证，不是 frontier LLM、非凸训练或任意 noisy feedback 的工程保证。生产后训练仍需用 held-out capability、teacher error slices 和 policy-relative evaluation 验收，不能因为理论可行就降低反馈质量 Gate。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12908:start -->
+一个并列的 feature-level 机制给出更具体、但也更窄的解释：在两层 reward model、pretraining task subspace 与 localization 等假设下，weak-label fine-tuning 的多步 SGD 可能逐步 elicitate 已存在的 latent target feature，同时近似保留 off-target pretrained features。弱监督此时改变的是可读出的方向，而不是从零创造能力；weak supervisor 仍不拥有 truth authority。
+
+这项理论没有分析 second-layer learning，只证明 feature alignment 而不是完整 function approximation，并依赖具体算法、even link 与合成 geometry。假设不能确认时，仍须用真实模型、held-out capability、teacher-error slices 与 policy-relative evaluation；不得以“可能 elicitate latent knowledge”为理由降低反馈质量 Gate。exact-v1 的证据限合成设置 `d=1024, s=128, K=2` 及披露的 learning-rate sweep，不是 frontier LLM 的经验结果。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12908:end -->
+
+### 从二元偏好到分布条件化的连续 Reward
+
+Pairwise preference 保留了相对判断，却丢掉“胜得多明显”的强度信息；单独训练 reward model 又引入新的模型与漂移状态。一个中间分支是先从 arena comparison 拟合模型 capability distributions，再结合分布和胜负推断 latent quality gap，把 binary verdict 转成连续 offline reward。<!-- semantic-body-binding:SF-2026-ARXIV-2605-06070 -->
+
+latent gap 仍不是绝对质量真值，它依赖 capability 分布假设、pairwise 样本选择和任务域。分布拟合不稳定、arena selection bias 较大或跨域失效时，应回退二元偏好、显式 reward model 或人工标注。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20740:start -->
+若同一输入会产生多条连续值 rollout，单点 reward 还会丢掉整组预测分布的 spread 与 calibration。一个条件分支用
+CRPS 评价整组样本，再以 leave-one-out marginal contribution 把 group score 分配回每条 rollout；reward 因而同时
+约束点误差、分布宽度和相对 credit，而不是把每个样本当成彼此独立的标量答案。
+
+这种分布 reward 用 `K` 次 rollout、组内耦合、数值解析和更高方差换取不确定性表达；少样本 CRPS 或 reward noise
+会使 marginal credit 不稳定。分布校准失败、解析不可靠或 rollout 成本超限时，应回退 pointwise reward/SFT，并把
+calibration 留给独立 release Gate。exact-v1 只支持 Gaussian mixture、代码性能与 MoleculeNet 等披露任务，不证明
+分布 reward 在开放式 LLM 输出上天然等于真实 outcome quality。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-20740:end -->
+
+### Outcome 相同也可能走了错误 Trace
+
+只奖励终局 outcome 在可观测状态充分时简单有效；在 POMDP 中，不同 action trace 可能得到近似相同结果，其中一条却利用了 shortcut。可以把 lagged traces 学成 distributional prior，再用 task reward 与 KL 共同约束 stochastic policy，使优化对象同时包含结果和行为分布。<!-- semantic-body-binding:SF-2026-ARXIV-2605-06529 -->
+
+这个修复把 prior 质量和 state observability 变成新的故障面。现有证据限于 two-hotel simulator、固定竞争者和给定 prior，不能外推到开放 Agent 或任意安全对齐任务。先验失真、环境漂移或 trace 不可观测时，应回退 outcome reward 加独立 trace audit、显式 state estimator 或人工 policy。
 
 ## RLHF 的系统成本
 
@@ -478,6 +659,13 @@ exact-v1 §3–4 描述经验驱动 reflection，§5 的 MiniHack/ALFWorld 结�
 
 <!-- source-family:SF-2026-ARXIV-2605-22074 -->
 
+#### Learning Progress Reward 必须绑定 Sealed Audit
+
+把“最近变好多少”作为 intrinsic reward，只有当进步等于固定 sealed-audit loss 的有符号下降时，累计奖励才 telescoping 到端点改善。Evaluator owner 必须冻结 audit panel、model class、访问协议和未裁剪的 signed delta；训练 scheduler 只能消费该分数，不能让 agent 选择评测 stream 或反复探测可复用 panel。
+
+这条路径把好奇心奖励约束到可审计学习，却以 holdout 容量、访问隔离和 uniform generalization 前提为代价。Clipping、agent 自有 stream、panel 泄漏或模型类过强都会使保证失效；此时回退独立 holdout、外部可验证 reward 或人工 curriculum。作者的理论、有限实验与形式化只支持明确前提下的 Goodhart resistance，不证明开放任务中的普遍安全。
+<!-- source-family:SF-2026-ARXIV-2606-11417 -->
+
 ### 后训练分支的本质差异是 State Distribution
 
 只按 token objective 区分 SFT、distillation 与 RL，容易忽略监督发生在哪个状态上。静态 SFT 在固定数据分布上学习；on-policy distillation 让当前 policy 先到达自己的状态，再接受 teacher signal；RL 则在 policy-induced states 上用 reward 改变访问概率。约束从“标签是否正确”变化为“训练是否覆盖部署时会到达的状态”，因此 rollout producer、policy revision、teacher/reward revision 与 staleness 必须共同进入 run identity。
@@ -485,6 +673,14 @@ exact-v1 §3–4 描述经验驱动 reflection，§5 的 MiniHack/ALFWorld 结�
 扩大状态覆盖能修复静态数据看不到的错误，却增加 rollout 成本、off-policy staleness 和反馈回路；部署状态稳定、示范覆盖充分时，静态 SFT 仍然更简单可靠。arXiv:2605.22731v1 的比较仅支持论文模型、任务与训练设置，不证明 on-policy 路线普遍优于 SFT，也不把不同 reward contract 视为可直接比较。
 
 <!-- source-family:SF-2026-ARXIV-2605-22731 -->
+
+#### 从外部协作到参数内化需要独立 Scaffold-removal Gate
+
+在 policy 尚不能独立到达有效轨迹时，运行时调用冻结 expert 或 tool 是可逆、可观测的能力扩展；它不会自动成为本地模型能力。若要降低在线调用成本，可以先训练 controller 学会在 policy-induced state 上路由外部 expert，再只将 verifier 通过的成功协作轨迹转换为监督数据，最后训练本地 checkpoint。Router 拥有调用 proposal，expert 产生外部 span，verifier 拥有 trajectory admission，learner 写入参数；只有移除 scaffold 后的独立回归、原能力 retention 与安全 gate 才能提交“能力已内化”。
+
+这条分支用在线专家成本、路由错误和外部依赖换取更广的可达状态，再用 success-selection、格式蒸馏、遗忘风险与重训成本换取较低的部署依赖。Training identity 必须绑定 controller/policy、每个 expert revision、router、verifier、trajectory-conversion policy 与目标 checkpoint；格式权重敏感或 expert-span entropy 变化都不能单独证明知识迁移。任务量小、领域持续变化、verifier 不完整或回归失败时，应保留运行时 expert/skill；示范已充分覆盖时，普通静态 SFT 仍更简单。exact-v1 证据只覆盖两个 controller 规模、三个冻结 experts 与数学/知识问答设置，也未给出在线成本与训练摊销的 break-even。
+
+<!-- source-family:SF-2026-ARXIV-2609-12578 -->
 
 ### Memory-conditioned Rollout 改变 Behavior Distribution Identity
 
@@ -538,6 +734,14 @@ DPO 不训练显式 Reward Model，也不在 fine-tuning loop 内做 on-policy r
 
 ## Evaluation 必须独立于 Reward Model
 
+### 训练停止不能只看 Training Loss 或 Reward Model Score
+
+固定训练预算、training loss 与 Reward Model score 在代理指标仍能代表下游质量时，是成本最低且最容易复现的停止依据；但 policy 持续优化同一个 proxy 后，reward 可能继续上升，而独立任务质量已经进入不可恢复的下降区间。此时，停止判断必须引入带版本的外部 Evaluation Run：Evaluation 系统产生按时间排列的 downstream quality evidence，RLHF controller 根据持续下降、观测不确定性与 patience window 提出 stop proposal，训练作业 owner 决定是否提交停止，GPU Scheduler 只消费随后产生的资源释放事件，不拥有 reward 或质量真值。
+
+这条反馈链可以减少继续训练坏 checkpoint 的时间并更早释放 GPU，但代价是额外评测、反馈延迟、judge drift、错误早停和多租户公平性压力。单点下降不能直接终止作业；信号不足时应回退固定预算、要求连续多个窗口确认或进入人工 gate。现有实验只来自离散事件模拟：Poisson 到达、slot 化 GPU、两分钟抢占以及参数化的 LoRA/DPO/RLHF 学习曲线；它没有证明生产 workload、生产 SLO 或真实集群中的通用收益。
+
+<!-- semantic-body-binding:SF-EVALSTOP -->
+
 至少要比较：
 
 - Human preference win rate 与置信区间。
@@ -570,7 +774,7 @@ On-policy distillation 比离线 teacher labeling 更接近学生实际访问的
 
 <!-- source-family:SF-2026-ARXIV-2605-03677 -->
 
-迭代 RLHF 还会把当前策略产生的数据用于训练未来 reward model，形成 policy → data → reward model → policy 的闭环。若优化只追逐当前 proxy，策略会逐步塑造更容易被未来 reward model 接受的数据，导致自强化的 alignment collapse。解决方向不是简单增加 KL，而是显式建模未来评估器、限制参数 steering 并保留独立 evaluation；其代价是双层优化和模型假设，假设不可靠时必须回退到冻结评估器、外部审计与阶段性发布。[受限证据：arXiv:2605.03677v1、2605.04266v1]
+迭代 RLHF 还会把当前策略产生的数据用于训练未来 reward model，形成 policy → data → reward model → policy 的闭环。若优化只追逐当前 proxy，策略会逐步塑造更容易被未来 reward model 接受的数据，导致自强化的 alignment collapse。解决方向不是简单增加 KL，而是显式建模未来评估器、限制参数 steering 并保留独立 evaluation；其代价是双层优化和模型假设，假设不可靠时必须回退到冻结评估器、外部审计与阶段性发布。[受限证据：arXiv:2605.04266v1]
 
 <!-- source-family:SF-2026-ARXIV-2605-04266 -->
 
@@ -580,7 +784,11 @@ On-policy distillation 比离线 teacher labeling 更接近学生实际访问的
 
 在线 preference learning 的 exploration 也不能只依赖当前 policy 的瞬时不确定性。历史样本覆盖、observer disagreement 与旧策略误差可以提供更稳定的 prior，再用当前观测修正 exploration budget。这样能把查询集中到高信息区域，但会引入历史分布滞后；发生 policy shift 时必须重置或降权旧不确定性，保留均匀探索作为覆盖 fallback。
 
-tool-integrated trajectory 的 terminal reward 往往把多个动作混成一个结果。step-level credit 应绑定可观察 effect、状态变化与 verifier receipt，再决定哪些 turn 进入更新。没有外部 verifier 时，outcome-potential delta 可以作为弱监督，但其可识别性依赖状态表征和后续 outcome；它是估计器，不是真实因果 credit。局部 layer objective 能减少 end-to-end backprop 成本，却会牺牲跨层一致性，因此应通过端到端 holdout 与周期性全局校准共存，而非直接替代全局训练。
+tool-integrated trajectory 的 terminal reward 往往把多个动作混成一个结果。step-level credit 应绑定可观察 effect、状态变化与 verifier receipt，再决定哪些 turn 进入更新。没有外部 verifier 时，一条弱监督分支从某个 turn state 采样多条 future answers，按语义答案聚类，再把各 cluster 的 probability mass 与可靠性估计组成 outcome-potential distribution；相邻 turn 的 potential delta 只表示“后续答案分布是否向更可靠的 cluster 移动”，不是该动作的真实因果 credit。Cluster 边界、future-sampling budget 和 reliability estimator 都会改变信号，开放答案或同义归并不稳时，应回退 terminal outcome 或可执行 subgoal verifier。
+
+局部 layer objective 能减少 end-to-end backprop 成本，但“每层各学各的”会切断任务梯度。一个更具体的折中是在网络中选择 midpoint：任务 loss 的梯度只更新后半段；前半段输出经过轻量 bottleneck head，学习重建 stop-gradient 的输入 embedding state，使早期表示在继续更新时维持与后半段相容的接口。每一步先完成前半段的 auxiliary update，再重新计算并 detach 边界 activation，供后半段执行 task update，从而避免消费 stale boundary。
+
+它缩短 task-induced backward path，却把 midpoint、auxiliary-head revision、重建权重、两阶段更新顺序和端到端 holdout 变成训练状态；feature reconstruction 只约束表示接口，不保证保留所有下游能力。边界表示漂移、跨层协同占主导或额外 forward 抵消收益时，应回退完整 backprop，而不是把局部目标当作无损替代。
 
 <!-- source-family:SF-TOWARDS-ROBUST-LLM-POST-TRAINING-AUTOMATIC-FAILURE-MANAGEMENT-FOR-REINFO -->
 <!-- source-family:SF-DATA-DEPENDENT-EXPLORATION-FOR-ONLINE-REINFORCEMENT-LEARNING-FROM-HUMAN- -->
@@ -594,7 +802,41 @@ tool-integrated trajectory 的 terminal reward 往往把多个动作混成一个
 
 ### 交互式后训练必须版本化 Simulator 与对话状态
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-05415:start -->
+### Adversarial Objective 可以从平均风险演进为有界最坏情形
+
+把已生成的攻击样本等权加入训练，在攻击分布稳定、样本质量接近时是透明基线；少数高损失模式被平均值淹没后，模型可能只改善常见攻击。Distributionally robust 分支在经验分布周围定义一个有界的 f-divergence ambiguity set，并对集合内 worst-case reweighting 优化；半径与其 KL-dual 系数拥有 robustness–utility 强度，attack generator 只产生样本，objective owner 决定权重，独立 safety gate 验证未见攻击。
+
+它用更强的 hard-case 压力换来半径选择、样本集中、clean utility 回退和对 attack generator 的依赖；对已观察样本的最坏重加权不等于 unseen-attack guarantee。现有证据只覆盖披露模型、HarmBench 子集与作者攻击器。权重塌缩、utility regression 或 coverage 不足时，应回退等权聚合、扩大攻击族并保留独立 holdout，而不是把高 adversarial loss 当成真实风险全貌。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-05415:end -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-06583:start -->
+### Flow-model Preference Alignment 也必须显式分配 Trajectory Credit
+
+终点 reward 足以评价短、低维生成，但 flow model 的控制变量是整条 velocity field；只在终点反传会把早期和后期状态的责任混在一起。一条确定性分支把 alignment 写成 pretrained velocity field 上的 optimal control，用 adjoint target 沿轨迹分配 credit，并以 terminal-segment truncation 把计算集中到影响更直接的区段；非二次 regularizer 则表达不同的偏离成本。Reward 只定义目标，adjoint estimator 提供更新 proposal，独立质量与 diversity gate 决定是否发布。
+
+截短减少 VJP 与轨迹成本，也可能漏掉早期决定、依赖 terminal concentration 假设并造成 calibration drift。现有结果只覆盖 SiT-XL/2、FLUX.2-Klein-4B 与作者指标，不证明最佳 truncation、确定性动力学或偏好收益可普遍迁移。早期 credit 或数值稳定性不能闭合时，应增加轨迹范围，回退 full adjoint 或普通 reward/KL fine-tuning。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-06583:end -->
+
 静态 preference pair 适合一次性回答，却不能表达多轮行为对未来用户状态的影响。交互式 RL 分支把 user simulator、dialogue state、policy revision 与 reward/judge 共同纳入 rollout contract，再用 GRPO 类更新优化长程行为。它能训练澄清、追问和恢复策略，但新增 simulator bias、judge coupling 与 credit horizon；模拟用户未校准时，应限制为离线 proposal，并以真人或独立环境做 release gate，静态 SFT/RLHF 仍作为保守基线。exact-v1 仅支持论文披露的 simulator、模型和评估，不证明真实用户分布上的长期收益或安全。<!-- source-family:SF-2026-ARXIV-2605-26403 -->
+
+### Tool-call Boundary 可以成为 Turn-level Credit 的状态切面
+
+短推理任务用终局 outcome reward 最直接；当一条轨迹含几十次工具调用时，同一标量会把有用中间动作与最终错误一起惩罚。一个有条件的分支在每次 tool call 前后冻结状态，让独立 value proxy 估计“新 observation 是否提高了正确答案的可预测性”，再用相邻状态的 temporal-difference 变化分配 turn credit，并与终局 reward 合并。
+
+该分支减少稀疏性，却把可靠性依赖转移到 state boundary、reference model 与可验证 gold answer。已知短答案的 search agent 可以使用 log-probability proxy；长代码、多文件 artifact 或开放偏好没有唯一 gold output 时，这个 value 可能失真，应回退 execution-based subgoals、process verifier 或 outcome-only reward。Credit estimator 只生成训练信号，不拥有任务正确性的最终裁决。
+
+<!-- source-family:SF-2026-ARXIV-2607-13988 -->
+
+### 把 KL 系数解释成可检测性预算，而不只是调参旋钮
+
+固定 KL 系数在 reference、reward 与部署 monitor 稳定时简单且可重放；当真正约束变成“policy 改变不能越过外部可检测边界”时，手工 beta 只是在间接猜测。可以把 policy 与序贯检测器写成对策：训练侧提高 reward，monitor 侧判断行为分布是否已可区分，再搜索使二者处于边界的隐含 KL 强度。
+
+这条分支改变的是约束解释，不是证明“难以检测就安全”。它增加 rollout、likelihood 估计与 monitor 校准成本，并继承检测器 misspecification、reference 过期和 oracle 不可得等失败模式。只有 detection contract 可定义且能持续校准时才采用；否则固定 beta、显式 KL/行为 slice 与独立安全 gate 仍是更可审计的基线。论文证据限于披露模型、LoRA+GRPO 与任务设置，不能给出通用系数。
+
+<!-- source-family:SF-2026-ARXIV-2607-26358 -->
 
 ## 本章在知识树中的位置
 
@@ -665,7 +907,57 @@ RLHF 把相对偏好拟合为 reward，再在 reference policy 约束下优化�
 
 当 task generator、validator 与 policy 一同进入反馈循环时，curriculum 本身也成为需要版本化和独立评估的训练状态；可自动验证不等于任务分布自然充分。
 
+### Alignment Actuator 可以从参数更新迁到运行时状态
+
+offline preference training 把行为写入权重，适合稳定目标，却难以针对请求快速刷新。RAG-Pref 把 preferred 与
+dispreferred evidence 在推理时检索出来，形成 contrastive alignment signal；retriever 只拥有本次 steering proposal，
+安全 policy 与最终 evaluator 仍决定是否提交回答。它提高可更新性，也引入检索污染、对抗文档、延迟与 refusal 误触发；
+证据缺失或检索失校准时，应回退冻结权重策略、确定性 guardrail 或人工升级。论文结果不证明未测攻击下的生产安全。
+
+<!-- source-family:SF-2026-ARXIV-2605-11217 -->
+
+更进一步，独立 value module 可以通过 bridge tokens 把 value state 注入 backbone，而不修改全部主模型参数。价值模块
+拥有可刷新的偏好表示，bridge 只传递条件，backbone 生成候选；这降低重训练范围，却增加约 50% 的作者设置 latency、
+单维 value 表达限制与文化偏差。目标稳定或在线成本敏感时，直接 SFT/RLHF 仍更合理；现有证据只覆盖四个 backbones、
+公开 safety data 与三次随机种子。
+
+<!-- source-family:SF-2026-ARXIV-2605-11712 -->
+
+视觉 flow policy 还暴露了另一条边界：固定的 policy entropy 可能保持不变，而可感知图像多样性已经坍缩。perceptual
+entropy 因而可作为独立控制量，约束离散 reasoning reward 与连续视觉 trajectory reward 的共同更新；它是 sensor，不是
+质量真值。额外 embedding/evaluator 会带来偏差和计算，指标相关性失效时应回退多样性切片、人工评测或冻结更新。
+现有证据限 FLUX.dev、SD3.5-Medium 与作者披露的 rewards。
+
+<!-- source-family:SF-2026-ARXIV-2605-12112 -->
+
+### 成功率优化会压缩行为 Mode，Diversity 需要独立状态
+
+生成式 policy 只追求单一成功 reward 时，Reverse KL 式更新可能收缩到一条高分路径。轨迹级 mode discovery 可以提出当前行为分支，再用 mutual-information regularizer 在同一更新中保护已发现 mode；task reward 仍拥有成功方向，mode inference 不拥有任务真值。保留多样性会与单一 optimum 竞争，也引入 mode alias、过度分裂和归因漂移。mode 证据不稳或部署只需要一条可靠路径时，应回退常规 RL、entropy/KL 约束和独立 coverage evaluation。exact-v1 只覆盖披露机器人任务与 policy，不保证真实安全或 mode 完备。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11387 -->
+
+### 多模态 Reward 需要按 Branch 与 Region 分配 Credit
+
+joint audio-video diffusion 使用一个 global advantage，容易混合不一致目标、跨 modality gradient 和稀疏同步区域。条件分支可让各 reward channel 只为对应 modality/layer/region 提供 credit，cross-modal layers 保留共享梯度，region weight 表示 decision density，而不是让单一标量拥有全部目标。分权减少 gradient interference，却增加 reward calibration、routing 和 gradient surgery complexity，错误归因可能牺牲另一模态。指标冲突或路由不稳时，应回退 global reward 加 conservative KL、冻结受影响 branch，或分阶段训练后联合验收。exact-v1 只支持披露模型和 evaluator，不证明跨架构通用、无 reward hacking 或真实同步质量。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12480 -->
+
+### 个性化 Agent RL 必须把通用能力与个人偏好分账
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23382:start -->
+把所有用户反馈合成一个 reward，在偏好近似同质时最省状态；个性化约束出现后，generic reward、personal reward、user anchor 与 preference-aligned skill graph 必须分别版本化。个人记忆只能调整可撤销的 policy proposal，不能覆盖平台安全或通用能力 Gate。
+
+分账可以减少平均偏好对少数用户的抹平，却会带来稀疏反馈、身份漂移、隐私与过拟合风险。exact-v1 只支持作者任务与用户设置，不证明 skill graph 是稳定人格模型；个人证据不足、冲突或回归失败时，应回退通用 policy，并要求显式确认或重新收集偏好。arXiv:2605.23382v1
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-23382:end -->
+
 ## Review notes
+
+- `SF-2026-ARXIV-2605-05750`（Status: Experimental）：exact-v1 支持作者在 HealthBench、GPQA、tool-calling、Qwen2.5
+  与 17/2 reward channels 下的 risk-sensitive aggregation 分支；`k`、group size、schedule 与 noise sensitivity 限制外推，
+  不证明 SoftMin 可替代 hard safety/schema gate。Primary: https://arxiv.org/html/2605.05750v1
+- `SF-2026-ARXIV-2605-06036`（Status: Experimental）：exact-v1 支持三套 preference data、7B–72B 模型和作者 judge 下的
+  partial-OT admission；理论只覆盖 selected subset，`O(N²)` 与 systematic/adversarial noise 未解决。
+  Primary: https://arxiv.org/html/2605.06036v1
 
 - `SF-2026-ARXIV-2602-23008`（Status: Experimental）：exact-v1 的 §4.1～4.2 定义 self-generated memory 与 hybrid on/off-policy optimization，§6.1～6.3 和附录 D/F/G 报告作者任务、消融与成本，Appendix C 解释 importance ratios，§7/Ethics/Reproducibility 不证明 tips 忠实、跨环境迁移或任意 replay mixture 无偏。https://arxiv.org/html/2602.23008v1
 
@@ -703,48 +995,29 @@ Primary-source 校验入口：
 
 ### Daily integration evidence trace
 
-- `2026-05-04 / SF-2026-ARXIV-2605-01831` — exact-v1 `arXiv:2605.01831v1`；正文吸收 explicit preference contract 与 paraphrase-consistency evaluation，不把 synthetic benchmark 外推到真实用户或下游 RL。
-
-#### Source-specific exact-v1 Review notes
-
-- SF-2026-ARXIV-2606-28955 — primary arXiv:2606.28955v1; exact-v1 URL=https://arxiv.org/html/2606.28955v1; Method=https://arxiv.org/html/2606.28955v1 — §3 Method; Pretraining.; Pretraining budget.; Evaluation=https://arxiv.org/html/2606.28955v1 — §Theoretical analysis.; 4 Experiments; 4.2 Main results; Non-proof=https://arxiv.org/html/2606.28955v1 — §5 Limitations and Future Work; 7 Conclusion；该 exact-v1 只证明论文所述 workload、model/runtime 与 evaluator 范围内的结果，未证明跨模型族、硬件、数据分布、未测 failure mode 或生产 SLO 的普遍成立。。
+- `2026-05-05 / SF-2026-ARXIV-2605-01831` — exact-v1 `arXiv:2605.01831v1`；正文吸收 explicit preference contract 与 paraphrase-consistency evaluation，不把 synthetic benchmark 外推到真实用户或下游 RL。
 
 #### Source-specific exact-v1 Review notes
 
 - `SF-2026-ARXIV-2606-23038` — primary `arXiv:2606.23038v1`; Method=`arXiv:2606.23038v1 — §4.1 Dual-LoRA Architecture; §4.4 Co-Evolutionary Training; §Appendix A EvoRubrics Algorithm`; Evaluation=`arXiv:2606.23038v1 — §2.2 Dynamic Rubrics and Adaptive Evaluation; §Appendix C Evaluation Details; §C.1 Policy LLM Evaluation`; non-proof=`arXiv:2606.23038v1 — §6 Conclusions and Future Work; §E.3 Discussion`; fallback=该 family 的 failure pressure 是：However, pre-constructed rubrics remain static throughout training, creating a fundamental mismatch with the evolving policy: fixed criteria gradually lose discriminative power as the model improves, leading to reward saturation and potential hacking. 披露的 evaluation signal 是：However, pre-constructed rubrics remain static throughout training, creating a fundamental mismatch with the evolving policy: fixed criteria gradually lose discriminative power as the model improves, leading to reward saturation and potential hacking. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
 - `SF-2026-ARXIV-2606-24004` — primary `arXiv:2606.24004v1`; Method=`arXiv:2606.24004v1 — §4 Spec Learning Framework; §4.1 Selection Method; §4.4 Judge protocol and selection`; Evaluation=`arXiv:2606.24004v1 — §5 Results; §B Statistical robustness; §C Judge calibration`; non-proof=`arXiv:2606.24004v1 — §6 Discussion; §7 Limitations; §8 Conclusions and Future Work`; fallback=该 family 的 failure pressure 是：Steering a large language model (LLM) toward a desired behavior typically relies on an iterative process of hand-crafting a prompt based on a careful inspection of the model's responses. 披露的 evaluation signal 是：We show that the responses generated based on the compiled specifications often outperform direct preference optimization (DPO) on datasets from specialized domains whose preference signal is dense. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
 
-### Source-family integration record
+### Daily Books delta trace（2026-05—08）
 
-<!-- daily-20260628:TRAIN-RLHF:start -->
-### Owner-merged minimal durable delta
+<!-- daily-books-trace:SF-2026-ARXIV-2605-05750:start -->
+- `SF-2026-ARXIV-2605-05750` — Daily `2026-05-08`；primary `arXiv:2605.05750v1`；Books review `books-review:SF-2026-ARXIV-2605-05750`。
 
-Reward-hacking 防线可以前移到 transition admission：在修改环境或 replay state 前冻结 current policy 与 return evaluator，对 current/modified policy 做 equal-budget counterfactual forecast；只有 evaluator 接受才提交 transition。模型负责 proposal，独立 evaluator 拥有 gate，原始 true-objective evidence 继续保留。
+  **已吸收的语义增量：** 将可补偿的多目标平均、risk-sensitive bottleneck 聚合与不可补偿的 deterministic hard gate 分成不同权限层。
+<!-- daily-books-trace:SF-2026-ARXIV-2605-05750:end -->
 
-### Trade-off、failure、fallback 与 coexistence
+<!-- daily-books-trace:SF-2026-ARXIV-2605-06036:start -->
+- `SF-2026-ARXIV-2605-06036` — Daily `2026-05-08`；primary `arXiv:2605.06036v1`；Books review `books-review:SF-2026-ARXIV-2605-06036`。
 
-Gate 依赖已能把 hacking trajectory 排低的 evaluator、clean seed 与额外 1.8×–4.2× 成本；evaluator misspecification 时它会接受错误 transition，需回退人工/true-objective review。
-
-<!-- daily-20260628:TRAIN-RLHF:end -->
-
-<!-- recovered-daily-20260623:TRAIN-RLHF:start -->
-### 2026-06-23 evidence integration — TRAIN-RLHF
-
-相邻章 `books/part-04-training-system/32-ppo.md#L1` 只消费 handoff，不重复拥有机制。
-
-### Owner-merged minimal body
-
-- **SF-2026-ARXIV-2606-23038**：EvoRubrics: Dynamic Rubrics as Rewards via Adversarial Co-Evolution for LLM Reinforcement Learning 的 exact-v1 机制为：We propose EvoRubrics, a co-evolutionary RL framework where a Policy LLM and a Rubric Generator jointly improve through adversarial interaction within each training step. 因此 把 rubric/spec 版本、policy 版本、独立 judge 与 reward-hacking 检测隔离。 该 family 的 failure pressure 是：However, pre-constructed rubrics remain static throughout training, creating a fundamental mismatch with the evolving policy: fixed criteria gradually lose discriminative power as the model improves, leading to reward saturation and potential hacking. 披露的 evaluation signal 是：However, pre-constructed rubrics remain static throughout training, creating a fundamental mismatch with the evolving policy: fixed criteria gradually lose discriminative power as the model improves, leading to reward saturation and potential hacking. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-- **SF-2026-ARXIV-2606-24004**：Towards Spec Learning: Inference-Time Alignment from Preference Pairs 的 exact-v1 机制为：We propose spec learning, a framework that relies on a brief user instruction and a small set of preference judgments. 因此 把 rubric/spec 版本、policy 版本、独立 judge 与 reward-hacking 检测隔离。 该 family 的 failure pressure 是：Steering a large language model (LLM) toward a desired behavior typically relies on an iterative process of hand-crafting a prompt based on a careful inspection of the model's responses. 披露的 evaluation signal 是：We show that the responses generated based on the compiled specifications often outperform direct preference optimization (DPO) on datasets from specialized domains whose preference signal is dense. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
-
-<!-- recovered-daily-20260623:TRAIN-RLHF:end -->
-
-### Daily Books delta trace（2026-06—08）
+  **已吸收的语义增量：** Preference admission 允许拒绝与语义一致性冲突的 noisy mass，并要求保存原始 pair、selection mask、模型版本与 dispute path。
+<!-- daily-books-trace:SF-2026-ARXIV-2605-06036:end -->
 
 <!-- daily-books-trace:SF-EVALSTOP:start -->
-- `SF-EVALSTOP` — Daily `2026-06-03`；primary `arXiv:2606.04145v1`；Books review `books-review:SF-EVALSTOP`。
-
-  **已吸收的语义增量：** Recall the architecture overview in Figure 1 . EvalStop is a composable wrapper around any base scheduling policy. It monitors eval-score trajectories (the world feedback signal) and early-stops jobs when quality is irrecoverably declining. Boundary: World feedback as a scheduling signal. Our results show that downstream evaluation (world feedback) is a better signal for scheduling RLHF jobs than training loss (proxy 2 ) or reward model score (proxy). This aligns with the growing recognition that proxy optimization in RLHF requires external grounding ( Gao et al., 2023 ; Skalse et al., 2022 ; Moskovitz et al., 2024 ) .
+- `SF-EVALSTOP` — Daily `2026-06-04`；primary `arXiv:2606.04145v1`；正文锚点“训练停止不能只看 Training Loss 或 Reward Model Score”。
 <!-- daily-books-trace:SF-EVALSTOP:end -->
 
 <!-- daily-books-trace:SF-2026-ARXIV-2606-09932:start -->
