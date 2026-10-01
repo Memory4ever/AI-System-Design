@@ -48,6 +48,8 @@ Data
 
 模型不会自动知道哪些内容是“高质量事实”，哪些只是高频重复。若某段文本出现一千次，它在经验风险中获得的权重就可能接近一千个独立样本，即使重复并没有增加新信息。
 
+网页里的问句也不等于真实用户的提问。FAQ 模板、搜索优化和机器生成页面会把某些问句反复刊登；按网页出现次数构造 QA 训练配比，测到的是发布/抓取频率，不是人类需求频率。若目标是服务真实用户，来源 host、页面用途、采样单位与真实交互日志的可用性必须分开记录；后者又带来隐私和代表性约束。网页问句仍可作为语言覆盖材料，只不能在没有校准的情况下充当需求分布。<!-- semantic-body-binding:SF-2026-ARXIV-2609-24106 -->
+
 所以数据工程的目标不是让磁盘尽可能满，而是构造一个有来源、可解释、可复现、与能力目标匹配的训练分布。
 
 ## Collection protocol 为什么先于 Filtering 定义数据
@@ -127,6 +129,12 @@ sum_k alpha_k = 1
 
 数据配比因而是一种多目标优化：不同 domain 的 loss、能力收益、重复率、质量和合规成本并不相同。不存在脱离模型规模、token budget 与 Evaluation 的通用最优比例。
 
+### 同一语料也要决定进入参数，还是留在检索索引
+
+域间配比默认已决定把语料用于训练；但知识密集任务还有另一条资源边界：一份有限语料可以提供预训练 token，也可以保留为推理时可检索的外部 store。全进权重省去在线检索、适合广泛复用的能力与计算模式，却让知识更新和来源追溯依赖再训练；全放索引保留可更新的原文，却把召回、索引版本和请求时延带进答案路径。两者不是训练完再“额外加 RAG”的独立旋钮；同一批语料若分给两侧，训练分布与可检索覆盖会同时变化。<!-- source-family:SF-2026-ARXIV-2604-00715 -->
+
+因此数据 owner 可在冻结模型结构、语料身份与总预算后，提出若干 `训练 token D + 检索 store R` 的分配点；第 28 章验证参数学习，第 76 章按固定 retriever、chunk/query 规则测召回与生成，Evaluation 再以相同任务切片、训练成本及推理开销比较端到端结果。知识查询更依赖来源可更新性时，索引可能替代一部分重复预训；推理/组合能力本身不足、召回质量差或检索延迟超预算时，增加 store 不会补上参数学习。联合试验增加索引构建、数据隔离、防污染和跨模型/任务校准成本，静态预训练配比及独立 RAG 仍是预算清楚、系统简单时的合理基线。现有受限证据只覆盖作者的 OLMo-2 30M–3B、DCLM 语料和 FAISS 检索设置；拟合出的交叉点不能当成通用数据分割比例或生产 SLO。<!-- source-family:SF-2026-ARXIV-2604-00715 -->
+
 ### Data Reuse 改变的是 Layer-wise Growth，不只是 Epoch 计数
 
 在数据充足、样本近似独立时，扩大 unique corpus 是最直接的能力来源；数据稀缺后重复采样可以让优化器继续沿已有方向下降，却也可能把少数模式放大。更细的解释应把 reuse schedule、sampling bias 与 layer-wise relative norm 一起记录：data loader 拥有样本出现频率，training telemetry 观测各层增长，controller 才能判断重复是在加速尚未学完的结构，还是只强化已占优模式。
@@ -166,6 +174,10 @@ examples”。Patch proposal 至少应同时绑定 fixed checkpoint/compute、�
 按 example 数匹配的 control 若没有同时匹配内容、分布和 token，也不能把收益归因给某一个 data operator。
 
 <!-- source-family:SF-2026-ARXIV-2608-31102 -->
+
+多模态 patch 还要把**任务格式变化**与**语义内容覆盖变化**分成两条干预。把相同图像上的 caption 改成 VQA，可能没有增加新的对象、属性或关系，却训练了按问题读取和使用这些信息的方式；给图像补充跨场景比较或细粒度关系描述，则可能扩大监督内容，但教师生成与过滤也会同时改变标签质量和分布。Data owner 应冻结图像、来源、teacher 与替换份额，分别比较 format-only replacement 和内容扩充，再交给训练与 Evaluation 在匹配预算、任务切片及回归指标下验收，不能用 example 数或一个总分替代这两个轴。<!-- source-family:SF-2026-ARXIV-2604-13054 -->
+
+受限 3B 对照中，caption 替换 VQA 后综合均值接近，MMBench 和 ScreenVIVOv2 却退步；因此“没有增加新事实”不等于格式监督没有能力价值，更不意味着所有 VQA 都可删除。Pair-caption 内容扩充分支仍保留原 VQA，教师描述中的语义元素也只是知识密度代理，不是独立测得的知识总量。扩充内容增加生成、过滤与 lineage 成本，还可能遗漏任务接口所需的监督；任务格式要求明确、细粒度切片回归或教师可靠性不足时，应保留原 VQA 与静态 mixture。这个分支补充已有的 patch 验收，而不把单一模型实验写成 caption 优于 VQA 的通用演化律。
 
 这不是静态清洗和配比的淘汰。信号噪声大、训练短、审计复现优先或 controller 成本高时，冻结 manifest 与
 mixture 仍更可靠。阶段化 data pipeline 与动态 control 的论文只证明各自 workload 中的可行机制，不提供可
@@ -240,6 +252,14 @@ grounding、localization 或因果证明。它增加 parser 与多次 scorer pas
 alignment、随机/coverage control，并保留人工或 region-grounded evidence。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-22651:end -->
 
+### Reasoning likelihood 也会混入 Step-boundary 结构
+
+用当前模型的平均 token log-probability 选择 reasoning demonstrations，成本低、容易重放，也能衡量文本与当前 policy 的兼容性；但它不直接等于推理质量。一个 step 的首 token 要在尚未展开的方向中作选择，后续 token 已条件化于这个方向，二者的概率分布可能不同。当不同来源采用不同的分步格式与平均步长时，`step count / token count` 会改变首 token 在平均分里的权重：分数提高可能来自更少的边界，而不是更好的解法。因此总长度匹配还不足够，Data owner 应将 step parser、边界比例、scorer checkpoint 与实际进入训练的分布共同保存。
+
+一个受限修正分支在评分时去掉每步首 token，再对剩余 token 归一化；它减弱边界比例影响，却也丢掉选择下一推理方向的信号。另一分支保留首 token 信息，以边界比例及两类 token 分数作回归调整。后者需要额外拟合与分布稳定性检查；观察数据上的残差化不能单独证明已识别因果效应。两种调整都只是 selection proposal，仍须在相同训练预算、来源覆盖及 held-out 任务上比较，不能把低 likelihood 样本一律判为劣质，也不能把回归系数大小跨不同单位直接比较。
+
+这些边界由四类 teacher、Qwen 4B/8B 与 7B 目标模型、LIMO-v2/AceReason 数学 reasoning SFT 的有限对照支持；来源多样性与 token 预算也可能影响收益，不构成通用最优筛选器。在模板和来源结构稳定、预算短或缺少可靠 step parser 时，原始 likelihood、随机/coverage 对照仍是合理基线；下一章拥有真正的 loss 与更新，本章不让筛选分数接管 objective。<!-- source-family:SF-2026-ARXIV-2604-06834 -->
+
 ### Filter Threshold 必须绑定 Compute-to-Unique-Data Regime
 
 在 compute 少、原始数据多时，高阈值过滤可以减少明显低质 token；当 compute 已能多次覆盖稀缺 corpus 时，继续追求更纯的小集合会同时提高重复率并丢失长尾。Filter owner 因而要把 retained unique tokens、expected passes、model/compute scale 与 domain coverage 绑定到同一 manifest，再用 held-out capability 验证，而不是复用固定 quality score。
@@ -267,11 +287,40 @@ Probe 未校准、目标 checkpoint 不同或误拒绝成本过高时，保留�
 
 <!-- source-family:SF-2026-ARXIV-2606-00160 -->
 
+### 代码可运行不等于它适合训练代码模型
+
+把编译通过、单元测试通过当作代码语料准入门槛是合理的：它能排除大量语法错误和直接改变程序行为的样本。但代码模型学习的是可见 token 与执行路径模式，不是只学习程序最终输出；两份在测试下功能相同的代码，仍可能对生成策略施加不同的监督。若不可信提供方有修改训练语料的能力，数据 owner 必须把“程序可运行”与“用这批代码微调后模型是否更会编写正确代码”分开验收，保存来源/改写 lineage，并在冻结训练 recipe 的小型 canary 上测生成正确率、失败类型及 clean baseline。这样增加审计与试训成本，却不能由静态检查或一次测试集通过代替；来源可信、语料本就经训练效用验证时，原有编译与测试门槛仍是高效第一层。<!-- source-family:SF-2026-ARXIV-2604-22291 -->
+
+一个受限 Java 代码微调实验显示，所改代码在作者的编译与功能测试中可通过，同一片段放在不同执行位置却产生不同训练效果；这支持“功能保持≠监督保持”的边界，不证明所测污染对所有语言、预训练阶段、清洗方式或代码模型都有效。其公开威胁模型把未授权训练者与语料发布者分开；本书从训练平台消费不可信语料的角度提取防护性 admission 条件，不把主动污染当作数据权利管理的通用方案，也不保证 canary 能发现所有操纵。
+
+### 从删除坏监督到尝试纠正监督
+
+过滤发现坏监督后，删除是最简单的干预：它减少错误样本的梯度，也移除了该输入上的监督机会。纠正标签或回答则保留输入支持、为相同问题提供正面目标，因此“哪些样本导致风险”与“删掉哪些样本最能修复风险”不是同一个问题。若要比较两者，应固定可疑 rows 与训练预算，保留 raw、delete、corrective rewrite、等长度 paraphrase 和 clean-data 对照，区分语义修正、额外文本变化及样本量效应；可解析的格式和表面无害不是行为 canary。
+
+纠正还会引入生成器偏差、错误修复和任务能力损失，必须保存原 row、修复版本与 generator lineage，再用独立行为切片验收。[受限 emergent-misalignment 微调对照](https://arxiv.org/html/2609.37624v1)只支持“纠正与删除可能不同”的设计分支；它的部分结果不确定，纠正相对 clean 的额外收益也未跨配置稳定成立。不能据此把自动改写设为普遍安全策略。来源可验证、修复可检查时才尝试纠正；风险不明、监督难以恢复时，隔离/删除及可靠 clean-data 回退仍合理。
+<!-- source-family:SF-2026-ARXIV-2609-37624 -->
+
 ### Synthetic data：从“先生成再打分”到 Specification Compilation
 
 最直接的 synthetic-data pipeline 是让模型生成任务、回答或 Agent trajectory，再由另一个 model judge
 过滤。它便宜、覆盖开放语义，在 verifier 难以形式化的任务中仍然合理；但 generator 和 judge 可能共享
 事实错误、风格偏好与同源 blind spot，语言上自洽不等于环境中可执行。
+
+IID生成再按正确性过滤，在答案比较可靠、任务较简单时最直接；但它会反复采到模型已经偏爱的同一种解法。若训练后还要依赖多次采样，语料选择应另看同题策略覆盖，而不是把正确率、文字差异或teacher规模当作完整效用。一个有条件的分支先让生成器列出不同approaches或构建decision tree，再分别用选出的list项/路径作为隐含条件生成轨迹，最终训练与测试仍用原问题。树只表达生成器认为重要的分叉，不证明各解法真正独立；这些数据条件及过滤必须保留lineage。
+
+[Strategic Sampling的受限反例](https://arxiv.org/html/2609.31571v1)表明frontier代码题上，含错误但策略不同的数据也可能比正确IID更有训练效用，然而同策略内correct过滤仍有益，fullset的单次准确率也会下降。额外planner调用未计入名义sample budget、retained set大小与teacher输出成本不同，不能称固定总成本或错误答案更值得模仿。应共同验收生成与训练预算、策略重复、pass1/多次采样覆盖及独立任务质量；approach无法可靠区分或回归退步时，保留verified IID、真实语料与原teacher配对基线。<!-- source-family:SF-2026-ARXIV-2609-31571 -->
+
+从一条已执行轨迹合成更多 Agent 任务时，只改写问法容易把单一路径当成条件策略。一条受限分支先将轨迹扩为条件行为树，选择其中的支路，再反推使该支路必要的环境状态、用户目标与操作说明：环境决定可行动作，用户请求表达目标，SOP 指明允许的条件策略。三者不能互相代替，例如用户要求补偿不产生补偿权限；真实资格仍应由工具和状态持有。这样改变的是训练样本的触发条件与输入职责，而非让合成器改写线上授权。<!-- source-family:SF-2026-ARXIV-2604-21590 -->
+
+反向合成增加 mock 状态、分支检查和生成成本；强模型在 mock 中走通预定支路，或同一模型多次回答一致，都不能替代真实工具与独立 outcome。生成支路和三类输入应保留 lineage，先以受控模拟验收，再以真实轨迹和权限 canary 检查迁移；后一步是工程要求，不是论文已验证的普遍保证。目标不匹配、模拟状态不足或预算紧时，保留真实轨迹及人工审查。原研究的多数据 flywheel 与多轮训练共同变化，不能将全部收益归给逆生成，也不能假定数据持续变难就必然提升能力。<!-- source-family:SF-2026-ARXIV-2604-21590 -->
+
+生成器的大小也不能脱离生成要求单独选择。固定来源与目标训练预算时，简单改写可能在较小生成器上已经足够，复杂的 Guided Rewrite 则可能需要更强生成器才能保持有用结构；输出严格符合格式，也不等于目标模型从中学到更多。数据选择因此要联合记录 prompt 要求、generator identity、source partition 与原始/合成 mixture，并分开验收格式执行率、语义保真和固定训练 recipe 下的任务效用。提高生成器规模、增加模板或把合成量填满预算，分别改变生成成本、分布和重复次数，不能把它们合成一个“数据质量”数字。<!-- source-family:SF-2026-ARXIV-2604-13977 -->
+
+有限的合成预训练对照支持这条条件分支，而非通用的小生成器优先规则：多数受测格式中扩大生成器没有稳定收益，但复杂改写存在较大生成器占优的反例；混入原始文本又能缓解纯合成数据在部分 NLU 任务上的退步。模板多样性与收益的跨家族相关没有隔离模板本身的因果作用，同 token 预算也不等于相同 unique-data 或生成总成本。采用时应保留任务切片、回归检查及真实数据回退；生成要求简单、原始语料可靠或预算不足以做联合选择时，较小生成器和固定 mixture 仍是合理旧路径，而不是把作者某一配置的最优规模移植到所有任务。
+
+近乎复制的 paraphrase 难以提供鲁棒训练压力，任意增加表述多样性又可能改掉 answer-bearing intent。一个受限数据生成分支先以 judge-accepted meaning 与组内 diversity 稳定改写，再在目标 QA 原本答对的子集上奖励“同义改写后答错”；必须把原 question/gold、baseline correctness、生成器、目标 QA、semantic judge 和失败 verdict 一起保留。Meaning admission 与 failure pressure 是两项职责：改义导致的错答不能冒充鲁棒性反证；通过改写可再配原 gold 形成训练 row，而不是把被诱发的错误回答当监督。这个 artifact 改变的是 pressure-producing input distribution，不由失效计数断言总体知识被遗忘。
+
+语义 gate 只是 judge 判断，不是严格等价证书；人类与多个 judge 的一致性通过率也不是逐样本 agreement 或消除共享偏差的证明。ER/WER 只描述各目标原先答对的条件人群，后续 SFT 却未按这条件过滤，不能据此隔离纯知识稳定的因果作用。All-retained paraphrases 全对的 Robust Accuracy 与至少一次答对的 Any Accuracy 必须并报：受限 SFT 中前者提高、后者反而下降，覆盖与稳定性存在取舍。额外 QA/judge 调用、RL 生成、过滤和 LoRA 训练都付费，完整 reward 公式的归一化与空/单例处理未获验证；零 retained 的边界也须另验。Judge 漂移、改写语义不可信或 clean coverage 退步时，应回退 verified/人工改写、原数据 mixture 与独立 held-out 评价，不从局部攻击成功或同源评分自签数据质量。 [必要机制与反证](https://arxiv.org/html/2609.21227v1)。<!-- source-family:SF-2026-ARXIV-2609-21227 -->
 
 表面无害也不等于行为中性。叙事、角色设定或虚构事件中的隐含偏好，会把“某类角色在某种条件下怎样行动”编码为
 条件监督；模型随后可能在非叙事对话中复现该行为，即使训练 row 没有显式危险指令。Data owner 因而不能只保存
@@ -307,6 +356,10 @@ perplexity、多样性与下游行为。其代价是实验矩阵迅速膨胀，�
 形成产业政策结论；它改变的是数据系统的 evaluation contract——先把 corpus state、parameter state 和 mixture control
 拆开，再讨论谁在驱动 model collapse。若这些变量无法隔离，回退到 provenance-preserving mixture、固定 human anchor、
 周期性 clean-base canary 与人工审核，比给单一集中度指标赋予因果含义更可靠。
+
+“固定 human anchor 能否阻止 collapse”仍需要定量条件，而不能只写成经验比例。把 recursive generation 建模为概率单纯形上的闭环动力系统，并在 Fisher–Rao metric 下分析，可以得到一个依赖 human distribution 最小质量、synthetic perturbation 上界与 mixing coefficient 的充分稳定条件：人工数据注入高于阈值时，轨迹被约束在稳定邻域。这个结果说明门槛属于分布几何和生成算子，而不是所有模型通用的 human/synthetic 百分比；证明还假设有限 categorical distribution、正支撑、bounded perturbation 与 equilibrium 存在。真实 LLM 语料不满足或无法估计这些量时，该 bound 只能作为风险方向，生产 Gate 仍应依赖 lineage、clean-base canary、held-out human data 与逐代质量/多样性观测。
+
+<!-- source-family:arxiv:2609.18878v1 -->
 
 <!-- source-family:SF-2026-ARXIV-2609-11146 -->
 
@@ -384,6 +437,10 @@ annotation 与 verifier 共享错误时，“可验证”仍只相对于该 pipe
 
 <!-- source-family:SF-2026-ARXIV-2607-24850; daily-trace:papers/2026/07/29/README.md -->
 
+同一搜索轨迹还可被重新编成另一种训练对象：把 compact snippets / Visit summaries 展开为对应页面全文，保留原问题与答案，但移除交互工具，让模型直接在长输入中定位并组合证据。失败轨迹保留较难的噪声人口；若补入同题成功轨迹的 compact evidence，则补证负责可回答性，不把失败动作变成示范 target。新的样本应绑定 rollout、页面修订、摘要与补证来源，答案正确或 URL 相同均不能单独证明展开后的 evidence 足够且忠实。
+
+这个转换以网页恢复、长输入 token 与额外训练阶段换取原工具 RL 较少获得的长上下文监督。[作者 DR→LongQA→DR 的同总 RL-step 对照](https://arxiv.org/html/2609.20844v1)中，去掉中段 KL 或把 LongQA 留在最后会提高部分长输入结果、却损伤搜索任务；目标切换和最终 realignment 因而应分别验收，不给普遍不遗忘保证。测试重复不是训练重复，同 steps 也未匹配构造、token 与工具总预算；可疑网页、补证不可靠或 tool-use 回归时，保留原人工/可重放数据、直接工具 RL 与独立证据审查，不以最终答案 reward 代替 lineage Gate。<!-- source-family:SF-2026-ARXIV-2609-20844 -->
+
 #### 没有真实后端时，Synthetic API State 只能是派生训练状态
 
 当 API specification 存在而 executable backend 尚未部署时，可以让 teacher 提议调用、由 history-conditioned simulator 生成 response，再用 schema/argument checks、语义一致性 judge 与 trajectory vote 筛选 SFT trace。这比 single-call 合成更能覆盖 stateful transition，却不能把 simulator response 升格为环境事实。
@@ -428,6 +485,11 @@ proprietary API、外部世界不可逆动作或缺少 oracle 时，随机/人�
 HardGen 在作者构造的 2,095-tool environment 和 BFCL evaluation 上为这条路线提供了受限案例；其 generator、
 judge、verifier 与 benchmark 仍可能共同贡献结果，也没有证明超出该工具分布的通用 Agent 能力。正文因此吸收
 “failure attribution → curriculum → executable verification”的 lineage，不保留模型排名、数据量或 headline gain。
+
+当训练样本和诊断题都由同一知识结构生成时，可以让概念、关系与推理链携带共同节点身份：训练消费概念/关系层，测试消费组合链，失败题再回溯为具名的数据修补提案。这比只按题目主题追加样本更可追踪，却不把模型判出的“缺概念/缺推理”升级为因果诊断；题目歧义、图谱抽取错误和采样失败也可能产生相同表象，修补仍要经过可信原始事实与独立 verifier。
+
+共同规格同时制造了新的污染路径：输入层分开不保证生成实例或语义不重合，关系层也可能组合出测试答案。因而 lineage 应记录源片段、各层节点、生成器、patch 与 replay 的依赖；发布评测另做实例/语义 overlap、source-chunk split 与独立能力 holdout。反复用于修补的诊断集仍是开发反馈，不是独立验收；[受限实验](https://arxiv.org/html/2604.24819v1)显示某些模型的外部能力回退，不能声称修补普遍保持原能力。图事实、判题或 holdout 不可信时，保留冻结数据版本、人工错误分类与独立评估。
+<!-- source-family:SF-2026-ARXIV-2604-24819 -->
 
 Terminal 与 repository 任务进一步说明，训练 row 的最小单位不能只是 instruction/response。可执行能力来自
 task intent、初始 filesystem/container state、tool protocol、trajectory 与 verifier 的联合分布；缺少任一项，
@@ -478,6 +540,10 @@ repository base + dependency image + issue intent
 -> inspect shortcut / unrelated regression
 -> retain image, scripts, logs and verdict as one source family
 ```
+
+已实现代码还提供另一种任务来源：没有 issue、commit 或现成 tests 时，可沿公共 entrypoint 和可观察输出定义行为 scope，剥去目标核心却保留 shared 依赖，另存原实现供 reference execution。任务声明负责约束求解器应实现什么，原实现只为声明已经固定的行为提供测试期望；未规定的措辞、顺序或内部结构只能验已声明 constraint，无法转为公共行为的 private assertion 应拒绝。Source-only 扩大可构造范围，却不使原程序成为通用正确性真值；声明错漏、reference 自身 bug 和共有盲点仍需人工 canonical 校验，不能让无效任务进入训练。
+
+`arXiv:2609.22068v1` §3.1–3.4 先清理编译产物、缓存和原 tests，隐藏 verifier 只在 grading 时注入，再用 fresh containers 核两次起始失败、四次 reference 通过；四次 solver attempts 的 review 检查假阳/假阴，adversarial rollout 查 shortcut。另保留 frontier model 在给定预算下有成功又有失败的 task，只是 training 适配，不说明全过/全败的原因，更不证明 verifier 完整。§5.1 的 cleaning、execution consistency 与三项 filters 联合改变支持整包取舍，不归因每个 filter；训练同 config 不等于总构造、工具和 token 成本相同，runtime 成功也不是外部现实 effect 保证。原 PR / 人工任务保留开发者意图，合成路径扩大覆盖，两者仍须交叉验证，不能用 rollout 关联代替独立验证。<!-- source-family:SF-2026-ARXIV-2609-22068 -->
 
 Builder 可以将 Dockerfile、evaluator 与 task diagnosis 分成可重试阶段，并用 loose data parallelism 扩大吞吐；
 但 image cache invalidation、shared queue/filesystem、zombie cleanup 和 dependency/network drift 都成为数据控制面。
@@ -535,6 +601,10 @@ reward leakage 与环境模拟偏差。固定人工数据在需要长期可比�
 任务成功只能说明 synthetic trajectory 可执行，不说明它与目标 policy 的行为分布相容。对机器人数据还要分别检查 joint/state density、trajectory style 与 execution timing；尤其 timing mismatch 会让同一几何路径在真实 controller 上失败。对齐这些分布提高 transfer，却可能过拟合一种 embodiment 或人类风格，因而需保存生成器、目标平台、动作频率与对齐器版本，并保留原始 task-valid 数据作对照。
 
 <!-- source-family:SF-2026-ARXIV-2609-12316 -->
+
+当通用图文数据很多、目标控制轨迹少时，随机抽样保持分布简单，却可能把大部分 mid-training 预算花在与目标无关的样本上。一个更有方向的分支固定表示 encoder，用目标数据与通用池训练二分类器，再以其输出提出选样；在对应类别先验和密度假设下，这可近似目标域/通用域的 density ratio，而不是只按某个语义距离取近邻。表示版本、目标集、采样先验、候选池和阈值因此共同决定数据 artifact；分类器只拥有 selection proposal，不能证明样本事实正确、目标覆盖充分或动作安全。<!-- source-family:SF-2026-ARXIV-2604-20012 -->
+
+这种选择增加特征提取、判别器和额外 mid-training 成本，也可能继承目标小样本的偏置、漏掉通用能力。验收应固定母模型、训练预算与下游 recipe，对照随机/原 mixture 并分别测目标收益和非目标退步；相似训练 loss 不等于相似控制效果。[受限 VLM→VLA 模拟任务证据](https://arxiv.org/html/2604.20012v1)支持这个选择条件，不证明真实机器人安全或所有替代选择均更差。目标分布尚不稳定、下游收益不能归因或通用回归过大时，回退随机 mixture、分域配额或显式数据审核，而非继续提高判别分数阈值。<!-- source-family:SF-2026-ARXIV-2604-20012 -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-23482:start -->
 当多模态训练受 expert 标注和合成预算限制时，只在单一模态内做 dataset distillation 会保留各自局部结构，却可能破坏图文之间的联合分布。一条条件路线是在 joint image-text embedding geometry 中匹配真实集与合成集，使 distilled set 同时覆盖跨模态邻域；但 distilled-data identity 必须连同 expert revision、synthetic-set identity、modality balance 与 downstream evaluator 一起版本化，几何距离只能提出样本，目标任务的 held-out evaluator 才拥有接受权。
@@ -701,6 +771,18 @@ participant data and update lineage
 
 <!-- source-family:SF-2026-ARXIV-2605-15520 -->
 
+<!-- june29-owner:TRAIN-DATA:start -->
+### 从样本来源追踪到行为归因，中间还隔着一个解释模型
+
+Lineage 能追踪哪些样本参与了训练，却不能单独回答哪个样本让模型更倾向于某种行为。直接删样本并重训最接近所需的因果对照，但成本高；一个较轻的诊断分支用 SAE 提取表示特征，再用 Ridge 模型把特征关联到目标行为的分数，并以一阶近似估计微调样本对这个解释模型的影响。数据 owner 获得的是“值得优先复核哪些样本”的线索，不是自动删除或归责的授权。
+
+这增加了特征标注、代理拟合与近似误差：解释模型忠实度低、特征不稳定或更新非局部时，归因可能失效。现有证据只在 Llama-3.2-3B-Instruct、特定 SAE、refusal proxy 与 200 个 SFT pair 上验证；符号标签、Ridge fidelity 和 first-order influence 都不等于真实删除后的行为因果。因而应保留原样本及 lineage，把高影响项交给删除/重训或独立对照验证；样本少、代价可控时，直接对照仍是更清楚的基线。<!-- source-family:SF-2026-ARXIV-2606-29171 -->
+<!-- june29-owner:TRAIN-DATA:end -->
+
+直接删样本并重训，是在声明的训练过程下回答一个具体反事实；先用廉价influence排序仍可降低复核费用，但“影响”必须先声明目标behavior、数据干预和counterfactual training过程。Query loss、answer logit与refusal proxy是不同目标，删除、upweight与替换是不同干预，单步更新、沿轨迹累积与重优化又是不同响应；其中一项改变，精确排名也可能改变，不应自动诊断为估计器失效。只有同一specification的匹配reference，才能检验近似误差；同spec的两个估计互异，也不指出哪一个更准。
+
+[受限归因对照](https://arxiv.org/html/2609.31214v1)把feature similarity解释为冻结feature、指定auxiliary loss和单步readout更新下的精确量，不把它当原训练删除因果；inverse-Hessian响应还需要可微stationary branch和可逆H，有限扰动离开线性化点会失准。更贴目标的surrogate不普适最佳，标签检测成绩与bulk removal后的行为改善也不认证每条高分样本是因果责任者。梯度、checkpoints、Hessian近似和重训均付费；无法计算匹配reference时保留spec/原row/代理限制，先用小规模受控删除或替换和独立行为回归验收。预算或可信标签不足时保留简单审计/隔离基线，不让一份跨目标排名直接决定删除、归责或权益。<!-- source-family:SF-2026-ARXIV-2609-31214 -->
+
 <!-- daily-20260621:train-data:start -->
 ### 从 sample provenance 到训练生命周期 lineage
 
@@ -708,9 +790,6 @@ RoboLineage 把 rollout、review、dataset decision、training run、policy meta
 
 **Trade-off、failure、共存与回退。** robot workflow 与作者工具不能证明跨 embodiment/stack 互操作；lineage 完整不保证 reviewer 判断或 deployment recommendation 正确。 旧路径在原假设成立时继续保留；新 sensor、router、artifact 或 private runtime 未通过自身 contract 时，回退到现有 deterministic owner、supported path 或人工审批。
 
-#### Review notes
-
-- `SF-2026-ARXIV-2606-22142` — primary `arXiv:2606.22142v1`；exact-v1 URL=`https://arxiv.org/html/2606.22142v1`；Method=`https://arxiv.org/html/2606.22142v1 — §3 Method; §3.2 Agent-Native Governance Over Lifecycle Artifacts; §3.5 Data Health, Training Integration, and Version Governance`；Evaluation=`https://arxiv.org/html/2606.22142v1 — §4 Experiments; §4.1 Experimental Setup`；Non-proof=`https://arxiv.org/html/2606.22142v1 — §5 Limitations and Discussion`。
 <!-- daily-20260621:train-data:end -->
 
 ### 从 Sample Dedup 到 Typed Lineage Graph
@@ -767,6 +846,10 @@ immutable event history + event time
 训练读取的应是不可变 manifest，而不是会被原地覆盖的目录。否则同一个 experiment config 在不同日期可能读到不同数据，却仍产生相同的“dataset name”。
 
 Lineage 还连接到 checkpoint：只有知道某个 checkpoint 看过哪些 data versions、到哪个 data cursor，才能解释能力变化、恢复训练或执行删除影响分析。
+
+固定 manifest 与 shuffle seed 仍不足以固定训练实际看到的顺序。若多个 worker 竞争同一任务／结果队列，row group 的领取与返回次序会受线程、网络和 CPU 转换速度影响；一个受限实现改用各 worker 独立队列、固定 round-robin 分派和同序合并，把序列决定权从完成时刻交给 reader。并行转换仍可进行，但慢 worker 会阻住有序提交，吞吐与确定顺序必须分别验收。<!-- source-family:SF-2026-ARXIV-2604-21275 -->
+
+缓存也应分清原始字节与转换后的训练数组：将转换下推 worker 并缓存后者，可避开重复网络读取与 CPU 处理，却增加存储、配额回源和线程管理成本。这只在相同 row group、worker 配置与随机状态的正常读取路径下支持顺序一致；不保证故障重启、扩缩或整段训练的 bitwise 重放。推荐训练的 loss／MAP 对照还混有其他稳定性技巧，不能外推 LLM 吞吐。离线串行或顺序无关任务保留简单共享池；需要恢复时仍由 checkpoint cursor 声明已消费序列，下节再处理已生成 batch 的原子可见与回收。<!-- source-family:SF-2026-ARXIV-2604-21275 -->
 
 ### 从 Shard 可见到 Batch 原子发布
 
@@ -917,6 +1000,16 @@ machine-unlearning 验收需要无需 scratch retrain/shadow fleet 的 proof-of-
 
 <!-- source-family:SF-2026-ARXIV-2605-05227 -->
 
+长上下文训练还要决定被载入的远处文本是支持目标 token 的信息，还是应当抵抗的相似干扰，而不只是给整篇文档一个质量权重。一条条件分支让每阶段的当前 checkpoint 先定位高预测熵位置，再检索候选上下文；将候选前置后，只有相对熵下降超过阈值的文本才作为正上下文。接着以这些正上下文作第二次相似检索，把所得文本作为拟议 distractors，与正上下文打乱后共同组成训练序列。刷新 checkpoint 因而同时改变支持材料的选择与干扰材料的构造，仍以普通 next-token objective 更新模型；它不是把模型的预测熵升格为事实验证器。低熵只证明该输入使当前预测分布更集中，不保证找到了真实依赖；相似检索也不证明所得文本都是不支持答案的负例。<!-- source-family:SF-2026-ARXIV-2604-07809 -->
+
+短窗口筛选与长窗口训练可以分开，但不能混同其证据：在约 2K context 中识别的熵下降关系，经打乱和扩展到 128K 后仍可能因距离、干扰或同样支持目标的“负例”而改变。阶段性重筛增加当前模型评分、检索、数据版本与 checkpoint 耦合成本；作者单一 Qwen2.5-3B 设置中的四阶段、每阶段 1B token 对照只支持同 token 预算下的受限结果，不证明相同总计算或可以无缝重叠下一阶段的数据生成。需严格重放或筛选成本较高时，冻结数据与单阶段扩窗仍是合理替代；动态路线应保存每阶段的模型、正上下文判据与拟议负例来源，并用实际长窗任务检查这种数据构造是否值得其新增成本。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2609-33642:start -->
+使用公开文档造监督时，teacher可能靠已有知识答题而不消费context。一个条件分支保留文档的复杂结构，先改变entity、数值和编号，再对同question与rubric分别给、不给改写文档作答；只有with-document达到质量阈值、without-document较低且差距足够时才接纳。双侧门既排“无文档也会”，也排“给文档仍不会”，与仅使预测熵下降的筛选测不同对象。
+
+[Perturbed Documents v1 §2–4](https://arxiv.org/html/2609.33642v1)支持有限teacher/judge条件下的这条数据分支，不证明已清除记忆、重写保持语义或所有student真依赖文档。重写、双答案、rubric和重试有成本；native trace也会继承teacher错误，teacher强弱与student收益不一一对应，后续RL还有行为反退。应保存原/改写文档与question/rubric版本，另核改写一致性和held-out迁移；不稳定时回冻结真实文档、人工/确定验证或不采用该样本，筛选分数不取代truth和权利审核。
+<!-- semantic-body-binding:SF-2026-ARXIV-2609-33642:end -->
+
 Selector 只拥有数据 admission，不拥有 objective；它用更高数据效率换 policy-dependent feedback、分布收缩和额外观测成本。frontier 估计不稳或需要严格复现实验时，回退冻结 mixture，并保留所有采样概率与 policy revision。
 
 当每次调用完整 solver 或目标模型判断样本难度过于昂贵时，可以先用一次带 solver label 的 pool 训练 activation probe，把目标 solve-rate 作为生成器的近似 reward；或用 proxy trajectory 上动态 reference 的一阶 influence 近似更新 selector。两者都把昂贵内环判断摊销成控制信号，却把 probe/target drift、proxy transfer、mode collapse 与 penalty calibration 引入数据状态。Probe 和 selector 只负责候选排序，held-out solver 与目标模型训练结果仍拥有最终 admission；漂移或泛化失败时回退周期性完整求解与冻结 mixture。
@@ -1045,6 +1138,8 @@ provenance、合规和可复现性。数据决定能力生产的上游边界，�
 
 搜索会增加训练次数并可能过拟合 evaluator 或代理 probe。论文只支持所测任务、模型和搜索空间；预算不足或排名不稳定时，应回退可解释的单项规则、固定配方和独立 held-out 验收。
 
+即使固定了 subset 比例，筛选方法也不能只按子集训练时长评价。复杂 selector 往往先扫描完整数据并运行表征或梯度估计；一次性训练时，这笔前置成本可能超过少训练几个 epoch 节省的时间。比较合同应把数据扫描、selector 运行、调参与下游训练放入同一 wall-clock 预算，和均衡随机抽样、完整数据缩短训练 schedule 比较；若同一子集会被多次复用，再单列摊销次数。该原则不意味着复杂选择永远无效：证据只来自受测图像分类数据与模型，LLM 预训练、动态剪枝和分布迁移需重新计时。<!-- semantic-body-binding:SF-2026-ARXIV-2609-22894 -->
+
 ### VLA 采样要保留 Action-critical Transition
 
 均匀抽帧降低存储和训练成本，却会丢掉短暂的抓取、接触和状态切换。按 action variation、visual-action coherence、task progress 与 gripper transition 评分，可以在目标 retention ratio 下把时间预算移向控制关键帧；被选择的 frame index 和原 trajectory 时间轴必须成为 data provenance。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13757 -->
@@ -1093,7 +1188,33 @@ budget 与五次运行，不能证明跨 theorem prover 或通用 Agent trajecto
 显式 lexical bridge 能集中跨语言信号，也会引入多义词、语序破坏和领域偏差。exact-v1 只支持作者语言、语料和评估，不能推出词典替换普遍优于平行数据；语义噪声、目标语言退化或分布外漂移时，应回退原语料、经过验证的平行数据或更保守的混合比例。arXiv:2605.23885v1
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-23885:end -->
 
+### Recursive Data 的控制量不只有比例，还包括真实样本绝对注入量
+
+只固定 real/synthetic ratio，会在总数据规模变化时隐藏真实 evidence 的 immigration pressure。Recursive output training 应同时记录真实样本绝对数、比例、生成 lineage 与每轮 selection；多父模型也不能按 parent count 直接推导多样性，平均输出可能抵消互补 specialist，merge compatibility 更受冲突 convention 与 parent disagreement 影响。<!-- source-family:SF-2026-ARXIV-2609-18560 -->
+
+持续真实数据提高采集、provenance 与验证成本，多父组合增加 lineage/evaluation 状态，参数平均还可能造成能力抵消。人口遗传学映射与有限 generator/LLM experiments 不给生产固定 ratio、parent count 或 merge threshold；应保留真实 holdout 与 parent checkpoints，先测 disagreement/compatibility，失败时采用 routing/ensemble 或回退最后通过 Gate 的 lineage。
+
 ## Review notes
+
+- `SF-2026-ARXIV-2604-20012`（Experimental）：[exact-v1](https://arxiv.org/html/2604.20012v1)，§3–4、§5、§6.1–6.2。采用冻结表示与类别先验条件下的目标域选样分支，保留同母模型/预算对照、目标偏置、通用回归及仅模拟机器人边界。source→owner经apr24_close核，实际正文已由apr24_close非作者写后核；未复现实验。
+
+- [Correct, Don't Delete v1](https://arxiv.org/html/2609.37624v1) §3–5；Daily 2026-09-30。采用 delete/corrective 两种干预的区别及受控比较，不采用“纠正普遍优于删除”或通用安全保证；主实验为受限单层低秩微调，未复现。
+
+- `SF-2026-ARXIV-2606-22142` — primary `arXiv:2606.22142v1`；exact-v1 URL=`https://arxiv.org/html/2606.22142v1`；Method=`https://arxiv.org/html/2606.22142v1 — §3 Method; §3.2 Agent-Native Governance Over Lifecycle Artifacts; §3.5 Data Health, Training Integration, and Version Governance`；Evaluation=`https://arxiv.org/html/2606.22142v1 — §4 Experiments; §4.1 Experimental Setup`；Non-proof=`https://arxiv.org/html/2606.22142v1 — §5 Limitations and Discussion`。
+- `SF-2026-ARXIV-2604-22291` — [Train in Vain exact-v1](https://arxiv.org/html/2604.22291v1)，§2–5、Limitations、Table2–3：只吸收代码编译/功能测试与训练监督效用分账的防护性合同；相同模板的 dead-branch 对照在所测 Java 微调中将执行路径因素与简单文本暴露分开，但不是跨语言因果定理。Table2 的 base .31、clean fine-tuned .38、作者 10% 条件 .20 与 dead-branch10% .38 是该实验的 Pass@1，不是全部模型或训练预算；984/984 编译只是所测任务，非语义等价形式证明。代码数据权利争议不由污染方案自动解决；主动注入细节不纳入正文。root 完成必要 exact-v1→Ch27 实际命题独立窄采用；真实写后非作者复核待办，04/27 日级 Gate 未通过。
+
+- `SF-2026-ARXIV-2604-21590`（Status: Experimental）：[官方 HTML v1](https://arxiv.org/html/2604.21590v1) §3.1–3.3／Algorithm 1、§4／Table 1。行为树支路反推环境状态、用户目标和 SOP，输入职责分开；原文所谓多模型环节实为同 Qwen3-235B 多次回答，不是独立模型投票。mock 可执行不等现实效果，生成支路 lineage、真实权限 canary 为工程验收要求；综合 flywheel／轮次收益不唯一归因此机制。apr02 已独立核必要源与 owner；root 已核实际正文、上下文与本条证据边界，写后复核通过，未复现实验。
+- `SF-2026-ARXIV-2604-21275`（Status: Experimental）：[官方 HTML v1](https://arxiv.org/html/2604.21275v1) §III-B／Algorithm 1、§IV-A/B、§V-A/C。独立队列与固定 round-robin 分派／合并只收束正常并发顺序；缓存转换后 NumPy，非原始字节，慢 worker 可阻塞有序提交。证据限 Petastorm/HDFS/Ray/Horovod 推荐训练，GPU 型号未披露，loss／MAP 还含辅助技巧；不证明故障重放、全训练 bitwise 或 LLM 吞吐。apr02 已独立核必要源与 owner；root 已核实际正文、上下文与本条证据边界，写后复核通过，未复现实验。
+
+- `SF-2026-ARXIV-2604-13977`（Status: Experimental）：[官方 HTML v1](https://arxiv.org/html/2604.13977v1) §2–5与Limitations。采用prompt要求×generator能力×source/raw mixture的条件选择与格式执行率/目标训练效用分账。1.2B/21B-token、64H100/bf16的英语三shot十二任务对照；复杂Guided Rewrite中4B优于1B，纯合成与mix存在NLU回归，不能采用通用1B阈值。跨家族模板相关不是独立模板干预，重复样本补token不等unique-data/总生成成本匹配。必要source→owner已获apr02通过，实际正文待独立写后复核；未复现实验。
+
+- `SF-2026-ARXIV-2604-13054`（Status: Experimental）：[官方 HTML v1](https://arxiv.org/html/2604.13054v1) §3–4、Tables3/7/9。采用任务格式与语义内容覆盖分账，不采用普遍“VQA不提供知识”或 scaling bottleneck。§3 同图像/3B/约100B-token对照的均值接近不掩盖MMBench/ScreenVIVOv2回归；§4约50B-token pair-caption分支保留VQA，不能与前者混为同预算实验。教师生成/过滤与语义元素统计不是独立知识真值。必要原文与owner差异已获apr02非作者通过，实际正文等待非作者写后复核；未复现实验。
+
+- PolicyLong（Status: Experimental，SF-2026-ARXIV-2604-07809）：[官方 HTML v1](https://arxiv.org/html/2604.07809v1) §2、§3.1–3.3 Eq1–2、§4、§5/Table3、§8、Appendix E。采用当前 checkpoint 的熵降正上下文与 secondary-retrieval distractor 构造分支，不将低熵/最近邻当真依赖/真负例。Qwen2.5-3B，32K→128K，四阶段各1B token，基线同4B token；RULER/HELMET为pre-SFT，LongBench-v2在相同LongMagpie SFT后。筛选约2K不等训练128K；硬件、precision、训练总成本与部署并发/SLO未披露，吞吐不采用。Appendix E的近零有效开销和下一阶段重叠未给足checkpoint时序/完整成本，不能作保证。作者侧必要证据与实际正文已核，等待 root 非作者写后复核；未运行实现或复现实验。
+
+- 2026-04-09 `SF-2026-ARXIV-2604-06834`： [精确 v1](https://arxiv.org/html/2604.06834v1) §2、§3 Eq4–10、§4 与 AppA.3/B；Status: Experimental。采用 step-boundary 比例混入 likelihood selection 与两种修正的成本，不采用 OLS 因果识别或跨单位回归系数大小推断；有限 SFT 对照不保证相同 token 预算下的通用优势。
+
+- `SF-2026-ARXIV-2604-00715`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2604.00715v1) §3–5 与附录 A 在固定语料预算下共同变化模型规模、预训练 token 与 held-out retrieval store；仅支持所测 OLMo-2/DCLM/FAISS、任务和拟合区间中的条件分配，不证明外推交叉点、通用训练/索引比例或生产检索时延。
 
 - `SF-2026-ARXIV-2605-07063`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2605.07063v1) 支持在作者 SFT、RLHF、RLVR 设置中由 general data 构造 update constraint；不证明 feasible set 对任意目标域正确，也不提供生产训练成本或普遍最优投影。
 
@@ -1183,19 +1304,6 @@ Primary-source 校验入口：
 #### 2026-06-29 source-specific Review notes
 
 Review note：`SF-2026-ARXIV-2606-29171`；Method `https://arxiv.org/html/2606.29171v1 — §3 Symbolic Mechanistic Data Attribution Framework; 3.2 Symbolic Policy Model; 3.3 Influence Computation`；Evaluation `https://arxiv.org/html/2606.29171v1 — §4 Experimental Setup; 5 Results`；未证明边界 `https://arxiv.org/html/2606.29171v1 — §6 Discussion; Symbolic model fidelity and scope; First-order approximation`。
-
-### Source-family integration record
-
-
-
-
-
-<!-- june29-owner:TRAIN-DATA:start -->
-### 2026-06-29 约束变化与机制增量
-
-**Owner-merged 正文（覆盖 `SF-2026-ARXIV-2606-29171`）。** 现有 Data 正文拥有 lineage、dedup、contamination 与删除证据，却缺少从训练 pair 经 SAE feature 归因到 learned behavioral policy 的中间可审计层。 因此本次把这些增量合并到同一知识 owner：普通 sample lineage 只能回答数据来自哪里；symbolic mechanistic attribution 进一步把样本影响连接到可解释 behavioral policy，使数据 owner 能把选择、删除或复核请求落到行为证据链。归因仍是模型化证据，符号解释不稳定时保留原数据并回退重训/对照实验。 共同代价与回退边界是：只在 Llama-3.2-3B-Instruct refusal proxy、特定 SAE 与 200 个 SFT pair 上验证一阶符号归因；feature label、Ridge fidelity 与 first-order approximation 不等于真实删除/重训因果。保留原样本与重训对照。
-
-<!-- june29-owner:TRAIN-DATA:end -->
 
 ### Daily Books delta trace（2026-06—08）
 

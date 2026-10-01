@@ -44,6 +44,10 @@ Continuous Batching 的关键不是“更大的 batch”，而是 **iteration-le
 
 这里的 iteration 不必永远等于“每个请求恰好生成一个 token”。Chunked prefill、speculative verification 和不同模型执行路径都可能让一次调度迭代推进不同数量的 token。稳定定义是：执行引擎只运行一个可重新调度的工作单元，下一轮前允许 batch membership 变化。
 
+多候选搜索又会把逻辑样本数与实际工作数分开。相同模型、prefix 和 sampling 条件下，可以只算一次 logits，再按该 prefix 代表的候选数独立抽样；相同 next token 继续共享，分歧时才分裂。这不同于只共享 KV 却仍逐候选 forward：scheduler 须保存 multiplicity 和各候选状态，不把共用 logits 变成共用随机 draw。PRM 验证另是一类 Prefill work，可跨请求排队，用测得的 token 规模、同 parent 兄弟完成和单样本最大 defer 次数，分别控制吞吐、步骤等待与低负载饥饿。
+
+验证排队会推迟淘汰、扩大活跃 KV，batch 过大也可能反而降吞吐；计数阈值不是墙钟 deadline。已验证 step score 低于当前 k 个更高者时，可按该 step 规则剪枝，但满分早停会改变 tie 选择，PRM 分数也不是答案真值。[SpecScale 的受限数学搜索](https://arxiv.org/html/2609.39334v1)展示这组执行分工，高负载下 naive speculation 与部分质量切片仍会退步。固定小 beam、短路径或没有足够验证工作时，同步验证与普通独立候选更简单；无法固定数值路径、尾延迟或候选语义时，回到原搜索与采样并分别验收质量、成本，不把局部近似准确率签成 lossless search。<!-- source-family:SF-2026-ARXIV-2609-39334 -->
+
 ## 为什么 LLM 特别需要它
 
 LLM 请求有几个特征，使 continuous batching 特别重要。
@@ -218,6 +222,10 @@ Continuous Batching 提高 GPU 利用率，但代价是调度器更复杂。
 它也会带来公平性问题。如果调度器总是优先填充容易完成的短请求，长请求可能被拖慢；如果总是照顾长请求，短请求的 tail latency 可能变差。
 
 此外，Continuous Batching 和 Prefill 的关系也要小心。Prefill 通常计算密集，Decode 通常访存敏感。如果把大量 Prefill 请求直接插入 Decode batch，可能打乱 Decode 的稳定 token 输出节奏。因此实际系统常常需要区分 Prefill scheduling 和 Decode scheduling，甚至进一步走向 PD 分离。
+
+请求在工具等待后重新到达，不能只把它当作释放了一个 batch slot：前次完成时刻与工具时长共同决定再次到达，服务配置改变后 arrival 序列也会改变。编译时固定 bucket 的 backend 又按可用容量向上取整，单步成本可能主要是固定项；等待把原本同步的请求打散后，即使总 padding 更少，也可能执行更多 decode steps 而更慢。配置应共同结算实际 membership、选中 bucket、步数、未缓存 prefill 与生成节奏，不把 padding ratio 单独授予效率结论；同 input plan 也不等于同一组外生 arrival 时刻。
+
+若 padding dummy 与真实请求共用 KV block pool，补齐形状本身还会改变 cache 生存和重新 prefill 的压力；同一 slot ID 再出现不证明原内容仍在，应核 generation、实际 cached tokens 和请求轨迹，而不是只信 hit counter。[ToolWait v1 §II–III](https://arxiv.org/html/2609.34663v1) 的有限静态 backend 干预支持这些反例，不证明一般动态引擎都如此；slot 与 batch limit 联动、chunk 到达间隔和重建 device time 也不能分别冒充单因素因果、逐 token ITL 或硬件占用证书。增加 slots/buckets 会付出编译、驻留和调参成本，扩大池后 prefill 仍可能支配；条件不匹配或收益不足时保留原 bucket、保守接纳与已验证 cache policy，重新校准完整执行而非只追更低 padding。<!-- source-family:SF-2026-ARXIV-2609-34663 -->
 
 ## 工程实践中的判断
 

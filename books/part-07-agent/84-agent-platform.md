@@ -87,6 +87,10 @@ goal
 
 因此，模型负责产生语义判断与 action proposal，Agent Runtime 负责状态转换和编排，Tool/Environment 拥有真实副作用，Policy plane 决定哪些转换被允许。只有 terminal evidence 满足任务 contract，才能把“请求成功”提升为“任务完成”。
 
+当任务由外部 issue tracker 发起时，`AgentRun` 也不能独占工作项的准入权。issue 的当前状态、阻塞关系和人工 owner 决定工作是否仍可执行；run、session、workspace 与 PR 只是某次尝试及其产物。控制器可以为每个可执行 issue 取得唯一 claim 并隔离工作区，但每轮调度仍要从 tracker 重新核对 blocked、terminal 与已有运行中的 claim；stall 后重试也要沿同一 issue 身份恢复或重新准入，不能仅凭旧 session 继续产生副作用。这样把外部业务状态的变化与内部执行状态衔接起来，代价是持续轮询、claim/工作区清理，以及 tracker 与本地 event log 不一致时的保守停机或人工接管。
+
+一次 run 的代码和测试成功，可能只够把工作项交给 `Human Review`，不能自动把 issue 标为 `Done`；最终提交权仍属于外部业务流程和人工 owner。反过来，短任务或不依赖外部 tracker 的内部 workflow 没必要引入整套 claim/reconciliation 控制面。Symphony 的公开 Draft v1 SPEC 给出了 eligibility、单 issue workspace、stall/retry 与 tracker-state reconciliation 的设计示例；它没有证明生产环境的强 sandbox、跨系统 exactly-once，发布文中的 PR 增长观察也不能归因于这一机制。<!-- source-family:SF-2026-OPENAI-SYMPHONY -->
+
 ## Agent Definition 与 Run Identity
 
 可部署 Agent definition 至少绑定：
@@ -206,6 +210,19 @@ Scan 只能发现已编码规则，signature 只证明 publisher/digest，Skill 
 evaluation。NVIDIA verified skills 提供了这条发布链的官方实现案例，但不能证明被验证 Skill 在所有 Agent、
 environment 或版本下安全有效。人工维护的封闭 Skill set 在高风险、稳定 SOP 或证据不足时仍合理。
 
+Catalog 中有一个 Skill 名称，仍不等于本次 run 装载了哪一份定义：project、user、额外目录与 built-in
+可能提供同名资产。解析器必须声明当前发现模式、同名优先级和获胜 artifact 的来源与不可变 digest，并让
+Agent definition 的 Skill 引用、呈现给模型的 prompt 与 `AgentRun` 记录指向同一解析结果。否则目录审计
+看到的是一版，模型实际消费的却是另一版；缓存、版本 pin 和回滚也失去对象。Kimi CLI 1.39.0 在默认自动
+发现下以 Project → User → Extra(config) → Extra(plugin) → Built-in 首个同名获胜；显式 `skills_dirs`
+则替代 Project/User 自动发现，不能把前一种顺序写成无条件平台规则。<!-- source-family:SF-2026-MOONSHOT-KIMI-CLI-1.39.0 -->
+
+解析优先级也不是信任或授权优先级：项目目录里的错误或恶意 Skill 仍可能遮蔽已审 built-in。平台应在
+装载前独立 admission，执行时仍由 policy 对 primitive effect 授权；高风险或来源冲突时可固定 allowlist、
+手工 pin 已审版本，或回退封闭 Skill set。解析与 digest pin 换来可复算身份，却增加缓存失效、兼容回归
+和迁移成本。该 release 的源码与测试只支持受限 CLI 的选择及 prompt 组装路径，不证明任意部署环境的
+供应链安全，更不证明项目优先会自动收紧执行权限。
+
 ### 从 Skill Catalog 到 Competence-aware Orchestration
 
 只有 skill taxonomy 时，平台知道“有哪些能力资产”，却不知道某个 Agent 在当前版本、成本与环境下能否可靠
@@ -281,6 +298,13 @@ Raw trace、extractor、patch、merge decision、Skill version 和 evaluation re
 并不天然因果。External Skill 易撤销、可审计，适合快速试验；sequential manual edit 在高风险或证据稀少时
 更稳；derived memory 和参数更新则是不同下游分支，不能因 trajectory 被“编译”就获得训练或执行 authority。
 
+一次 verified execution 也只能成为 compilation input，而不是可直接复用的权威 Skill。去实例化得到的 symbolic
+policy 必须携带 applicability、输入/输出 schema、可靠性证据、revision、失效条件和 fallback；否则“技能复用”
+只是把历史 prompt 和偶然路径搬到新环境。去实例化与自我练习减少重复规划，却会累积错误假设并扩大跨环境
+漂移；验证不足时应回退冻结 snapshot、人工批准或重新规划，不让派生 Skill 自行提升 authority。
+OmniHarness 在 ComfyUI/视觉生成任务上提供了这条分支的受限证据，不证明跨工具可移植性或长期自我练习安全。
+<!-- source-family:SF-2026-ARXIV-2609-16057 -->
+
 Source 也不一定是 trajectory；实验 notebook、incident note 与人工 SOP 往往同时包含可复算事实、专家判断和
 尚待验证的建议。如果 compiler 把三者都降维成命令式 instruction，不确定判断就会静默获得执行 authority。
 因此 ingestion 应先保留 epistemic status，再生成能力资产：
@@ -335,6 +359,10 @@ failed trajectory + responsible component identity
 人工编辑在高风险、证据稀少或责任不清时继续合理。SkillAdaptor、SkillGrad 与 Harness Updating 分别提供 fault
 localization、类 optimizer patch 和 benefit decomposition 的实验性证据；它们不是一条自动发布流水线，更不证明
 把 Skill 称为“gradient”就拥有收敛性质。
+
+库维护本身也可能由可训练策略承担：决策策略选择 action 与 retrieval，维护策略则选择 trajectory segmentation、skill contract 与 curation。决策产生维护数据，维护又改变决策下一轮所见的检索分布，因而 catalog 更新不能只按文本 diff 验收；要分别登记两侧训练目标、reward 与 bank 状态，并以冻结的 policy × bank 交叉测试区分 consumer 升级和库升级。这样才能发现某个 policy 只适配共同演化的库，而非把最终任务收益全归给“更好的 skill”。
+
+双侧学习增加 rollout、库维护和回归组合成本；[受限六游戏实验](https://arxiv.org/html/2604.20987v1)只支持这种共适应分支与交叉对照的必要性，不证明共同训练普遍优于冻结库，也不把训练后 8B 与未匹配总训练预算的 frontier 对照当作等成本比较。原文 episode-end 与 skill-switch 的检索奖励叙述仍有粒度差异，不能补造统一 credit 规则。分布变化或 reward 归属不可复验时，冻结库或人工维护继续合理；可训练维护者也必须经过下面的独立 admission，而不能自行发布新 bank。<!-- source-family:SF-2026-ARXIV-2604-20987 -->
 
 Skill admission 的评估还必须拆成三层：artifact 是否覆盖任务与安全约束、Agent 是否在 trajectory 中正确采用、
 最终 outcome 是否通过 verifier。高质量 instructions 可能无人使用，频繁使用也可能执行错误：
@@ -482,6 +510,10 @@ monitor 并存。形式定理只在论文 interaction-tree 语义内成立，不
 
 <!-- semantic-body-binding:SF-AGENT-LIBOS -->
 
+原始调用被允许，不代表它最终产生的持久变化都被批准：trigger、cascade或server-side逻辑可以追加另一项effect。可将application批准的有限变化与backend观察到的变化分别标准化为同一profile，再比较结果；profile要预先决定比较write events还是netstate、是否保values及multiplicity。完整性不是“收到了日志”，而是当前执行可达的持久化与dispatch出口均被观察或封禁，并能把变化归到同一occurrence；未分类出口或缺证据不能给出exact结果，agent不能从自己的call同时自制目标与回执。
+
+Backend能否hold同一candidate，决定拒绝发生在哪里。可promotion的事务/文件stage先验完整结果，再绑定candidate与当前边界的one-use permit；专属gateway可限制manifest-derived请求，却仍要dispatch后查结果；opaque服务已发生的effect只能记diverged/indeterminate并停dependent work，不能伪称rollback。Occurrence在首次effect前领取且崩溃后不再生，durable terminal缺失只能待reconcile，retry/compensation另需authority。观察、freshmetadata、锁与journal都增加成本且限注册scope；无法认证完整边界时收窄操作、只读或人工核对，不能由局部成功推广开放世界exactlyonce或无副作用保证。[机制与有限实验](https://arxiv.org/html/2609.31301v1) <!-- source-family:SF-2026-ARXIV-2609-31301 -->
+
 ### Agent Discovery 是可修复的路由状态，不是身份真值
 
 中心 registry 在规模可控、网络稳定且需要强一致权限时最清楚；节点和 Agent 都频繁上下线后，单一目录会成为可用性与扩展瓶颈。去中心化 discovery 可以用结构化 overlay 获得可预测 lookup，也可以用 gossip 让成员与邻近关系逐步收敛。
@@ -499,6 +531,10 @@ monitor 并存。形式定理只在论文 interaction-tree 语义内成立，不
 这使异步协作可恢复、可审计，却引入过期能力声明、冒名、通知泄漏、重复响应和 consent replay；Human Card 不能把“可联系”升级成“有权限”。参与者无法验证、响应已过 deadline 或 task identity 不一致时，应继续等待、重新发现、升级到人工调度或取消，而不能让 Agent 猜测同意。
 
 <!-- SF-2026-ARXIV-2602-15831 -->
+
+Human approval 还须把三个事件分开：等待策略超时、当前 turn/source 终止后的 pending request 清理，以及用户主动拒绝。固定超时便于服务资源回收，却可能在用户仍能响应时替用户做决定；延长或取消超时则不能保证 liveness。Runtime 应将 approval future 绑定 request 与 foreground turn/source，在取消、流结束或任务结束时回收，并保存 timeout/cancel/deny 的不同原因，迟到回复不能重新激活已失效动作。
+
+自动授权和用户是否在场也是两轴：允许某类 effect 自动通过，不意味着不能请求澄清；无人值守则不能假装还能取得实时回答。平台需显式声明 approval policy、presence/clarification policy 与等待预算，context compaction 后也不能丢失当前交互模式。Kimi CLI 的[生命周期修复](https://github.com/MoonshotAI/kimi-cli/pull/2087)与[两轴分离](https://github.com/MoonshotAI/kimi-cli/pull/2045)支持这个窄边界，不证明所有通道无悬挂或无人值守安全；其手工测试未全部完成。短任务、固定审批期限仍可保留原阻塞交互，无法取得必要澄清时应取消、升级或回退人工，而不是让自动审批代填用户意思。<!-- source-family:SF-KIMI-CLI-1-40-0 -->
 
 ## Agent Runtime State Machine
 
@@ -522,15 +558,24 @@ Created
 一次动作配一张截图，在静态网页、低交互频率任务中最简单；持续媒体、动画、语音和短暂 UI 事件出现后，
 这个采样节奏会让 Agent 在两次动作之间失去环境变化。平台因此需要把 observation 从 action response 中拆出，
 形成版本化接口：按 gate 选择 keyframe，独立保存 audio transcript 与 persistent narration，并把每个 observation
-和随后的 action receipt 绑定到同一 run、environment revision 与时间线。Capture policy 只拥有 observation proposal，
+和随后的 action receipt 绑定到同一 run、environment revision 与时间线。接口 owner 管理 capture/retention 与 action-state identity，不能让模型任意读取连续桌面流。Capture policy 只拥有 observation proposal，
 Tool/Environment 仍拥有真实状态，Agent 不能把未观察到的变化补写成事实。
 
 更高频、多模态观察能减少盲区，却会增加 token、带宽、隐私保留和时间同步成本；keyframe 过密还可能通过 image-token
 dilution 降低模型表现。漏帧、转写不可靠、权限变化或 observation identity 无法对齐时，应回退高保真 capture、重新观察
-或人工确认。现有浏览器任务实验只证明该接口在所测 computer-use 模型和环境中的条件收益，不证明桌面系统、会议或
-高权限副作用场景可以无人监督运行。
+或人工确认。现有 DynaCU-Bench 浏览器任务实验只证明该接口在所测 computer-use 模型和环境中的条件收益；Gemini 3 Flash 上的 image-token dilution 已构成反例，因此 observation interface 不能被当成所有模型共享的固定 bundle。它不证明桌面 OS、持续会议或带权限副作用的场景可以无人监督运行。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-29472 -->
+
+持续语音还把“当前响应结束”拆成不同寿命：spoken response 与 playback 可被打断，foreground call 可结束，已经 delegated 的后台任务却不因此自动取消。任务受理的 acknowledgment 也不等于工具 effect 已完成；平台应分别保存响应、call 和 task 的状态/取消回执，再把异步结果作为新事件交付，不能从用户没再听到语音推断后台执行已经停止。这个生命周期差额只改变交付接口，不自动提供 durable task、exactly-once 或权限继承保证。
+
+[Qwen3.8-Omni 的公开实时接口](https://arxiv.org/html/2609.25611v1)展示上述职责分离；独立监控 session 的 cooldown 和重复 positive suppression 只是节流，不是真值探测。其预上传短输入、VAD关闭与 fresh session 的少量响应测量，TTFC 排除上传/建连/playback、RTF另排除等待，不能拼成持续双向实时 P99；部分语音基准也有退步。多寿命状态与事件回送增加取消、权限和审计成本，状态不明时显式查询/确认后台任务，保留静态单 call、人工确认与已验证工具执行路径，不把流畅语音当完成证据。<!-- source-family:SF-2026-ARXIV-2609-25611 -->
+
+<!-- semantic-body-binding:SF-2026-OPENAI-DOTS:start -->
+已受理的后台任务可以在 foreground call 结束后继续，这不等于平台在用户不交互时发现的新线索也已获执行授权。应将 proactive discovery 与 delegated execution 作为不同模式：前者只在已批准的数据 scope 内读取、整理和提出建议，不因连接了 app 就能发消息、改内容或控制 browser/computer；转成可执行任务时再绑定 principal、具体 scope 与 approval policy。后台权限收窄的是发现阶段的 effect 面，而不是取消已有任务。
+
+模式转换增加权限检查、proposal 保留和 Activity 审计成本；专属 Agent identity 也只能说明可归责的主体，不授任意任务。[Dots 公开发布合同](https://openai.com/index/introducing-dots/)支持只读发现与动作 review 的职责分离，不证明 review 无漏判、所有连接器隔离或企业 pilot 已普遍上线。边界含糊时停在建议，交用户确认；明确委派、有限 scope 且经过独立 effect gate 的旧后台执行路径继续成立。
+<!-- semantic-body-binding:SF-2026-OPENAI-DOTS:end -->
 
 ## Scheduling 不只是 GPU
 
@@ -601,6 +646,8 @@ current run state + evidence + remaining budget
 
 模型自报“已经完成”不能成为 stop evidence；hard safety limit、用户 deadline 和不可逆动作审批也不受 utility 覆盖。价值估计失准会过早放弃困难任务，能耗模型漂移则会把节省写成虚假收益，因此 controller 必须有固定 cap/floor、shadow calibration 和按 task slice 的 outcome 复核。证据不足时回退固定预算或人工，而不是让局部成本最小化接管任务正确性。
 
+同理，运行前让 Agent 自估这次任务要用多少 token，可以帮助粗分高成本任务或提前预警，却不能充当逐 run 的硬预算或账单真值。长程 coding trajectory 的输入历史、工具输出与后续探索路径尚未发生，Agent 为估算而预先探查本身也要付成本；在受限八模型、OpenHands/SWE-bench Verified 对照中，自估与实际用量只呈弱至中等相关，普遍低估，部分模型估算成本甚至超过任务执行成本。平台应把预估作为可撤销的 admission 信号，把实际用量交给运行时 meter、硬 cap/floor 与 outcome evidence；当估计误差或探查成本超过收益时，回退静态预算和运行中告警，而不是给用户虚假的精确报价。这不是对所有 Agent 或价格制度的普遍测量结论。<!-- source-family:SF-2026-ARXIV-2604-22750 -->
+
 <!-- source-family:SF-AGENTSTOP-ENERGY-AWARE-TERMINATION -->
 
 Provider 还可能把内部推理拆成可读 summary 与只能原样回放的加密 continuation state。Host 可以展示、压缩或
@@ -666,6 +713,10 @@ Agent 代表用户或服务行动，需要明确：
 - 哪些 action 需要 approval；
 - credentials 如何短期发放与撤销；
 - action 如何 non-repudiation/audit。
+
+把不同 backend 的规则接入同一 policy layer，还必须保留默认判决、量词作用域和组合优先级。默认允许的 admission backend 与默认拒绝的 authorization backend 不能只换字段名：允许规则在前者可能没有改变判决，而后者通常还要求存在 permit 且没有 forbid。对每个 collection element 的豁免也不能移为整个 capability 的 guard；否则同一文字规则会改变允许集合。先声明受支持 fragment，对无法表达的聚合、嵌套或跨对象关系显式拒绝或交原 backend，再以外部允许和拒绝样本分别校验。
+
+一个[受限 prototype 的跨域测试](https://arxiv.org/html/2609.21299v1)暴露了 scalar grammar 与 default polarity 的缺口；Gatekeeper fragment 修正后42个样本一致，不证明49条原策略都可编码，Cedar的81请求总体78一致又掩盖了10个允许请求中的3个被错拒。保守拒绝只限制误放，并不拥有可用性；标签仍依赖 reference implementation，context/ranking与多步 execution 尚未实测。迁移因而支付规则编码、版本与差分回归成本；语义不相容时保留既有 controller、人工审批或只读 fallback，不凭决策 artifact 的可重算性证明真实 effect 已受完整治理。<!-- source-family:SF-2026-ARXIV-2609-21299 -->
 
 Agent 不应长期持有用户全权 token。NIST 2026 的 agent identity/authorization 工作也将 identification、authorization、auditing 和 delegation 视为核心采用障碍；当前仍是演进中的标准领域，不能声称已有统一最终方案。
 
@@ -746,6 +797,10 @@ Agent definition 更新可能改变 tool path 和长期 state，rollout 比模�
 - policy/tool revocation 是否立即覆盖旧 run。
 
 通常 run pin definition version，而 emergency security policy 可强制实时生效。两者优先级必须明确。
+
+Run固定definition在长任务恢复时合理，紧急policy改变后则必须判断哪个proposal真正受影响。Admission不能只比较全局epoch：当前规范、事实、任务和模型/tool/verifier组件的声明依赖须逐项仍可用，无关scope变化不应迫使整个run重算；粗epoch相同也不能掩盖某个required component已撤销。受影响的未提交attempt及descendants要失效，再从当前输入重做，而不让旧完成结果自行取得新authority。
+
+[Commit-time authority的受限协议](https://arxiv.org/html/2609.31490v1)进一步将current-head比较、验证、effect identity预留和verdict/outbox提交绑定为admission线性化点；其后变更不自动倒推为旧intent非法，取消需新受治理决定。它缩短模型计算造成的staleness，却仍支付到external landing的dispatch窗口与协调成本；receipt可解除丢ack歧义，不使外部服务自然幂等。完整中介、readset完整和adapter去重仍是前提，直接凭据bypass只能事后检测，quorum故障也会停进展。前提不满足时拒绝/暂停/人工reconcile，不能让缓存权限或本地fallback升级为当前许可。<!-- source-family:SF-2026-ARXIV-2609-31490 -->
 
 ## Feedback 与演化
 
@@ -946,6 +1001,10 @@ Agent 能力不仅由 weights 决定，也由生成任务、环境状态、tool 
 
 <!-- source-family:SF-2026-ARXIV-2607-25825 -->
 
+失败规则上线前，还应把“适用什么任务”“在哪个失败状态触发”“是否改变目标过程”“最终 outcome 是否改善”分开冻结和计数。Eligibility 可依 task description 注册，runtime gate 再检查实际 history，并限制否决/提示次数和 release 条件；最终 verifier 独立判断交付。以相同触发时点的 sham 提醒作对照，才更接近区分规则内容与仅仅打断执行的效果；看到 agent 遵守 procedure 不等于原缺能力被补齐，更不等于取得发布授权。
+
+[FIRE 的受限五臂对照](https://arxiv.org/html/2609.26048v1)保留 eligible 与 silent 任务的不同分母，silent baseline 更容易，不能把交互当完整因果分解；deny 的 sham 也没有相同否决权限，主要差额的统计不确定性仍在。目标行为分析排除特定任务、执行了目标行为仍可能不通过，说明 procedural slip 与 capability deficit 须分别诊断。注册专家时间、更广触发的成本、provider drift 和缺失任务增加验收负担；规则不适用、收益未稳定或风险高时保留静态 workflow、独立 outcome gate 与人工确认，不从局部失败修复推通用可靠性。<!-- source-family:SF-2026-ARXIV-2609-26048 -->
+
 ### Sandbox 预热只能由 Tool Intent 生成 proposal
 
 按真实 tool call 才创建 sandbox 最易保证权限，却把启动延迟放进 Agent critical path。runtime 可根据生成中的 tool intent 预测 sandbox/image/resource，提前创建可取消的低权限实例；canonical tool call 到达后，policy 再校验 identity、权限和参数并提交绑定，预测错误则回收。
@@ -1018,6 +1077,12 @@ Agent 修改自身规则、skill 或 workflow 前，不仅要保存旧状态，�
 Skill 被写入或检索命中，只说明它成为候选能力；执行前仍要验证当前主体、参数、环境、版本和副作用预算。平台应分别管理 skill authoring / promotion 与 runtime admission，并保留调用后的 postcondition。合并两道 gate 会让历史上“看起来有用”的 procedure 在新上下文中自动获得执行权。
 <!-- source-family: arxiv:2608.12851v1; semantic-body-binding: skill-lifecycle-dual-gates -->
 
+Runtime admission 还须区分“语义上相关”与“在**当前模型、状态和任务**下确实有边际效用”。离线保留同一任务、模型、解码、环境和 evaluator，仅切换目标 Skill 的 WITH/WITHOUT 执行，才有依据估计它使正确性、成本或风险改善还是恶化；线上只消费这种已校准证据作 Load/Abstain，不要求每次都跑两条轨迹。该分支以成对执行成本换来可拒绝无益 Skill 的控制权，但仍受检索召回、样本稀疏、模型迁移、工具版本与有效性漂移约束；无证据或环境已失效时，保守不加载或回退人工验证。SkillApt 的作者实验只在冻结的 SRA 子集和另行拟合的 SpreadsheetBench 诊断上支持选择性激活；观测到的相同准确率不构成统计等价，也不证明这个轻量估计器能迁移到新模型。<!-- source-family:SF-2026-ARXIV-2609-26863 -->
+
+多个 Skill/能力一起激活时，单项 WITH/WITHOUT 收益不能简单相加：一个能力可能补足另一项的前置条件，也可能重复占用上下文或互相干扰。集合选择应把当前任务阶段、已有激活集合、权限与 token/延迟预算放进同一个 state，估计**条件边际收益**后再提交组合；能力调用仍受各自 runtime gate 约束。CoCA 用条件 teacher 比较和学生集合策略探索这一分支，作者多模态 Agent 基准仅支持所测组合与成本设置，不证明对未见能力目录或生产环境的最优分配。组合证据不足时，回退小型人工 allowlist 与逐项验证。<!-- source-family:SF-2026-ARXIV-2609-27869 -->
+
+Skill 退役还要把“删后能完成授权任务”与“删后仍守住权限边界”做成两张独立证书。只在合法任务上测 utility，会把从未变化过的 principal、permission 或物理状态条件误认为冗余；应固定请求的 action/effect，仅翻转授权或状态 predicate，分别核查 proposal、sink decision 与真实 effect，才有依据在**所测状态和完整中介的 sink**内有条件批准退役。匹配反事实审计提高测试与环境建模成本；未测谓词、旁路或更长观察窗都不能由这张证书覆盖，前置条件无法完整枚举时应保留旧条款或在 effect-time 强制拒绝。作者 12 个受限 bundle、四种模型配置显示多数 procedure 可以大幅裁剪而仍通过授权任务，却暴露 protected effect；单条只读 camera 路径也不证明真实物理安全。<!-- source-family:SF-2026-ARXIV-2609-29543 -->
+
 ## 小结
 
 Agent Platform 不是另起一套基础设施，而是在 AI Platform 上增加有状态、可行动、可恢复的 runtime。它让 Prompt、Context、RAG、Memory、Tools、Planning、Reflection、Workflow、Multi-Agent 和 MCP 进入同一 identity、policy 和 evidence graph。
@@ -1056,6 +1121,12 @@ versioned、addressable 且 dependency-aware 的 durable state，并声明 autho
 <!-- semantic-body-binding:SF-INTERMEDIATE-ARTIFACTS-AS-FIRST-CLASS-CITIZENS-A-DATA-MODEL-FOR-DURABLE- -->
 
 ## Review notes
+
+- `SF-2026-MOONSHOT-KIMI-CLI-1.39.0` — Daily `2026-04-25`；官方 [release 1.39.0](https://github.com/MoonshotAI/kimi-cli/releases/tag/1.39.0)、[PR #2044](https://github.com/MoonshotAI/kimi-cli/pull/2044) 与该 tag 的 [`skill/__init__.py`](https://github.com/MoonshotAI/kimi-cli/blob/1.39.0/src/kimi_cli/skill/__init__.py)、[`config.py`](https://github.com/MoonshotAI/kimi-cli/blob/1.39.0/src/kimi_cli/config.py)、[`soul/agent.py`](https://github.com/MoonshotAI/kimi-cli/blob/1.39.0/src/kimi_cli/soul/agent.py) 支持默认 scope 顺序、同名 first-win、显式目录 override 与 prompt 组装。正文仅吸收获胜 Skill 身份绑定到 run 的条件机制；未运行测试或生产调用，不把 Project 优先解释为可信优先，也不从 `skip_yolo_prompt_injection` 推出 effect 授权变化。写前非作者采用核见当日 `V3_APR01_KIMI_139_INDEPENDENT.md`；root 复核 exact tag、实际正文及相邻段后写后通过，记录于 `V3_ROOT_KIMI_139_WRITE_AFTER.md`，不等于本日整日Gate。
+
+- **Symphony（OpenAI，2026-04-27；Status: Draft design evidence）**：官方发布及嵌入 Draft v1 SPEC §1–3、§8.2–8.5、§9 支持 issue/tracker 当前状态与单次 run/session/PR 的权责分离、单 issue claim/工作区、stall/retry 和每 tick reconciliation，以及成功 run 可交接 `Human Review` 而非 `Done`。正文将其作为条件性 Agent Platform 机制；公开文本不证明强 sandbox、外部副作用 exactly-once 或因果产能收益。https://openai.com/index/open-source-codex-orchestration-symphony/
+
+- **SF-2026-ARXIV-2604-22750（Status: Experimental）**：exact-v1 §2、§6–7 的八模型 OpenHands/SWE-bench Verified 每题四次执行、每题三次 pre-run 自估，最高输入/输出 Pearson 约 .38/.39，部分估算开销高于任务成本两倍；整段对话历史保留不压缩。正文只吸收 pre-run 粗信号与 runtime meter/hard cap 的分权，不把相关性当逐任务校准、硬预算保证、任意 Agent 的成本分布或统一价格结论。https://arxiv.org/html/2604.22750v1
 
 - **Irreversibility Budget（arXiv:2609.00275v1；Status: Experimental）**：§3–4 支持由可信 effect/pricing 层执行层级 reserve/commit 与宣告额度约束；§5 为构造采购模拟、公开轨迹分析及单机内存微基准，§6 明确关联风险、定价与生命周期实现边界。正文不把 VaR 当默认安全定价，不采用模拟性能，也不宣称 durable ledger 或真实损失保证。https://arxiv.org/html/2609.00275v1
 
@@ -1140,14 +1211,10 @@ Primary-source 与官方入口：
 
 Review note：`SF-2026-ARXIV-2606-29472`；Method `https://arxiv.org/pdf/2606.29472v1 — §3 Agent-Computer Observation Interface: gated keyframes, audio transcription and persistent narration`；Evaluation `https://arxiv.org/pdf/2606.29472v1 — §4 DynaCU-Bench design; 5 Main results and ablations`；未证明边界 `https://arxiv.org/pdf/2606.29472v1 — §5 per-model component ablation: keyframe regression through image-token dilution`。
 
-### Source-family integration record
-
-
-
 <!-- june29-owner:AGENT-PLATFORM:start -->
-### 2026-06-29 约束变化与机制增量
+### 2026-06-29 来源范围补记
 
-**Owner-merged 正文（覆盖 `SF-2026-ARXIV-2606-29472`）。** 现有 Agent Platform 正文有 observation/action history 与 replay，却没有把连续 gated capture、audio transcript、persistent narration 与离散动作解耦成版本化 observation interface。 因此本次把这些增量合并到同一知识 owner：Computer-use 平台需要把 gated keyframe、audio transcript、persistent narration 与动作回执定义为版本化 observation interface，而不是让模型任意读取连续桌面流。接口 owner 管理 capture/retention 与 action-state identity；视觉 token 稀释或漏帧时回退高保真 capture/人工确认。 共同代价与回退边界是：只覆盖 DynaCU-Bench 浏览器任务与已测 CU models；Gemini 3 Flash 上 keyframe image-token dilution 已构成反例，因此 AOI 不是固定 bundle，也未证明桌面 OS、权限副作用或持续会议场景安全。退回高保真 capture 与人工确认。
+`SF-2026-ARXIV-2606-29472`：既有证据限 DynaCU-Bench 浏览器任务与已测 computer-use models；Gemini 3 Flash 的 keyframe image-token dilution 为负面切片，不支持固定 AOI bundle，也未证明桌面 OS、权限副作用或持续会议场景安全。原文 §3–5 与 per-model ablation 定位见上方 source-specific Review note。
 
 <!-- june29-owner:AGENT-PLATFORM:end -->
 
@@ -1227,3 +1294,5 @@ Review note：`SF-2026-ARXIV-2606-29472`；Method `https://arxiv.org/pdf/2606.29
 - `SF-2026-ARXIV-2607-25408` — Daily `2026-07-29`；primary `arXiv:2607.25408v1`；正文锚点“Context Assembly 的 Selection Probability 不是 Outcome Confidence”。
   exact-v1 只支持 729 个配置、单一 tool-use domain、Qwen2.5-7B 和 240 episodes 中的失配；未验证 proposed recalibration、经验稳定性或跨模型部署安全。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-25408:end -->
+
+- `SF-2026-ARXIV-2604-20987` — Daily `2026-04-24`；primary [COSPLAY v1](https://arxiv.org/html/2604.20987v1) §3、§4.1–4.3、§5.2、Appendix F；两侧可训练策略与 policy×bank 对照嵌入 Skill 更新→admission 主线。6分真实知识缺口深入；source→actual-owner 非作者采用复核通过（apr02/root），实际正文及相邻衔接写后非作者复核通过（root）。六游戏8B、训练成本不匹配及检索奖励粒度差异保留，未复现实验。

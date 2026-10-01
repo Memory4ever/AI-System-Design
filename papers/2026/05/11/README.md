@@ -8,11 +8,11 @@
 
 ## 1. 结论
 
-本轮严格只执行 `V3_FRESH_NONAUTHOR_SCREENING_REPAIR_QUEUE_20260915.md` 点名的 28 项，没有扩窗、扩来源或重扫其余 identity。A 组 18 项全部恢复 retained，并逐项完成 official arXiv HTML exact-v1 的 method/evaluation/non-proof 定位；B 组 10 项也全部恢复 retained，因为逐项旧证据与当前 owner 对照仍通过 contribution gate，不能用 generic closure 回退。direct 算术现冻结为 `635 = 102 retained + 533 pre-denominator closure`，整体为 `826 = 102 + 533 + 191`。
+本轮严格只执行 `V3_FRESH_NONAUTHOR_SCREENING_REPAIR_QUEUE_20260915.md` 点名的 28 项，没有扩窗、扩来源或重扫其余 identity。A 组 18 项全部恢复 retained，并逐项完成 official arXiv HTML exact-v1 的 method/evaluation/non-proof 定位；B 组 10 项也全部恢复 retained，因为逐项旧证据与当前 owner 对照仍通过 contribution gate，不能用 generic closure 回退。后续撤回清理后，direct 算术现为 `635 = 101 retained + 534 pre-denominator closure`，整体为 `826 = 101 + 534 + 191`。
 
-102 个候选均有 exact-v1 Evidence Review；Books 判断重冻为 42 Integrate、58 No Change、2 仅报告。42 个 Integrate 均已存在于当前 Books 正文：既有 26 项保留此前写后复核，本次恢复的 16 项已由 root 按唯一 owner 完成写回并通过 fresh non-author 逐项语义终审。`2605.06690` 的 typed epistemic stopping 与 `2605.07443` 的任意块 KV 复用/分层存储/position-conditioning 修复已由当前 Books owner 完整承载，A 组恢复 retained 不等于强制制造重复正文；B 组 10 项均给出命题级 No Change 对照。
+101 个当前有效候选均有 exact-v1 Evidence Review；Books 判断现为 42 Integrate、57 No Change、2 仅报告。42 个 Integrate 均已存在于当前 Books 正文：既有 26 项保留此前写后复核，本次恢复的 16 项已由 root 按唯一 owner 完成写回并通过 fresh non-author 逐项语义终审。`2605.06690` 的 typed epistemic stopping 与 `2605.07443` 的任意块 KV 复用/分层存储/position-conditioning 修复已由当前 Books owner 完整承载，A 组恢复 retained 不等于强制制造重复正文；B 组 10 项均给出命题级 No Change 对照。`2605.06850` 后续被 arXiv 标记撤回，已从候选、评分与采用链路清除。
 
-Daily 已完成。未参与本次作者返修与 root 写回的 fresh non-author reviewer 复核了 28 项 screening repair、102 项集合与 Evidence、191 项 owner-day isolation，以及 42 个 Integrate marker；对 16 个新正文逐项核验真实语义与相邻衔接。denominator、Evidence、Books 与独立终审均无剩余可执行项。
+Daily 已完成。未参与本次作者返修与 root 写回的 fresh non-author reviewer 复核了 28 项 screening repair、撤回清理前的 102 项集合与 Evidence、191 项 owner-day isolation，以及 42 个 Integrate marker；对 16 个新正文逐项核验真实语义与相邻衔接。后续撤回的 `2605.06850` 已按合同从正面链路清除；当前 denominator 为 101，其余 Evidence、Books 与独立终审结论不变。
 
 ## 2. 来源覆盖
 
@@ -33,7 +33,7 @@ Daily 已完成。未参与本次作者返修与 root 写回的 fresh non-author
 | SRC-BAIDU-ERNIE | ERNIE Blog；相邻事件 05-09 08:00+08 | 已检查 | 早于本窗，不重复 |
 | SRC-XIAOMI-MIMO | MiMo Papers 与 Blog 历史入口 | 受阻 | Papers 可排除；Blog 缺稳定历史时刻；隔离 |
 | SRC-MINIMAX | Research/Blog；相邻事件 03-18 与 05-26 | 已检查 | 未见本窗事件 |
-| SRC-ARXIV | 冻结 826 identity：635 official-announcement direct + 191 owner-day recovery；191/191 已绑定官方 abs version/history/Comments；102 candidate exact-v1 Evidence Review | 已检查 | 1 项 current withdrawal 已关闭；6 项 later revision signal 归属后续事件日，不冒充本窗 revision |
+| SRC-ARXIV | 冻结 826 identity：635 official-announcement direct + 191 owner-day recovery；191/191 已绑定官方 abs version/history/Comments；当前 101 candidate exact-v1 Evidence Review | 已检查 | 2 项 current withdrawal 已关闭；6 项 later revision signal 归属后续事件日，不冒充本窗 revision |
 
 ## 3. 候选与判断
 
@@ -55,7 +55,6 @@ Daily 已完成。未参与本次作者返修与 root 写回的 fresh non-author
 | [Conformal Agent Error Attribution](https://arxiv.org/html/2605.06788v1) | 2026-05-11T08:00:00+08:00 | Agent 故障定位可以输出带有限样本 coverage 的连续回滚区间，而不是未经校准的单点 culprit。；2 + 2 + 2 = 6 | 深入完成 | 整合：`PLATFORM-EVALUATION-SYSTEM`，[66-evaluation-system.md](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)；已存在 Books 正文 |
 | [Towards Security-Auditable LLM Agents: A Unified Graph Representation](https://arxiv.org/html/2605.06812v1) | 2026-05-11T08:00:00+08:00 | Agent 审计图必须同时表达静态 capability base 与动态 semantic state，并保留二者之间的数据、控制与权限传播路径。；3 + 2 + 2 = 7 | 深入完成 | 已有覆盖：`PLATFORM-TRACE`，[69-trace.md](../../../../books/part-06-ai-infrastructure/69-trace.md) |
 | [AGWM: Affordance-Grounded World Models for Environments with Compositional Prerequisites](https://arxiv.org/html/2605.06841v1) | 2026-05-11T08:00:00+08:00 | World Model 除预测 next state，还必须显式维护 action prerequisite 与动态 affordance state。；2 + 2 + 2 = 6 | 标准完成 | 已有覆盖：`MULTIMODAL-WORLD-MODELS`，[25-multimodal-world-models.md](../../../../books/part-03-multimodal-world-models/25-multimodal-world-models.md) |
-| [How to Compress KV Cache in RL Post-Training? Shadow Mask Distillation for Memory-Efficient Alignment](https://arxiv.org/html/2605.06850v1) | 2026-05-11T08:00:00+08:00 | 训练 rollout 使用压缩 KV、learner 使用 dense context 会形成隐藏的 state-policy mismatch，而不仅是普通推理近似误差。；3 + 2 + 3 = 8 | 深入完成 | 已有覆盖：`TRAIN-RLHF`，[31-rlhf.md](../../../../books/part-04-training-system/31-rlhf.md) |
 | [Dataset Watermarking for Closed LLMs with Provable Detection](https://arxiv.org/html/2605.06865v1) | 2026-05-11T08:00:00+08:00 | 闭源模型的数据使用审计可以把 dataset-level statistical carrier 与黑盒生成输出的检测统计绑定，但检测只提供 provenance evidence，不等于逐样本或法律归因。；3 + 2 + 3 = 8 | 深入完成 | 已有覆盖：`PLATFORM-SECURITY`，[72-security.md](../../../../books/part-06-ai-infrastructure/72-security.md) |
 | [Don't Retrain, Align: Adapting Autoregressive LMs to Diffusion LMs via Representation Alignment](https://arxiv.org/html/2605.06885v1) | 2026-05-11T08:00:00+08:00 | AR→Diffusion 转换可把语言表示与解码顺序分开：保留表示几何，重学 generation path。；3 + 2 + 3 = 8 | 深入完成 | 整合：`MULTIMODAL-GENERATIVE-PARADIGMS`，[24-multimodal-generative-paradigms.md](../../../../books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md)；已存在 Books 正文 |
 | [Not All Tokens Need 40 Steps: Heterogeneous Step Allocation in Diffusion Transformers for Efficient Video Generation](https://arxiv.org/html/2605.06892v1) | 2026-05-11T08:00:00+08:00 | 连续 diffusion token 的收敛速度不同时，可以按 token group 分配异质 step budget，并让 active queries 读取同步的全局 KV、未激活 token 用缓存 velocity 前进。；3 + 3 + 2 = 8 | 深入完成 | 已有覆盖：`MULTIMODAL-GENERATIVE-PARADIGMS`，[24-multimodal-generative-paradigms.md](../../../../books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md) |
@@ -355,20 +354,6 @@ Daily 已完成。未参与本次作者返修与 root 写回的 fresh non-author
 **Books 比较：** 现有正文已承载同一长期命题；保留本材料为受限证据，不重复追加。
 
 **最终处置：** 已有覆盖：`MULTIMODAL-WORLD-MODELS`，[25-multimodal-world-models.md](../../../../books/part-03-multimodal-world-models/25-multimodal-world-models.md)。
-
-### [How to Compress KV Cache in RL Post-Training? Shadow Mask Distillation for Memory-Efficient Alignment](https://arxiv.org/html/2605.06850v1)
-
-**采用命题：** 训练 rollout 使用压缩 KV、learner 使用 dense context 会形成隐藏的 state-policy mismatch，而不仅是普通推理近似误差。
-
-**机制与评价：** 论文将 sparse rollout 与 dense learner 的偏差识别为 RL 放大源，并用 shadow mask distillation 让训练感知部署时 mask；适用于 PPO/GRPO/Online-DPO 类 rollout pipeline。
-
-**证据位置：** Method：§3 Methodology；§3.4；Evaluation：§4.1–4.3；Table 3–4；Limitations / non-proof：§5 Limitations；§6。Artifact：not_required_for_adopted_claim; no implementation or reproduction claim adopted。
-
-**未证明、代价与回退：** Ch31 已将 rollout/training numerical execution identity 纳入 policy identity，Ch33 又明确 token positions、causal mask、memory revision 与 environment snapshot 必须一致；sparse-mask distillation 是该既有合同的实例，不需重复。
-
-**Books 比较：** 现有正文已承载同一长期命题；保留本材料为受限证据，不重复追加。
-
-**最终处置：** 已有覆盖：`TRAIN-RLHF`，[31-rlhf.md](../../../../books/part-04-training-system/31-rlhf.md)。
 
 ### [Dataset Watermarking for Closed LLMs with Provable Detection](https://arxiv.org/html/2605.06865v1)
 
@@ -1604,9 +1589,9 @@ Daily 已完成。未参与本次作者返修与 root 写回的 fresh non-author
 
 ## 5. 缺口与下一步
 
-1. screening denominator 已按有界 28 项返修并冻结：`826 = 102 retained + 533 direct closure + 191 owner-day isolation`；没有重开 11 个 DataCite isolation control，也没有扩窗/扩源。
-2. 102/102 retained 已有 exact-v1 Evidence Review 与 Books comparison；本轮无材料 blocker。
-3. Books 当前为 42 Integrate / 58 No Change / 2 仅报告；42 个 Integrate 已写回并通过 marker、owner、placement 与语义终审，Books pending 为 0。
+1. screening denominator 已按有界 28 项返修并冻结；后续撤回清理后当前为 `826 = 101 retained + 534 direct closure + 191 owner-day isolation`；没有重开 11 个 DataCite isolation control，也没有扩窗/扩源。
+2. 101/101 当前有效 retained 已有 exact-v1 Evidence Review 与 Books comparison；本轮无材料 blocker。
+3. Books 当前为 42 Integrate / 57 No Change / 2 仅报告；42 个 Integrate 已写回并通过 marker、owner、placement 与语义终审，Books pending 为 0。
 4. 来源表中的动态历史目录限制是本窗终态保留项：不支持正面证据、Books 或无遗漏断言，也不支持性能/安全保证；定点重开条件是取得相应官方日级归档，届时只重开受影响的来源槽位，不重跑已冻结的 arXiv 分母。
 5. 后续事件日 owner 继续分别处理 `2605.06738`、`2605.06772`、`2605.07210`、`2605.07527`、`2605.07818`、`2605.08051` 的官方后续修订信号；它们不计作 2026-05-11 的新 revision event，也不阻断本窗终态。
 
@@ -1616,7 +1601,7 @@ Daily 已完成。未参与本次作者返修与 root 写回的 fresh non-author
 
 结论：通过
 
-28 项 screening repair 的准入/反例边界、102/102 exact-v1 Evidence、16 个新正文与 26 个既有 Integrate binding 均通过终审。16 个新正文真实包含旧路径、约束变化、机制与 state/control ownership、trade-off、failure/fallback、证据边界和相邻段衔接；42 个 Integrate marker 均唯一并位于 owner 主 `## Review notes` 前。完整记录见 [fresh non-author final Gate](../_sources/daily-20260511/V3_FRESH_NONAUTHOR_FINAL_GATE_REVIEW_102_20260915.md)。
+28 项 screening repair 的准入/反例边界、撤回清理前的 102/102 exact-v1 Evidence、16 个新正文与 26 个既有 Integrate binding 均通过终审。16 个新正文真实包含旧路径、约束变化、机制与 state/control ownership、trade-off、failure/fallback、证据边界和相邻段衔接；42 个 Integrate marker 均唯一并位于 owner 主 `## Review notes` 前。完整历史记录见 [fresh non-author final Gate](../_sources/daily-20260511/V3_FRESH_NONAUTHOR_FINAL_GATE_REVIEW_102_20260915.md)；当前有效候选为 101，被撤回项不再属于正面证据。
 
 机器校验只能证明 JSON、评分、分母算术、版本 basis 引用、唯一 owner、链接字段与 Markdown 结构一致；不能替代独立语义复核。
 

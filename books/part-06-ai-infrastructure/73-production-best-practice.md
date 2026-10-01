@@ -277,6 +277,12 @@ Production 从固定 traffic sweep 与人工配置演进到 telemetry→proposal
 
 Production readiness 是持续运行的证据与控制闭环，不是上线前一次 checklist。Part VI 到此完成从工具到平台的推导：统一对象、治理 workload 与 GPU、交付服务、建立 evidence，再用成本、租户和安全约束平台行为。
 
+### Accelerator Silent Corruption 需要轻量检测与可界定恢复
+
+传统 fail-stop 监控能发现设备退出，却看不到量化 integer arithmetic 或浮点 GEMM 静默产生的错误。全量重算最可靠但代价高；更细的 production 分支分别为整数路径维护 syndrome state、为浮点路径 sketch 误差而不是完整 product，在检测到可恢复模式时局部修复，超出 code/sketch 能力时再触发重算、摘除设备或回滚。检测器只拥有 corruption evidence，不能自行宣告模型输出语义正确。<!-- source-family:SF-2026-ARXIV-2609-19743 --><!-- source-family:SF-2026-ARXIV-2609-19758 -->
+
+轻量恢复用额外校验计算、metadata 和实现 TCB 换取更低重算成本；碰撞、多点错误、kernel 变化和对抗 fault 会产生漏检或误修。作者实验只覆盖披露的 quantized integer/GEMM、fault model 与硬件设置，不证明任意 accelerator 或生产 silent-data-corruption rate。高风险结果、syndrome 不可解或 sketch residual 超界时，应丢弃本次计算并回退完整重算与硬件隔离。
+
 ## Review notes
 
 - **CB-VER（arXiv:2604.03539v1；Status: Experimental）**：exact-v1 支持 converges-before graph、组件 interface composition 与 CHC-based synthesis 在其 benchmarks 中的可行性；不证明未建模环境、实际实现或一般 AI 平台控制面的端到端正确性。https://arxiv.org/abs/2604.03539v1

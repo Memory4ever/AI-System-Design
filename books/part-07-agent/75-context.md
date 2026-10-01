@@ -91,6 +91,10 @@ collect candidates
 
 排序不能只看 embedding similarity。Authoritative policy、current workflow state 与 user intent 可能优先于语义相近文本。冲突内容应保留来源和时间，不应由摘要器静默合并成一个“事实”。
 
+Assembly 不一定只有检索或手写规则：也可以训练一个独立的 Context generator，为当前任务生成执行提示，同时冻结真正执行工具的 Agent。训练时先对同一任务取得成功与失败轨迹，用对比 reflection 形成监督样本，再以冻结执行器的结果奖励更新 generator；部署时生成的新提示进入本次 Context。这与检索历史 Memory 不同：经验主要改变 generator 参数，executor 的参数不随该训练更新，生成提示也不因此成为事实或授权。<!-- source-family:SF-2026-ARXIV-2604-07487 -->
+
+这种分责让 Context 构造本身可以优化，却增加离线多轨迹采集、reflection、训练和每次调用的生成成本，并可能学到执行器或环境专属捷径。作者在 AppWorld 等任务中报告了受限收益，但没有包含 RL-only 的完整因子对照，也没有把额外轨迹与运行成本全部匹配，不能据此证明每一阶段必需或普遍比检索更省。任务或工具接口变化后，需要重新验证 generator—executor 配对；训练数据不足、需要严格来源可追溯性或执行器频繁更换时，固定 assembly、原文检索与已有 Memory 仍是合理路径。
+
 ## Context Serving 是派生视图生命周期
 
 复杂 Agent 不一定从原文临时组装每次 Context。以代码仓库为例，同一 commit 可以派生
@@ -162,6 +166,32 @@ derived claim，不是新的 authoritative fact。它以额外 tool calls、stat
 管理换取更细的 attention control。短任务和高保真要求下，直接保留原文仍合理；显式 state tools 只有在 source
 link、visibility scope、lease、rollback 与 durable-delete policy 分开时才不会把“忘记看见”误写成“已经遗忘”。
 
+### 视觉 Artifact：持久存在不等于进入本次可见上下文
+
+文本工具结果通常还能以摘要和引用表示；crop、mask、overlay 等中间视觉证据却不能把像素完整线性化为文字。
+将每张生成图像自动追加到后续请求，在短轨迹里最简单，也让模型始终看得到它；轨迹变长后则重复支付视觉 token，
+旧图还可能淹没当前需要比较的细节。相反，只把图像存成文件而不提供可寻址入口，模型又无法主动找回它。
+可把这两种状态分开：工具生成的图像进入带稳定 ID、来源与父子关系的 artifact ledger；Context renderer 只把
+被显式选入有界 active slots 的像素载荷编入下一次请求。生成图像退出 slot 后可驱逐其 inline payload；
+原始输入和文件按各自保留策略继续可回读，因而“看不见”不等于“证据不存在”。这将视觉证据生产交给工具、可见性选择交给
+Agent policy、身份和恢复交给 runtime，而不是让一次 tool observation 自动决定永久上下文占用。
+
+有界可见集主要控制重复注入成本，不保证模型会选对或正确解释图像；选择错误可让原本答对的请求退化，
+工具和多轮调用也可能比单次 VLM 回答更贵。短任务、图像很少或不信任模型选择时，append-only 仍是合理基线。
+一项 static-image sandbox 实验的 compiler-matched 对照支持“有界保留”降低 token 用量，但同为两个可见槽时，
+显式选择相对自动保留最近两图的准确率差异未达显著；其本地延迟只限论文披露的单并发推理设置，
+不能推广到视频或生产 SLO。<!-- source-family:SF-2026-ARXIV-2609-24362 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-14029:start -->
+派生视觉接口不只用于原生图像，也能承载旧文本 observation：逐项渲染较老的工具结果，actions 与近期 observation 仍保留文本，而不是将全部历史改成像素。它改变 consumer 的输入接口，不改变证据身份；搜索服务已生成的摘要，渲染后仍是摘要，不会恢复成原网站事实。原文本、引用与恢复入口仍须保留，stale/fresh 分界与表示选择共同决定当前可见视图。
+
+POINTS-Seeker exact-v1 需要训练 consumer 适应混合表示，并支付渲染、图像编码与原文恢复成本；有限对照中全部转图像反而较差，token 减少不能直接外推为端到端时延或证据无损。长轨迹与模型、任务变化须重测；短轨迹、逐字协议或适配不足时，直接携带文本仍合理。这是与 active slots 并行的表示分支，不是删除原始 artifact 的授权。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-14029:end -->
+
+旧tool observation也可压成soft tokens而不是图像，保留native tool envelope、assistant actions与近期原文本；这只是读取接口，逐字工具参数仍应回读原source。训练同一个adapted decoder读compressed view时，还需另在full-text view对原base分布作anchor：前一项教新表示读取，后一项限制旧接口行为漂移，不能由重建loss好推出工具策略没变。两个view按assistant-token身份而非压缩后的绝对位置对齐；若只缓存top logits与一个tail bucket，约束的是粗化分布，不是全部tail行为。
+
+[受限latent-observation对照](https://arxiv.org/html/2609.31430v1)中，更好literal recall或更强teacher仍可能降低任务成功，默认近期窗口也比uncompressed base退步。扩大硬文本窗口改变quality、encoder驻留和KV预算；observation由text移成soft时还会使旧prefix从变更点失效，encoder缓存与decoder prefix复用要分别计账。受限窗口/并发优势相对同adapted fulltext，且排去最后长任务tail，不能叫全轨迹总成本或可靠性保证。Anchor是软约束而非task certificate；无足够behavior回归、原文可完整驻留或必须逐字时，保留原base/fulltext、较大近期窗口和可恢复source，再按实际task/latency预算选择。<!-- source-family:SF-2026-ARXIV-2609-31430 -->
+
 Context 也可能成为可迭代的 derived state，而不是一次 assembly 的只读结果。多模态 in-context
 classification 的一个实验性分支，固定未标注 demonstrations，维护一组 pseudo-label，并用 leave-one-out
 方式反复重标：
@@ -214,7 +244,17 @@ C'_t = compress(C_t, task, budget)
 
 目标不是最短，而是保留对未来决策充分的信息。摘要可能丢失 exception、否定、数字和 provenance；递归摘要还会累积漂移。
 
-“充分”必须相对于未来任务定义，而不是压缩器自认为语义相似。跨 session handover 可以按三层保存：必须逐字保真的决策、约束与授权；对已知 future-query family 足够的统计量；以及无法安全归约、可供以后回读的原始 observation。理论上最小状态只需保持未来 target distribution，但开放 Agent 通常不知道未来 query，也无法证明自动摘要已经达到 predictive equivalence，所以高风险或任务未知时不能删除原文。
+固定周期压缩在 observation 短且预算宽松时易于重放；但若一条长工具结果即将进入窗口，先追加再裁剪可能已经溢出，盲目提前全量压缩又会丢掉仍有余量时可保留的证据。更精细的 admission 顺序是先知道待载入 observation 的长度和当前 headroom，再决定不压缩、只聚合部分旧片段，或在预算紧张时聚合更多历史，最后才载入正文。Context runtime 必须拥有容量检查与最终 commit，模型的聚合选择不能越过原文保留、policy pinning 和可回读引用。<!-- source-family:SF-2026-ARXIV-2604-01664 -->
+
+这种延迟载入以额外的计数、决策和压缩工作换取更少的无谓信息损失，也把长度估计错误、片段级摘要失真与压缩耗时带进关键路径。作者仅在组合问答与长程网页搜索设置中测试了预算条件化、分段聚合及渐紧预算训练；它不证明训练出的策略在任意工具输出、长窗口或生产 SLO 下最优。短轨迹、原文可完整驻留、长度未知或高风险证据不宜压缩时，固定保留余量、拒绝过长 observation 或外置原文并按需回读仍是合理分支。
+
+压缩准入还要算总时间，而不只是比较压缩前后的 token 数：同一请求上，`T_compressor + T_target(compressed) < T_target(original)` 才有时延收益；还要同时验实际压缩率、答案质量和压缩器的显存占用。短输入、便宜的目标模型或较慢的压缩器会使前处理吞掉 prefill 节省；长输入、可摊销的压缩结果或受限显存则可能改变选择。这个 break-even 随目标模型、硬件、长度、批量与并发重算，不能用单一压缩比例作为通用策略。现有作者实验只覆盖所测 LLMLingua 分支、模型/设备与任务，未建立生产尾延迟或任意证据保真保证。<!-- source-family:SF-2026-ARXIV-2604-02985 -->
+
+重复日志还可以走另一条分支：不概括含义，而把重复子串替换为短标记并附字典。此时应把字典、标记和说明一并计入目标 tokenizer 的输入预算，并区分两个接口：软件按规则还原原文，以及模型直接在编码态完成任务。前者可以是确定性的 codec 合同，后者仍依赖模型是否正确查表、保持跨行关系并执行目标分析；可逆编码本身不会把这种能力一并交付。<!-- source-family:SF-2026-ARXIV-2604-13066 -->
+
+因此，解压 exact match、字符相似度与目标任务正确性要分开验收，不能把较高的字符串重建分数当作日志诊断或跨记录推理的保证。作者的重复日志实验支持字典表示具有压缩空间、所测模型能够在部分协议下重建文本，但没有验证目标 analytics，也没有证明解压是所有语义任务的能力下界。重复度低、字典开销大、目标任务依赖未验证的编码态操作时，原文或先由软件解码再调用模型仍合理；高风险记录的原始 artifact 和逐字约束不能因 codec 可逆而移交给模型猜测。
+
+"充分"必须相对于未来任务定义，而不是压缩器自认为语义相似。跨 session handover 可以按三层保存：必须逐字保真的决策、约束与授权；对已知 future-query family 足够的统计量；以及无法安全归约、可供以后回读的原始 observation。理论上最小状态只需保持未来 target distribution，但开放 Agent 通常不知道未来 query，也无法证明自动摘要已经达到 predictive equivalence，所以高风险或任务未知时不能删除原文。
 
 这种分层用较小 handover state 换 writer bias、任务分布假设和错误归约风险；短会话、存储便宜或证据不可约时，完整 transcript 仍更透明。`arXiv:2608.14528v1` 在 exogeneity 等假设下给出 deterministic sufficient handover 的理论刻画及 Gaussian/nonparametric regression 上下界，不证明开放 Agent 能自动知道未来问题、可靠抽取最小状态或忠实保留决策。
 
@@ -253,6 +293,10 @@ applicability、expiry、source、compactor / retriever version 与恢复引用�
 retrieval 未命中，都应作为 correctness failure，而不是普通 relevance loss。类型化策略提高 rule retention，却
 引入 misclassification、规则复制膨胀、stale scope、重复冲突和额外存储。事实类型无法可靠判断、原文很短或
 审计要求完整 replay 时，保留未压缩 Context 仍更合适。
+
+分型之后，还需要决定有损视图在什么时候生成。每次预算告急才调用模型压缩，实现直接，却把压缩延迟、生成随机性与本轮选择耦合在一起。一个替代分支在 ingestion 或原文更新时，预生成完整、压缩、结构化和引用等多分辨率视图，全部绑定同一原文 ID、revision、scope 与最低 fidelity；组装 Context 时只选择已经存在的视图。选择器先装入所有必须保留对象的最低合格表示，再用剩余预算按增量 utility/token 升级。若最低集合本身放不下，应暴露预算压力、缩小任务或回读外部状态，不能为了让选择成功而悄悄降低安全规则的保真要求。<!-- source-family:SF-2026-ARXIV-2604-10352 -->
+
+这把昂贵的视图生成移出压力时刻，但增加预计算、存储与更新失效成本；原文或 scope 改变后，旧视图不能继续冒充当前版本。贪心 utility 是选择代理，不证明最佳任务质量，schema 合格也不证明内容真实。受限 replay 与单 session 实验支持这一机制的可实现性，没有证明相对同样无故障的 LRU 更优的任务质量、跨 session 保真或生产 SLO。短会话、原文频繁变化或难以定义最低 fidelity 时，按需压缩与完整原文回退仍更简单；可变原文和派生视图的提交权限由下文的 registry/commit 边界负责。
 
 一项 2026 年研究在多个公开语料与作者构造的 Agent 配置上观察到递归统一压缩会快速损失 safety rule，并以
 type-specific compact / decompose / retrieve 改善 retention。该证据说明“不同 correctness contract 需要不同
@@ -422,9 +466,21 @@ ranking confidence 冒充事实充分性。
 大型代码库的 Context 恢复不应把零散命中直接塞进 Prompt；系统先重建与任务相关的跨文件 path，再对 path 做压缩、加载和有效期管理。持久 workspace 保存恢复结果，Context 只投影当前需要的部分；path 置信不足时回退更宽检索或局部代码探索。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-22906:end -->
 
+### Scratchpad 可读不等于被后续计算忠实使用
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-29522:start -->
-Scratchpad 不能仅按可见文本保存；因果干预结果应把其中哪些 register 实际驱动后续输出记录成 request-local diagnostic state。该 probe 只拥有观测/路由权，干预不稳定时回退原始 scratchpad 与外部 verifier，不能据此删除未被识别的约束。
+保存 scratchpad 文本可以回放模型写过什么，却不能单凭可读性判断哪些 register 实际驱动了后续输出。因果干预结果应作为 request-local diagnostic state 保存，把可见内容与被检验的计算依赖分开；probe 只拥有观测/路由权，不能据此删除未被识别的约束。
+
+这种诊断需要额外干预与校准，结论也受任务和模型限制：现有证据只在 Q8/D8 合成 transition task、Qwen2.5-Coder-7B 与 Mistral-7B-v0.3 上支持特定 written state 被因果读取，并未证明 scratchpad 的其他 token、自然语言推理或真实 Agent memory 都忠实。干预不稳定或超出这些条件时，应保留原始 scratchpad 与外部 verifier，而不是让 probe 取代事实验收。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-29522:end -->
+
+### 可编辑 Trace 仍是派生控制输入
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-13706:start -->
+可见推理 trace 还可以作为可编辑的 control artifact，而不只是诊断记录。反馈可转为删除、修改或指导片段，抑制原 verdict/end-of-thinking 后从修改的 prefix 继续生成；它不同于追加整段旧对话再要求重答。编辑者只改变派生控制输入，原始来源与原 trace 继续保存，不能据此宣称已编辑模型真实内部思维或修复了事实；新的输出仍须独立验收。
+
+这条执行分支引入 editor/replay 调用、反馈误译和检索不充分的风险。Co-FactChecker exact-v1 的自动反馈可见 gold/rubric，真人评测只有2专家、3研究者及14 claims/3轮，不能采用普适严格改进理论。反馈不可信或需要完整审计时，append-only、原文回读与外部 verifier 继续合理，旧 verdict 消失不是正确性证据。这里编辑的是下一步生成条件，不是上一节诊断 probe 所观测的内部因果状态。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-13706:end -->
 
 ### Context 不只选择内容，也选择何时承诺
 
@@ -462,6 +518,10 @@ Context gathering 不应只把搜索历史压成摘要。Agent 要持有 predica
 
 长期有效的约束还应从自由文本摘要中分离成 versioned state，记录 scope、expiry、来源与当前执行 frontier。side channel 增加 schema 和迁移成本，但避免多轮 compaction 把强约束降成背景事实。低风险问答仍可使用普通摘要，外部 effect 越大，越需要 paired-state regression。
 
+压缩时机同样不是固定 token 阈值就能决定：如果任务还在搜证或等待工具结果，删除早期观察可能使下一步无法修正；当环境状态、未决约束与后续行动已达到可检查的 READY 条件，才允许提交一个更短的执行视图。触发器只提出压缩时机，Context owner 必须检验 pinned constraints、raw handles 和恢复路径；误报比延迟压缩更危险。StateComp 的作者受控任务显示 token 节省与平均回报接近的受限权衡，但若原始历史不可回读、跨模型/任务状态识别漂移，固定阈值、保留更多近期记录或暂不压缩仍更稳妥。<!-- source-family:SF-2026-ARXIV-2609-27298 -->
+
+即使删除时机合适，也不能把每段历史的“可删性”独立相加：两段分别可删的记录可能互为唯一备份，同时删除就会丢掉约束。更稳妥的对象是**实际提交的删除集合与保留下来的内容**。一个受限实现先在已完成轨迹上联合删除 protocol-valid 的 tool exchange/assistant blocks，以同一已记录下一步输出的 teacher-forced likelihood 差作离线风险标签；线上只用当前可见状态预测候选集合风险，保护近邻与固定约束，并在没有低风险集合时 abstain。它把单项排序改为集合级提交，但 learned risk 不是安全保证：teacher-forced 下一步与真实继续执行不同，误判、额外特征计算及不可恢复的原文删除仍需 raw fallback 和任务级回归。短会话或完整历史可负担时，保留原文仍是简单基线。<!-- source-family:SF-2026-ARXIV-2609-27276 -->
+
 <!-- source-family: arxiv:2608.06503v1; daily-trace: papers/2026/08/10/README.md; semantic-body-binding: context-compression-paired-state-regression -->
 
 ### 持久 Instruction 更新应先修改 Typed State，再重建文本 View
@@ -484,6 +544,12 @@ Typed state 与 status metadata 提高一致性，却增加 schema 演进、vali
 动态管理用更多 control calls 和 metadata 换适应性，也可能因错误摘要或自我强化删除关键证据。简单短任务仍适合固定窗口；验证失败、收益不明或原文不可恢复时，应拒绝 mutation 或回退最近 checkpoint。
 
 <!-- source-family:SF-2026-ARXIV-2607-23809 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2609-33672:start -->
+用户撤回错误主张或追加“重新回答”只改变当前指令，若带压力的历史仍送进模型，就没有恢复到clean证据状态。恢复验收应固定question与任务约束，分别比较保history的retraction/reset、去压力内容的summary/reconstruction和无压力clean分支，测撤回后错误主张的残余影响，而不是只看最后答案或有没有reset事件。Effective context是行为条件，不能假设一个已被清零的内部记忆变量。
+
+配对clean与history分支、保有用约束的重建增加调用与provenance成本，误删可能丢失合法任务状态。[Reset Is Not Recovery v1 §3–8/10](https://arxiv.org/html/2609.33672v1)只在有限多选题/option likelihood和templated history支持这一反例，不能分离用户压力与模型自己的旧回答坚持；aggregate恢复阈值也非逐item成功率。删除全文和gold证据是诊断上界，不是已解决的selective repair；开放生成、真实memory和retrieval需另验。低风险短会话可保简单reset，未证恢复时保留Unknown、隔离无支持主张或回可验证原始证据，不宣称更强instruction已清除污染。
+<!-- semantic-body-binding:SF-2026-ARXIV-2609-33672:end -->
 
 ### Context Optimization 可以主动取证，但不能自行改变事实权威
 
@@ -554,7 +620,30 @@ Context 是受约束的运行时 working set，不是无限知识仓库。好的
 更小状态改善长程交互成本，却可能丢失细节、错误主动化或把暂时偏好固化。作者实验只支持披露任务和训练流程；意图不确定、压缩回归或主动行为风险升高时，应回退 full/recent context，并采用静默或显式确认策略。arXiv:2605.23668v1
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-23668:end -->
 
+### Context Compression 要保留未来更新所需的区别
+
+只以“压缩后仍能回答当前问题”作为目标，在一次性问答中合理；长期 Agent 还会收到新 observation、纠错和目标变化，当前不重要的区别可能成为下一步更新的必要条件。压缩器因此要同时提交 current-answer sufficiency 与 future-update preservation：保留可恢复引用、未决分支和会改变后续 belief/action 的 distinctions，而不是把所有当下未使用的信息合并。<!-- source-family:SF-2026-ARXIV-2609-20045 -->
+
+保留未来可用性会降低压缩率，也无法穷举未知问题。作者结果只支持其任务和 future-query construction；高风险或未来需求不可建模时，应保留原始 archive、可逆摘要和按需回读，压缩视图不能取得事实 owner。
+
+### Context Selection 应从 Claim/Action Obligation 反推最小证据包络
+
+按相似度追加更多 token，可能仍漏掉决定能否行动的关键前提。更严格的路径先定义 claim 或 action obligation，再沿 derivation graph 选择覆盖其 closure 的最小 sufficient evidence envelope；包络不充分时状态保持 unresolved，不能用 context 更长冒充 assurance。<!-- source-family:SF-2026-ARXIV-2609-16302 -->
+
+该方法降低 context/cost，却引入 obligation discovery、schema/type 与 solver complexity。图不完整、obligation 不可信或行动风险高时，应回退更宽 evidence set、deterministic checks 或人工审阅；少量 preserved artifacts 与 synthetic 数据不证明自动发现义务。
+
 ## Review notes
+
+- `SF-2026-ARXIV-2604-10352`：[ClawVM v1](https://arxiv.org/html/2604.10352v1)，Daily 2026-04-14；§3、§5.2–5.3、§7。采用预生成多分辨率与 hard-minimum fit 的责任分离，不采用任务质量优于 LRU、schema 等于事实真或跨 session 无故障保证；写前必要 source→owner 与实际正文/相邻衔接写后独立核验通过（apr01），未复现实验。
+
+- `SF-2026-ARXIV-2604-13706`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2604.13706v1) §3.2、§6.3/7；trace-edit/continuation、oracle feedback 和有限真人评测边界保留。apr01 已独立核必要源→实际 owner，正文已写，root非作者实际正文与相邻衔接写后复核通过；未复现实验。
+- `SF-2026-ARXIV-2604-14029`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2604.14029v1) §3.6/§4/Tables2–4；旧文本逐项渲染、近期文本与 consumer 适配，all-image 反例保留。apr01 已独立核必要源→实际 owner，正文已写，root非作者实际正文与相邻衔接写后复核通过；未复现实验。
+
+- `SF-2026-ARXIV-2604-13066`（Status: Experimental）：[exact-v1 HTML](https://arxiv.org/html/2604.13066v1) §3.1–3.6 为子串/meta-token/dictionary 表示与含字典的节省条件；§4.2/§5.2–5.3、Tables1–2 区分模板解压 exact match 与算法压缩后的字符相似度，未评价目标 analytics；§7 的能力下界表述不作为保证采用。正文只吸收 codec reconstruction 与编码态目标任务的合同分离；2026-09-27 apr02 已实际重开必要官方v1、正文及相邻交接，非作者写后通过，未复现实验。
+
+- `SF-2026-ARXIV-2604-07487`（Experimental）：[exact-v1](https://arxiv.org/html/2604.07487v1) §4.1–4.3、§5 与 PDF Appendix A。同题六条轨迹用于 contrastive reflection；Qwen3-32B generator 经 SFT/GRPO，执行器冻结。AppWorld TestN 三次运行的 TGC/SGC、平均与 oracle pass@3 分开；没有 RL-only 完整因子对照，额外采集和在线 generator 成本未完全匹配。正文只采用参数更新 owner 与构造接口分离，不证明训练免成本、跨执行器无损或任意任务优于 RAG。
+
+- `SF-2026-ARXIV-2604-01664`（Status: Experimental）：[exact-v1 HTML](https://arxiv.org/html/2604.01664v1) §3.1–3.3 给出 observation 正文载入前的长度/headroom 状态、Null/Partial/Full 聚合及预算课程；§4.5 的 ablation 只支持作者组合问答/搜索与披露预算下的改进；Appendix A.1 承认稀疏延迟奖励和粗粒度 segment 的局限。这里吸收 admission/control 顺序，不把 GRPO 或作者性能数字写成通用部署结论。
 
 - `SF-2026-ARXIV-2606-22528` — primary `arXiv:2606.22528v1`；Method=`arXiv:2606.22528v1 §3 Compaction-Eviction Attack; §4 Constraint Pinning`；Evaluation=`arXiv:2606.22528v1 §5 Results and Robustness`；Non-proof=`arXiv:2606.22528v1 §6 Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 
@@ -592,13 +681,10 @@ Primary-source 入口：
 
 Review note：`SF-2026-ARXIV-2606-29522`；Method `https://arxiv.org/html/2606.29522v1 — §6 Mechanism and alignment interpretation; scratchpad intervention`；Evaluation `https://arxiv.org/html/2606.29522v1 — §5 Results`；未证明边界 `https://arxiv.org/html/2606.29522v1 — §Conclusion and intervention-identifiability scope`。
 
-### Source-family integration record
-
-
 <!-- june29-owner:AGENT-CONTEXT:start -->
-### 2026-06-29 约束变化与机制增量
+### 2026-06-29 来源范围补记
 
-**Owner-merged 正文（覆盖 `SF-2026-ARXIV-2606-29522`）。** 现有 Context 正文区分 raw evidence、derived view 与 compression fidelity，但没有验证 scratchpad register 是否被后续计算因果读取的 intervention contract。 因此本次把这些增量合并到同一知识 owner：Scratchpad 不能仅按可见文本保存；因果干预结果应把其中哪些 register 实际驱动后续输出记录成 request-local diagnostic state。该 probe 只拥有观测/路由权，干预不稳定时回退原始 scratchpad 与外部 verifier，不能据此删除未被识别的约束。 共同代价与回退边界是：只在 Q8/D8 合成 transition task、Qwen2.5-Coder-7B 与 Mistral-7B-v0.3 上证明特定 written state 被因果读取；显式 scratchpad 的其他 token、自然语言推理和真实 Agent memory 均未被证明忠实。probe 不稳定时保留原文本与外部 verifier。
+`SF-2026-ARXIV-2606-29522`：既有干预证据范围为 Q8/D8 合成 transition task、Qwen2.5-Coder-7B 与 Mistral-7B-v0.3 的特定 written registers；不覆盖显式 scratchpad 的全部 token、自然语言推理或真实 Agent memory 的忠实性。原文 §5、§6 与 Conclusion 定位见上方 source-specific Review note。
 
 <!-- june29-owner:AGENT-CONTEXT:end -->
 

@@ -97,6 +97,10 @@ p_theta(output | instruction, examples, query)
 
 从系统角度看，context 因此成为运行时状态与质量输入。prompt version、示例选择、retrieval、截断和上下文污染都会影响能力，必须像模型版本一样被评估和观测。
 
+Context 内的“学习”可以是一次 forward 中执行估计程序，不必是参数更新。一条受限构造先按 query 的局部几何拟合 tangent，再在稳定的局部坐标中聚合样本、求回归；ambient cutoff防止投影把远处样本伪装成邻居。这里局部sample mass、维度、smoothness、separation与扰动共同决定可估计尺度，算法还需要结构信息与数值guard，不能把它解释为任意预训练模型已经自动发现同一程序。
+
+构造出可实现的 comparator，与有限pretraining真正选到它，是两个问题。新任务prompt内的样本数限制该函数能被估计多准，独立训练任务数则约束选择程序的泛化；实现误差和near-ERM优化gap仍须另外计入。固定head的存在构造也可能随context增长workspace、width与数值范围；有限实验增加任务数时同时增加更新预算，且模型与理论构造不同。条件失配或无匹配机制证据时，继续以held-out任务和当前context协议验收，不从minimax或存在性定理推出任意LLM可靠学习。[构造与条件](https://arxiv.org/html/2609.31458v1) <!-- source-family:SF-2026-ARXIV-2609-31458 -->
+
 ## Post-training 把通用预测器塑造成可用接口
 
 预训练数据包含网页、代码、对话、文档等多种文本。一个只做 next-token prediction 的 base model 擅长续写，却不天然知道“用户问题应被直接回答”“危险请求应拒绝”或“输出必须满足某个 schema”。
@@ -298,6 +302,12 @@ depth / breadth scaling 获益，但“轨迹收敛”只说明内部动力学�
 外部 evaluator 不支持该结论，就回退固定推理预算、显式中间状态和可核验工具；受控模型与任务上的实验不能被
 外推为所有 LLM 都能靠更多采样获得可靠推理。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-21488:end -->
+
+### 涌现可以预警，但预警器不是能力证明
+
+只在某个 checkpoint 首次越过 benchmark 阈值后宣布“涌现”，会把能力形成、指标阈值和事后挑选混在一起。一个更可审计的分支先冻结候选内部机制、anchor、预测区间和 false-alarm gate，再用独立 seed 与后续 checkpoint 检查该信号是否早于行为跃迁出现。这样可以把部分能力跃迁从事后叙事改为带拒绝条件的预测任务，也让“预测失败”成为可记录证据。
+
+代价是需要 seed fleet、连续 checkpoint、预注册和足够多的负对照；内部 head 的形成也可能只是与能力共同变化，而不是能力的充分原因。合成 grokking、诱饵语言和有限公开 checkpoint 上的校准结果不能证明任意新能力都可预测，更不能把预测区间当作发布许可。无法复现 anchor、false-alarm 超界或任务定义漂移时，仍应回到直接行为评价与外部证据。<!-- source-family:SF-2026-ARXIV-2609-19000 -->
 
 ## Review notes
 

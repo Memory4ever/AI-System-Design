@@ -125,6 +125,12 @@ R_admit
 
 只测 idle model memory 会漏掉高峰 workspace；只按最大 KV 填满剩余 HBM，又会让下一次大 Prefill 或 collective 没有工作空间。
 
+### 生命周期还会改变片上 Memory 的保护成本
+
+上述分类不只决定容量何时释放，也可能决定存储保护需要持续多久。普通 SRAM/HBM 路径不要求 runtime 为每类 activation 单独选择刷新策略，因而易于验证；若边缘加速器以高密度 eDRAM 承载 workspace，统一刷新却会对短暂 Q/O 与长期 KV 支付同样的维持成本。一条条件分支同时按 lifetime 和 BF16 bit sensitivity 分银行：sign/exponent 保持标准刷新，短暂 Q/O mantissa 在已校准驻留时间内不刷新，长期 KV mantissa 则采用较宽但有限的刷新间隔。控制器拥有数据映射与刷新策略，模型执行仍须保持数值误差预算；“短命”并不允许同时放松敏感的 sign/exponent。<!-- source-family:SF-2026-ARXIV-2604-07396 -->
+
+它用分银行、bit 重组与硬件耦合换取刷新能耗的减少，并新增驻留时间低估、相关错误及精度格式变化的失效风险。现有证据来自 H100 上的 lifetime 测量、3T cell/DESTINY 模型和 BF16 随机故障注入，而非已制造 NPU 的端到端验证；部分任务准确率仍有微小退步。因而不能把 workspace 刷新收益写成整机能耗、安全或生产质量保证。实际驻留超出校准范围、错误分布不符或硬件不支持分段保护时，统一刷新和原有存储路径仍是更可靠的选择。
+
 ## 一个可用容量小例子
 
 假设一张 GPU 对当前进程可用 80 GiB：
@@ -197,7 +203,12 @@ goodput。复用身份仍由[第45章](45-why-kv-cache-speeds-up.md)定义，是
 [第56章](56-inference-scheduling.md)联测。请求很少复用、状态身份不相容或等待分布明显漂移时，保守容量预算与
 实际 trace replay 比依赖该近似更稳妥。
 
+容量选定后仍要决定**淘汰谁、以什么粒度淘汰**。常见直觉是“计算成本高的长 prefix 应永远压过 LRU”；但同一会话的连续轮次若短期内反复访问，whole-content LRU 可以以极低元数据成本保住活跃前缀。大量一次性前缀会污染它，此时快速降级 one-hit 项有意义；更深的共享树节点重算昂贵，才值得按重算成本选择连续的部分节点。逐块贪心清理虽然看似释放得精确，却可能留下不可复用的碎片。替代策略因此要与 session cadence、prefix-sharing、block layout 一起回放，而不能只比较平均 hit rate；它增加追踪、淘汰与碎片整理开销。两类生产 trace 和一组 H200/vLLM 实验显示优化策略改善作者设置的平均与尾部 TTFT，却同时使中位 TTFT 变差，不能写成普遍优于 LRU。[原始实验与限制](https://arxiv.org/html/2609.28870v1)只支持这些披露条件。
+<!-- source-family:SF-2026-ARXIV-2609-28870 -->
+
 <!-- source-family:SF-2026-ARXIV-2609-02027 -->
+
+当请求前缀以页为单位复用、目标是选择达到指定命中率的 KV 容量时，可以用另一条更直接的测量路线：在实际访问流中计算每页的 LRU stack distance，一次 replay 生成多种容量对应的命中曲线，再寻找目标覆盖率的最小 working set。它比对每种候选容量分别部署或模拟更省成本，却只预测所选 LRU 语义和观测 trace 的容量—命中关系；它不替代 prefix identity 校验、请求级 TTFT/SLO 验证，也不能推断未来负载不漂移。KVSET 的作者在内部 coding-agent 请求 trace 上用 SGLang/Mooncake、H20、GLM-5.2 W4A8、FP8 KV 对照实际 cache 部署；这些条件支持该工作集估计器的局部准确性，不是任意 replacement policy 或生产 fleet 的容量保证。<!-- source-family:SF-2026-ARXIV-2609-27746 -->
 
 ## Fragmentation 与 Reserve 为什么真实存在
 
@@ -228,6 +239,30 @@ metadata、sorting 和 kernel/accelerator 支持纳入成本；否则省下的 b
 自动转移到 production workload。Full KV 仍是 correctness baseline；没有专用 kernel、向量访问尚未主导或严格
 exactness 优先时，token-only retention 仍更合理。
 
+#### 少读 Weight 与少读 KV 的交点
+
+Activation sparsity 和 KV sparsity 都可能减少 decode 读取，但省掉的对象并不随 context 同样增长：batch=1 时 projection 权重读取近似固定，KV 读取随已缓存 token 数增长。因此短 context 更可能受益于少读权重，长 context 更可能受益于少读 KV；batch 增大又会让不同请求的 activation 选择取并集，削弱 weight-read 节省。这个 byte-budget 交点只是起点，还要加入各自 kernel 的固定成本、实际 dtype、layout 和选择开销。完整权重／KV 仍驻留的实现，不能把少读的 bytes 宣称为可分配 HBM 容量。
+
+决定运行分支时，应在同一高效 dense kernel 上测两条 sparse 路径，以相同任务质量预算约束保留率，再计入 scoring、gather 和生成长度带来的摊销；更换低效 dense baseline 会人为放大同一 policy 的收益。[Sparsity Crossover v1 §3–7](https://arxiv.org/html/2609.33889v1)显示固定 window 的小 PPL 差异仍可伴随远距检索失败，选择型策略也有一次构造成本。批量、质量 gate 或输出长度改变时应重测边界，而不是只按 context 长度切换；短输出、稀疏 kernel 开销过大或质量不稳时，保留 dense 读取与简单固定 composition。
+
+<!-- source-family:SF-2026-ARXIV-2609-33889 -->
+
+#### 低比特收益还取决于同一 SM 内的 Compute Balance
+
+低精度先减少 weight/activation footprint 与 memory traffic，但 W4A4 kernel 若让 Tensor Core 与 CUDA Core 工作失衡，理论 bit reduction 不会自动变成 throughput。Kernel owner 需要同时记录 quantization artifact、dequant/packing path、SM work mapping 与目标 batch regime；memory planner 只能消费经过质量 Gate 且有可执行 kernel 的 committed precision。
+
+纯 W4A4 用更复杂的 intra-SM mapping 换高 batch 吞吐；低 batch、不同 GPU 或 kernel 未覆盖时，FP16、W4A16、W4A8 或 mixed fallback 仍合理。作者观察到 A100 在 batch≥64 才恢复优势，说明 benchmark batch 不能被误写为并发 SLO。Ch54 拥有 precision-residency identity，[Ch49](49-tensorrt-llm.md) 拥有 runtime integration，[Ch46](46-continuous-batching.md) 拥有 continuous batching，[Ch56](56-inference-scheduling.md) 拥有跨时间尺度的请求调度。
+
+#### Recurrent State 的量化误差会递归反馈
+
+权重通常量化一次后重复读取，KV state 也多为写入后只读；recurrent state 却会经历 quantize、read、update、write 的循环，当前误差会成为下一步输入。它的 precision identity 因此要同时约束单步 error energy 与误差随时间的 decay / amplification，而不能沿用静态张量的平均量化误差。低比特状态仍可节省带宽，但必须在目标序列长度上验证稳定性，并保留高精度重置或 checkpoint。
+<!-- source-family: arxiv:2608.27513v1; semantic-body-binding: recurrent-state-quantization-feedback -->
+
+若在**相同输入与 gates**下，浮点状态按 `S_t=A_t S_(t-1)+B_t` 更新，量化存储引入本步误差 `epsilon_t`，则误差可写为 `E_t=A_t E_(t-1)+epsilon_t`。这使两份平均重构误差相同的状态也可能有不同长期影响：保留时间更长的方向会累积更多误差，被当前 query 强烈读取的方向则更直接影响输出。Temporal calibration 可按近似 lifetime 分配 bit budget，spatial calibration 再按 readout sensitivity 拟合 scale；两者是不同敏感度，不是已经证明普遍最优的统一乘积目标。
+
+时序也改变误差解释。一条实现路径先从上一压缩状态恢复并完成本步浮点更新，再产生当前 readout，最后量化写回下一步状态；当前新增的写回误差于是首先影响下一次更新。Packed codes、scales 和高精度 pivots 必须共同就绪才能被下步读取，后台 writeback 不能只完成其中一部分就宣告 ready，容量还要计双缓冲和元数据。它用校准、解包和同步成本换带宽；gate-only lifetime 是近似，且 token 改变会使未来输入/gates 分叉，上述条件误差关系不是整条生成轨迹的稳定保证。极低位宽、长输出或校准漂移时仍应提高精度或回退未压缩状态；GDN/KDA 的受限实验不证明任意 recurrent 架构都有同样收益。
+<!-- source-family:SF-2026-ARXIV-2609-38169 -->
+
 ### 提高利用率
 
 Paging、prefix sharing 和更精确 admission 减少预留与碎片，却不改变每个有效 KV element 的逻辑需求。
@@ -235,6 +270,16 @@ Paging、prefix sharing 和更精确 admission 减少预留与碎片，却不改
 ### 扩展层级
 
 CPU/SSD/off-node cache 扩大总容量，却加入 transfer latency、bandwidth contention 和 consistency。它们把“装不下”改成“何时值得搬”。
+
+若容量层换成 flash，增加容量还会引入有限的 write endurance：短活 activation 和 staging 留在 HBM，长期可复用 KV 才考虑下沉。Cache-aware 排序只改变先服务谁，不约束总 live KV；admission 可以按新请求即将锁住的 footprint 留出 headroom，其中包括已经命中的 prefix，不能把 cache hit 当作容量免费。Decode 仍会继续增长，完成的 session 也会释放锁，因此 admission buffer 是准入压力控制，不是每一时刻都保持不变的物理分区。
+
+此时容量、placement 与 admission 要共同选择：较小 active batch 可能换来较少 cache churn、reload 与 flash 写入，但 HBF hit 不等于 HBM 带宽，吞吐改善也可能伴随更高 mean TPOT。[HBF 的受限 trace 模拟](https://arxiv.org/html/2609.39131v1)使用 B200 计算模型、16-bit 存储与 FP8 index timing proxy；复制 session 不产生独立新轨迹，寿命外推依赖均匀 wear、单位写放大和假定 P/E 次数，未包含完整 controller、静态 package power 或 latency SLO，轻负载能耗还可能变差。真实 endurance 不明、复用低或延迟优先时，HBM/host 仍是合理分支；先核写入流量、迁移与延迟，不用模拟寿命直接作设备或运行保证。<!-- source-family:SF-2026-ARXIV-2609-39131 -->
+
+Host DRAM 的读取也不必一律先落到 GPU HBM：支持相应远端访问和 TMA 的设备，可让某个 operation 从 host 直接搬入 SMEM，绕过 HBM staging。此时应分别选择该 operation 的 offload 比率和最大 inflight 数；省掉中间副本不等于 host 链路无限快，并发太多仍会使远端请求拥塞。完整保留 HBM staging 的路径则在复用高、远端带宽不足或不支持直达时继续合理。<!-- source-family:SF-2026-ARXIV-2604-26074 -->
+
+这个分支增加访问计划、SMEM 生命周期与 host-link 并发控制，受限 piecewise execution-bound 模型不证明一般 greedy 最优。作者 GH200/C2C 与 Blackwell/PCIe 的路径及离线32-token decode 测试不能混成线上尾延迟保证；shape、链路或重用条件失配时，应降低 inflight/offload、恢复 HBM staging，并按完整 operation 时间验收。
+
+当长前缀的 KV 下沉到 NAND，普通块设备先通过 host 内存和文件/块 I/O 取回，即使介质本身变快，接口与 staging 仍可能占据 TTFT。内存语义的设备也不自动消除这段等待：serving engine 知道将消费哪些 KV chunk/层，设备却只看地址与缺页，双方若不交换计划，通用预取可能搬错数据。可选的协同接口让 engine 提交已验证身份的 chunk 与层访问计划，设备负责 NAND→本地 DRAM 的 staging 和完成进度，GPU 仅在对应数据 ready 后消费，并将下一层传输与当前层计算重叠。这样用 device DRAM、计划池和更紧的软硬件耦合换 TTFT；计划过期、布局转换、缺页或设备故障仍必须回退普通加载，不能把 memory-mapped 地址视为已就绪 KV。LM-CXD 的结果来自 CXL-SSD 仿真设备、vLLM/LMCache、L40S 和作者五组模型/前缀长度，并非现货 CXL-SSD、其他 NAND 或 production tail-SLO 的实测保证。<!-- source-family:SF-2026-ARXIV-2609-26828 -->
 
 这里的 CPU 容量层以离散 GPU 与独立 host memory 为前提。在统一内存的移动 SoC 上，CPU 与 GPU 共享同一块物理 RAM，改变访问处理器不会凭空增加容量；压缩 KV 能减少实际占用，但压缩副本仍留在这块 RAM 中，压力继续上升时仍可能需要移到 flash。因而层级设计首先要核实物理容量边界，不能把逻辑上的 CPU/GPU 地址或访问路径重复记为两份空间。
 
@@ -245,6 +290,8 @@ CPU/SSD/off-node cache 扩大总容量，却加入 transfer latency、bandwidth 
 单个模型独占固定 GPU、各卡 HBM 都接近饱和时，memory hierarchy 只需要在本卡 HBM 与 CPU/SSD 之间选择；多 GPU 节点同时承载异构请求后，有些 peer GPU 可能暂时拥有空闲 HBM，且 NVLink 路径比 host offload 更近。cache manager 可以把这些空闲页作为 opportunistic tier，按 model/expert/KV generation 注册 peer residency，并在计算 owner 需要容量或 topology/tenant policy 改变时撤销；canonical weight 或 KV 身份仍由原 owner 持有，peer 只保存可重建副本。
 
 这条层级减少 host transfer，却会与 TP/PP collective、其他租户和 peer compute 争用互联，并新增 remote pointer、revocation、stale generation 与 tail-latency failure。拓扑不明、隔离要求高、peer 压力上升或副本无法及时回收时，应回退本地 HBM/CPU tier。`arXiv:2602.00328v1` 的 exact-v1 只在单机双 GPU NVLink 和作者所列模型/强制 offload 设置中验证 Harvest，不证明 NVSwitch、多租户、并行通信竞争或生产 SLO 下仍有同等收益。
+
+仅把 peer 空闲 HBM 列为 cache tier，还不能保证借出时不损害出借方。若要跨租户弹性共享，资源合同必须同时约束借用者的远端访问成本和出借者的回收权：预先划分有直接链路的 memory slice，依据可预测的层访问提前搬回借入数据，并在出借方负载回升时于安全的请求边界撤销租借。控制器拥有借还、预取与抢占权；应用的 model/KV 身份和已提交状态不因迁移而改变。这个机制可利用分区碎片，但需要暴露部分访问模式、牺牲一部分可用带宽，并可能因两边突发、预取失准或回收引发尾延迟；硬隔离或工作集稳定时，静态分区仍更简单。EMA 的作者证据来自单机 4×A100-40GB/8×A100-80GB、LLaMA/OPT、ShareGPT/Alpaca、vLLM 原型，不能把“性能透明”外推成任意 topology、混合 TP/PP 或生产多租户的保证。<!-- source-family:SF-2026-ARXIV-2609-27040 -->
 
 <!-- source-family:SF-2026-ARXIV-2602-00328 -->
 
@@ -266,6 +313,16 @@ cache owner 仍决定最终可见状态。收益取决于 CPU 核数、host memo
 或 host 很弱时，普通 GPU attention/offload 仍更稳定。事件时证据只覆盖 exact-v1 §3.2–§3.4 的 layer-ahead
 CPU attention estimation、异步预取与 pipeline integration，以及 §4.3 的作者模型、batch 与硬件配置；不能把重叠
 比例外推为跨平台常数。<!-- source-family:SF-2026-ARXIV-2603-27138 -->
+
+Peer GPU 上的机会性副本仍假设某张卡拥有主要 KV，而其他卡只是临时借用。长上下文 Prefill 使用 Context Parallel、且每个 rank 复制全部层 KV 时，容量压力来自更固定的跨 rank 冗余。另一条条件分支按层指定 KV 持有 rank：计算 rank 在该层 Attention 前取得持有者广播的 KV，只有传输完成、层与请求身份一致，才能消费它。这样把“在哪张卡存这一层”与“哪张卡执行这一层”分开，而不是把所有 rank 的完整 KV 当作并行的必要条件；Indexer 计算可以与下一次广播重叠，但 Indexer Cache 本身也须遵守 load-before-use。<!-- source-family:SF-2026-ZAI-SCALING-PAIN-LAYERSPLIT -->
+
+这一分层用每层通信、同步与持有 rank 的故障/拥塞风险换单卡 KV 容量。智谱在 GLM-5.1、约 90% Prefix Cache 命中和 40k–120k 长度的 Coding Agent Prefill 中报告吞吐提高 10%–132%；其 Indexer 广播约为 KV 的八分之一是该设计与配置的量级，不能当任意 CP 模型的常数，更不能据吞吐推生产 TTFT 尾部保证。上下文较短、命中低、互联弱、rank 故障域难以隔离或广播无法被计算掩盖时，各 rank 保留完整 KV 或使用现有容量层级仍更容易验证。
+
+### Capacity Planning 与 Placement/Prefetch 是两层问题
+
+HBM/CPU/SSD tiering 先要按 session lifetime 与工作集判断各 tier 容量是否足够，再依据 recency、reuse frequency、link bandwidth 与 TTFT objective 决定块放在哪里、何时预取。只有存在可用带宽且预测命中时，prefetch 才是收益；capacity 不满足时，二阶 placement 优化不能掩盖根本缺口。<!-- source-family:SF-2026-ARXIV-2609-16215 -->
+
+更细 placement 增加 metadata、预测错误和迁移流量。capacity 主导、workload 不稳定或 link model 不可信时，简单 recency/静态 tier 更可靠；作者 synthetic、batch=1、single-GPU simulator 不证明生产排序。
 
 ### 层级的管理权不应默认属于 Framework
 
@@ -300,6 +357,10 @@ full expert residency
 → predicted asynchronous prefetch
 ```
 
+当 router 的预测价值不足、但各 MoE 层的执行顺序已知时，另一条分支不预测**哪些 expert 会被选中**，而是把 expert 权重从长期 HBM 驻留改为按层临时物化：保留稳定的逻辑 tensor 地址，让当前层的全部 expert 可供原 router 和 kernel 使用，同时预取下一层，并在计算完成后才回收上一层的物理页。这样不转移 router 的语义选择权，却把问题从“能否猜中路由”变成“host/GPU 压缩层能否在前一层计算期间搬完下一层”。两层滑动窗口、映射提交与 GPU stream 的读写顺序是正确性条件，不能只看平均 cache hit。
+
+临时权重释放出的 HBM 还须与增长中的 KV 和 activation 共同规划；可根据 KV 压力降低额外常驻的 expert 数量，并按各存储后端的有效带宽分配加载量。但这不等于释放的字节立即扩大现有 serving engine 的 batch：若 KV 池在初始化时固定，动态扩容仍需要独立的 allocator/调度支持。整层全 expert 搬运也可能比路由选中 expert 的按需加载更贵；带宽不足、低并发或全权重本来可常驻时，原有静态/路由条件化方案继续成立。<!-- source-family:SF-2026-ARXIV-2604-02715 -->
+
 这里与 GEMM tiling、FlashAttention 的共同点只是 IO-aware 的原理复用（`Principle Reuse`）：都把超过近端容量的状态
 分块，并尝试用 pipeline 隐藏搬运。数学条件并不相同。GEMM 的 operand 与 reduction 顺序预先已知；online
 softmax 还能用 running maximum 与 normalization sum 合并各 tile，避免 materialize 完整 attention matrix。
@@ -315,6 +376,10 @@ token 搬入整个 expert，则往往无法用计算覆盖传输。模型级 exp
 正确性与失效条件不同。预测错误会产生 PCIe stall、cache thrash 与 tail latency；open PR/RFC 只能作为
 Experimental evidence，不能当作稳定框架行为。模型较小、expert 分布均匀、带宽紧张或 SLO 严格时，
 全驻留与静态 placement 仍更可预测。
+
+容量评估还必须跨越单个组件：在冻结生成主干的多模态 pipeline 中，text encoder 只运行一次，缩短其耗时未必缩短整次生成；但 encoder 长期驻留的字节会挤压反复执行的 denoiser 工作集。若两者加 activation / scratch 超过可用设备容量，原本不在时延关键路径的 encoder 也能通过分页影响每个生成 step。一条条件化分支是用较小 encoder 加校准 translator 对齐原接口，释放工作集容量，再选择 denoiser 常驻或 weight streaming；资源 planner 拥有 residency，质量验收仍须核替换后的条件表示和最终生成，不能由 feature 相似度直接通过。
+
+`arXiv:2609.21849v1` §4 / Figure 3 的 RTX 4070 Ti 12GB、1024² / 4-step 配置超过约 11.2GB 可用预算时，作者测得 denoising latency 退化约 40 倍；这不是一般分页倍率。0.6B encoder 加 187M translator 在 25% denoiser residency 下约 6.7GB，只付约 3% step-time 代价。另一台 96GB RTX PRO 6000 全部可驻留时，低 residency 反因 PCIe 补给赶不上计算而更慢；Table 3 同 BF16 整次时延仍为 0.47s，省 encoder 时间不等于 pipeline 加速。两平台不合并收益，24-prompt 匹配质量检查只属受限证据，扩大 matched 切片是后续验收建议；作者的 `2W_max + A_max` 仅属双缓冲配置，不是通用容量下界。质量回归或工作集本就能常驻时保留原 encoder / 全驻留；UMA 共享池也不能把 host offload 当成释放总内存。<!-- source-family:SF-2026-ARXIV-2609-21849 -->
 
 即使更慢的 memory tier 能容纳全部 experts，“容量足够”也不等于“路由后的计算单元被充分占满”。请求只激活少量且分布偏斜的 experts 时，resident weights 解决的是供给带宽，未解决 core occupancy 与 hot-expert contention。更完整的执行路径需要把 co-activation placement、local multicast、load-aware fetch 与 router 输出共同规划：memory pool 只交付不可变 expert weights，router 仍拥有语义选择，executor 决定如何把已选工作映射到可用计算单元。
 
@@ -356,9 +421,25 @@ announcement 只能证明版本化产品事实和设计方向，不能把未披�
 
 <!-- source-family:SF-2026-ARXIV-2605-28095 -->
 
+### 双模式 Weight 与 KV 的非对称共享
+
+固定精度和固定 weight/KV 分区，在质量优先、流量稳定时最容易解释，也避免运行中重载权重。突发请求让 KV 挤满 HBM 后，可以把可独立读取的低精度权重长期保留，只让高精度 residual 与 KV 共享物理容量：降到 fast 模式释放 residual 的使用权，回 full 模式则从 host 分块恢复 residual，全部恢复完成后才在 forward 边界切换。这个提交边界不同于单个请求边界；同一请求前后可能使用不同模式，恢复高精度不会撤销已经生成的低精度历史。
+
+逻辑 free 也不等于可立即撤销所有虚拟映射：若 worker 仍有 in-flight KV 读取，共享页 manager 必须协调用途变化，而不能让 scheduler 回收直接破坏读地址。[DPS v1 IV–V](https://arxiv.org/html/2609.34380v1)采用长期 KV 映射、residual backing 与双模式 CUDA graph，因而增加 host residency、PCIe 传输、状态管理和 graph 成本。其 effective pass@1 同时含 SLO 与质量，不能证明精度等价；静态 FP8 有时已满足压力目标，低压力也可能不获益。质量门不允许模式混用、恢复带宽不足或共享页状态不可靠时，继续使用静态精度及明确的 KV 容量／admission 限制。
+
+<!-- source-family:SF-2026-ARXIV-2609-34380 -->
+
+### 离线批量推理的跨 GPU 权重共享
+
 离线大批推理若沿用 data parallel，每张 GPU 复制完整 weights，控制最简单，却会把本可供 KV 与 batch 使用的 HBM 固定占满。节点内互联空闲且 workload 以 throughput 为目标时，可以把 layer weight 只放在 owner GPU：大批次让 owner 将 weights 流送给 peers（weight-as-stream），小尾批次则把 activations 送到 owner 计算（compute-as-service），运行时按传输量选择分支。
 
 它用 fabric bandwidth、同步和 layer-owner 故障域换 HBM 容量，且只在传输可被大批计算摊薄、尾部 activation 明显小于 weights 时成立；在线 tail-SLO、跨节点慢链路或 owner hotspot 会使收益消失。常规 DP 在模型可装下、请求小或隔离优先时仍更可预测。作者离线推理实验不证明该设计适用于持续到达、跨机通信或任意模型形状。
+
+### HBM Partition 是可版本化的 Runtime State
+
+当 expert weights、KV 与 workspace 竞争 HBM 时，静态配额简单且可预测，但会在请求形态变化后同时制造 expert miss 与 KV spill。动态 controller 可以用 re-prefill cost、expert load、TTFT/TPOT SLO 和 topology 估计重映射 pages；它只提交 partition proposal，expert/KV owner、迁移完成和 rollback 仍由 runtime 负责。预测不稳或互连不足时，静态分区仍是更安全的共存方案。<!-- source-family:SF-2026-ARXIV-2609-13537 -->
+
+异构 coherent memory 又引入另一条分支：HBM 与 host 可以并发取数，因此 residency 不只是冷热搬运，还要估计 overlap、contention、NUMA 和 coherence cost。没有一致寻址平台或 overlap 无法验收时，显式迁移与固定驻留仍更清晰。<!-- source-family:SF-2026-ARXIV-2609-13592 -->
 
 ### 混合序列模型需要 Typed Memory Pages
 
@@ -400,6 +481,12 @@ GPU-owned dense state
 
 它用新设备、NUMA/互联、模拟器校准和一致性协议换取 HBM 容量；收益只在目标访问稀疏、传输可隐藏且池端算子足够稳定时成立。普通 GPU、host offload 或 replication 在规模较小、链路拥塞、故障恢复要求高或硬件生态不成熟时仍更可靠。平台必须把 pooled-state owner、版本、location 与可见性写入同一 artifact/runtime contract。
 
+#### 端侧 NPU 只有全链迁移才构成新的 Memory/Energy 分支
+
+把单个 embedding 或 generation operator 放到 NPU，不能证明端侧 RAG 的系统收益，因为 reranking、跨设备搬运、模型加载和 host orchestration 仍可能占据主要内存、延迟与能耗。更完整的 contract 要把 embedding、reranking 与 generation 作为同一条 NPU-resident path 测量，并把加载顺序、static-graph 约束、context bound 与整机 energy/latency 一起纳入 owner。是否使用 NPU 因而是全链驻留与生命周期决策，不是算子级布尔值。
+
+GPU、CPU 和 hybrid execution 仍与之共存；dynamic shape、超长上下文、模型不受支持或内存峰值超限时，hybrid path 可能更稳健。现有证据仅来自 Snapdragon X Elite 单机和 120-query corpus，不能外推其他 NPU 或线上多租户容量；迁移不完整时，新增 device transfer 还可能抵消节能收益。
+
 #### Persistent Near-memory：容量层不再只是 Offload 终点
 
 传统 host/NVMe offload 把容量层视为等待搬回 HBM 的冷存储，这在硬件通用、写入频繁或低并发时很合理；但当
@@ -424,11 +511,23 @@ request isolation 与 fallback bandwidth 写进同一合同。
 不能证明尚未制造硬件的 yield、耐久性、可靠性或 production tail。Hot mutable state、严格 latency、写密集 workload
 或缺少专用硬件时，HBM 与传统 offload 仍是更稳健的分支。
 
+当 sparse KV 的选择集合每步随 Query 改变时，容量层还要共同决定“选什么”和“到哪里读”。Flash 的一页必须整体 sense，同一 plane 的读取会串行，运行时重排旧页又消耗 program/erase；因此只减少 token 数，不保证读取更快。一条条件性分支是在 HBM 驻留期间观察 co-selection，写入时固定 page composition，再由 base-die 对 page centroid 打分并生成本步的 physical page list。GQA 中多个 Query heads 共享一个 KV head 的物理预算，不能把每个 head 的 top-k 简单相加。Mean centroid score 是页内平均 logit，不是完整 Attention 的等价替代；按 plane 限额选择还会丢弃部分 global top-k，以质量换最忙 plane 的有界读取轮数。<!-- source-family:SF-2026-ARXIV-2609-23816 -->
+
+这个选择路径也需要 commit 边界：单 writer 的 request-private append-only region 只有在 program 完成后才推进 HBM/HBF horizon，每个 decode step 在开始时固定该 horizon，HBM 在完成前继续保留待迁页；否则 Query 可能命中尚未可读的历史。Request 结束后整区回收可以免去任意 live-page relocation，但不能据此推导多 writer、通用 GC 或掉电恢复保证。更大 HBM window 可遮住 centroid scan、合并写入并降低磨损，却挤占可接纳并发；更严格的 plane cap 也可能改变注意力证据。
+
+SPLASH 的 exact-v1 只以尚未商用的 HBF 模型、OpenHBF 模拟与 measured Blackwell kernels 支持该协同设计。五模型的 serving 模拟与单一 Llama3.1-8B 的质量实验不是同一保证；48-needle/64K/10% retrieval budget 下，该选择得分 0.50，低于 dense 的 0.86。其写放大 1.15、均匀磨损与约三十分钟保留期是寿命假设，不是硬件五年承诺。无法满足选择质量、窗口遮蔽或写寿命条件时，保留 dense HBM、传统 offload 或更保守的检索预算，不能只按容量与峰值带宽选型。
+
 新的 GPU generation、低精度格式、高速互联和 memory hierarchy 会显著改变可行边界：更高算力、更大 HBM、更快互联、更低精度 tensor core，都会推动系统设计变化。具体型号与规格变化很快，不应成为本章的稳定主线。
 
 但硬件升级不会消除系统问题。参数规模、上下文长度和并发需求也会继续增长。新的 FP4/FP8 能力需要软件栈、kernel、量化策略和质量评估配合。
 
 所以正确的结论不是“等硬件变强”，而是“软硬件协同”。硬件给出新的约束和机会，runtime 必须重新组织计算、内存和调度。
+
+### Compute-in-Flash 会改写 KV 表示合同
+
+Flash 内执行受整数算子、写寿命和带宽约束，不能照搬 HBM 中的完整 KV layout。一个受限分支将 KV 表示为静态 dictionary 加 sparse coefficient，把设备内计算、传输和误差预算共同设计；dictionary、coefficient、模型层与设备 revision 因而成为 cache identity。<!-- source-family:SF-2026-ARXIV-2609-16161 -->
+
+压缩与近存计算换取更低搬运，却引入 dictionary error、双副本、写放大和 prefill 支持缺口。两个 7–8B 模型、LongBench 与 analytical device model 不证明真实器件寿命或生产并发；越界时回退 HBM/host offload 或完整 KV。
 
 ## Trade-off
 
@@ -459,6 +558,17 @@ communication buffers，得到真正可供动态 state 使用的 usable HBM，�
 
 <!-- source-family: arxiv:2608.08482v1; daily-trace: papers/2026/08/11/README.md; semantic-body-binding: load-ready-weight-state-atomic-commit -->
 
+近存计算还可按状态类型分层：将FFN权重留在NAND附近执行，将attention与动态KV保留在LPDDR。介质错误不能只靠“数据已读”就允许输出提交；raw-read快检将错误segment暂时跳过后，scoreboard应等待慢纠正并补齐对应MAC结果，再使计算结果ready。NAND page与PE的数据宽度配合、权重放置、错误恢复authority和remaining attention/KV瓶颈要共同预算，不与前述KV压缩混为一条机制。
+
+这以器件、错误检测/纠正和scoreboard状态换取更少搬运，KV增长、纠错拥塞与故障可能重新进入尾延迟。受限NVLLM来自模拟器和综合而非实机，INT8/RBER工作点不能外推任意模型，out-of-core GPU对照也不等同容量HBM GPU，movement energy不是总能耗。介质、错误率或质量不匹配时，保留DRAM/数字执行、完整ECC与保守offload。 [原文必要机制与限制](https://arxiv.org/html/2604.25699v1)。
+<!-- source-family:SF-2026-ARXIV-2604-25699 -->
+
+### Physical Region Map 应在写入时固定
+
+如果 CPU/GPU 共享同一 KV backing，写入时固定 physical region map，可以让 logical KV identity 与访问位置分离；但 four-region format、allocator revision 与 accessor view 必须同一次提交，调度器只能选择已验证的访问路径，不能临时猜测 layout。kernel/framework 不兼容时应回退迁移式 tiering。<!-- source-family:SF-2026-ARXIV-2609-14507 -->
+
+Storage-backed MoE 还需要分别测 internal flash/storage bandwidth 与 host-link bandwidth 两个 knee，再决定 flash、DRAM、HBM 的 staging。只证明容量可放下 experts 不等于 provisioning 可服务 token SLO；任一 bandwidth knee 不满足时，应回退 host offload、更小 resident model 或减少 active experts。<!-- source-family:SF-2026-ARXIV-2609-15636 -->
+
 ## Expert Cache 的结论依赖 Replay Methodology
 
 缓存策略比较只有在 fused event 保持原子、workload 未被模板污染、capacity regime 按层归一化时才可复现。错误的 replay 顺序或回收手段会改变 hit path，甚至反转 LRU 与其他策略排名；offline oracle 也不等于可实现上界。评测因此要冻结 event semantics、reclaim mechanism、warm state 和容量，而不是只报告命中率。
@@ -471,6 +581,12 @@ communication buffers，得到真正可供动态 state 使用的 usable HBM，�
 
 预测器只拥有 prefetch hint，真实 activation 决定 correctness；miss 会重新暴露随机 I/O stall，低 locality 还会让细粒度读取比顺序搬运更差。dense model、短序列或 host bandwidth 充足时，传统 offload 仍更简单。收益必须绑定稀疏度、storage path、缓存命中与预测开销。
 
+### Speculative Verification Window 可以成为 Expert Staging 的有界 Lookahead
+
+Storage-backed MoE 通常只能等 router 决定后按需加载 expert；speculative decode 的 verification window 提供了短期候选路径，可以让 runtime 按 acceptance probability、routing likelihood 与 movement cost 提前 staging，并利用 co-load 重排 flash layout、批处理 ready experts。该窗口只提供搬运 proposal，最终 router 与 verifier authority 不变。<!-- source-family:SF-2026-ARXIV-2609-14643 -->
+
+收益依赖 acceptance 和 locality，代价是错预测 I/O、布局重组与 metadata。四个 MoE、五个 benchmark 和两类 mobile platform 不构成通用速度保证；命中不足或搬运成本超界时，应回退 on-demand load 或更小 resident model。
+
 ### Memory hierarchy 设计必须寻找 phase-specific working-set knee
 
 简单增加片上 SRAM/cache 只在 working set 尚能提高命中率时持续节省能量；prefill 与 decode、context 长度、operator fusion 和 mapping 会把拐点推到不同位置。容量规划因此不能只比较 memory technology 的峰值 PPA，而要把 operator trace、层级流量、映射、cycle 与技术模型放进同一 evaluator，分别寻找各 phase 的 capacity knee。
@@ -478,6 +594,10 @@ communication buffers，得到真正可供动态 state 使用的 usable HBM，�
 设计期模拟能缩小搜索空间，却不能证明新 memory technology 已满足制造、频率、热和真实 workload 约束。模型假设不稳时，应保留现有 HBM/DRAM hierarchy 和实机 profile 作为基线，而不是把模拟节能数字写成部署保证。
 
 <!-- source-family:SF-2026-ARXIV-2607-26491 -->
+
+容量之外，channel 数量与 interleaving granularity 也不能独立最大化。更细的分散访问可以提高通道并行度，却减少 row-buffer locality；更粗的粒度保留连续行访问，又可能使一次 tile/block 只触达少量通道。3D-DRAM 设计还把 memory controller 面积和 DRAM 热功率放进同一个 logic-die 预算：增加带宽可能挤掉 compute area、降低允许频率，不能以峰值带宽推出更低 decode latency。设计期 evaluator 应联合选择 channel/row/layout、算子 tiling、compute 和热约束，再比较实际模型、batch 与 cloud/edge 工作点。<!-- source-family:SF-2026-ARXIV-2604-08044 -->
+
+联合选择需要更复杂的时序、面积和热模型，也会扩大校准与假设误差；一种 workload 的优选配置不能直接成为通用最优。作者报告了性能模型与 3D test-chip 的分层对照、并测量材料参数供热模型使用，但这不等于所有探索架构都完成热实测或可部署验收；低 batch MoE 下另一设计仍可能更优。通用 HBM/DRAM 路线在硬件不可得、模型校准不足或功率边界漂移时继续成立，设计空间搜索只缩小需要验证的候选，而不替代实机与受限负载验收。<!-- source-family:SF-2026-ARXIV-2604-08044 -->
 
 ### 跨主机共享 KV 需要同时拥有寻址、顺序与故障语义
 
@@ -513,6 +633,14 @@ HBM 不足时，KV 与其他可预测状态不只在 GPU/host 间二选一，还
 
 扩容降低 HBM pressure 和 blocked I/O，却新增 prefetch miss、fabric contention、allocator metadata、failure recovery、SPDK 运维与硬件成本。访问不可预测、Context 短或状态可常驻 HBM 时，普通 paging 仍是更稳健的基线。
 
+同一 NVMe-backed KV 资产还可以按 layer 的 K/V unit，在初始化时选择 page-cache 路径或直接 LBA 路径：前者复用操作系统缓存，后者显式管理 aligned extent 与 pinned DRAM staging。两条路径需要不相交的资产分配及明确的 extent 生命周期，lazy materialization 也必须保留 layer/K/V 身份；它不是请求运行中无条件热迁移，更不是 NVMe 直接进入 GPU。<!-- source-family:SF-2026-ARXIV-2604-26557 -->
+
+直接路径减少通用缓存开销，却增加对齐、extent 回收、pinned 内存和调度成本。作者 DRAM 富余配置中全部采用 direct 路径反而最慢，说明缓存命中与 staging 必须按 workload 联合选择；内存足够或缓存稳定时保留 page-cache，分配/对齐不可验证时回退普通 I/O，不以单一路径的局部吞吐承诺 Serving SLO。
+
+Sparse KV offload 还要把算法与 runtime 的接口分开：Index/Select/Attention 定义候选与读取语义，Offload/Retrieve 负责实际 page residency 和完成状态。按 head 维护活跃物理 page metadata，可避免把 worst-case 逻辑容量一律常驻 GPU；但 CPU tables 仍可 pinned 并由 GPU 直接读取，不能把“冷”误写成 GPU 完全不可访问。<!-- source-family:SF-2026-ARXIV-2604-26837 -->
+
+这种分责节省部分驻留 metadata，却支付索引、selection、PCIe 读取和搬运成本，逻辑稀疏率不等净 TPOT 收益。作者线上较大 batch 的高 TPOT 反例与 dense 质量对照须保留；head 分布漂移、metadata 读取或 retrieve 成为瓶颈时，扩大 resident set、采用简单 offload 或回退 dense，不把静态容量收益当并发 SLO。
+
 ### MoE Expert Staging 可以消费时序与跨层激活相关性
 
 Expert 完全常驻 HBM 最稳健但容量昂贵；按 router 结果再加载不会误取，却可能让权重 I/O 落在 critical path。一个中间分支利用相邻 token 和相邻层的 expert activation correlation，在 router 最终决定前预取高概率 expert，同时不改变 router 本身的选择权。Memory manager 只管理 residency proposal，模型路由仍决定实际执行。
@@ -521,7 +649,22 @@ Expert 完全常驻 HBM 最稳健但容量昂贵；按 router 结果再加载不
 
 <!-- source-family:SF-2026-ARXIV-2609-12978 -->
 
+跨层 routing history 还可以作为 predictor input：若前一层 expert 之外，更早层的稀疏选择仍提供条件信息，cache owner 不应把 expert path 固定成一阶 Markov 假设。历史特征只拥有 residency hint，不拥有路由或执行权；probe 的增量可预测性也不等于端到端 prefetch 收益。history state、额外推理开销或 drift 抵消等待时间时，应缩短窗口或回退相邻层/实际 router 信号。<!-- source-family:SF-2026-ARXIV-2609-17940 -->
+
 Prefetch 以额外带宽、staging capacity 和错误加载换取潜在 stall reduction；相关性随模型、层和 workload 漂移，错误预测还会挤出真正需要的 expert。带宽紧张、命中率不稳定或模型较小时，on-demand loading 或更高常驻比例仍更可预测。
+
+还有一条不能归入 prefetch 的分支：当 expert weights 常驻 SSD、读取时延无法靠缓存完全隐藏时，模型可以训练一个
+per-layer prerouter，在当前层提前预测下一层的 expert，并让这次预测**直接成为下一层路由**。这样下一层权重读取可在
+当前层计算期间启动，decode path 不再等待原 router 后再触发 I/O；但系统也失去了“预测错了再 fallback load”的语义，
+近似误差已经进入模型行为。因而质量恢复必须在训练侧完成：冻结低比特 base weights，让 Recovery LoRA 沿实际 student
+routing path 学习补偿，并在 serving 时保持未合并，避免 merge 后重新量化抹掉补偿。
+
+这条路线把控制权从 `router-confirmed residency proposal` 移到 `trained routing decision`，以训练成本、额外 LoRA state 和
+质量偏差换取 SSD latency overlap。它只适合可以重新训练路由并接受近似行为的模型；要求原始 router 语义、无法承担恢复
+训练、或分布漂移使预测质量失效时，仍应回退常驻、on-demand loading 或只做不改变路由的 prefetch。Edge0 的证据绑定其
+披露的 Qwen/Ling 模型、Mac 硬件、OpenCompass 评价与高方差同 session A/B 性能协议，不证明任意 MoE、SSD 或生产 SLO。
+
+<!-- source-family:SF-2026-ARXIV-2609-18063 -->
 
 ### Lossless Weight Compression 需要与 GEMM Tiling 联合调度
 
@@ -585,24 +728,25 @@ GPU memory 优化从单一 HBM 容量规划演进到 locality、tiering、compre
 量化和 offload 通常仍假定压缩后存在一个可容纳模型的预算；当模型始终大于可驻留内存时，存储读取进入每 token 关键路径。利用相邻 token 的稀疏激活局部性，只预取新出现的权重行，可以把 OS demand paging 改为模型感知的 delta movement。收益依赖预测准确率、NVMe 延迟和 buffer 命中率；预测器成本、误取放大和缺页回退必须与权重精度一起计入执行计划。
 <!-- source-family: arxiv:2608.22643v1; semantic-body-binding: storage-backed-delta-weight-prefetch -->
 
-### Recurrent State 的量化误差会递归反馈
-
-权重通常量化一次后重复读取，KV state 也多为写入后只读；recurrent state 却会经历 quantize、read、update、write 的循环，当前误差会成为下一步输入。它的 precision identity 因此要同时约束单步 error energy 与误差随时间的 decay / amplification，而不能沿用静态张量的平均量化误差。低比特状态仍可节省带宽，但必须在目标序列长度上验证稳定性，并保留高精度重置或 checkpoint。
-<!-- source-family: arxiv:2608.27513v1; semantic-body-binding: recurrent-state-quantization-feedback -->
-
 ## 小结
 
 Inference memory budget 是 Part V 所有机制的共同约束。Weights 决定固定底座，KV 决定随请求增长的容量，workspace 与 communication 决定瞬时峰值，fragmentation 和 reserve 决定逻辑公式与实际可分配空间的差距。
 
 下一章讨论 PD 分离：当 Prefill 与 Decode 被放入不同 GPU pools，显存和计算压力可以独立规划，但 KV state 必须付出跨池移动成本。
 
-#### 端侧 NPU 只有全链迁移才构成新的 Memory/Energy 分支
-
-把单个 embedding 或 generation operator 放到 NPU，不能证明端侧 RAG 的系统收益，因为 reranking、跨设备搬运、模型加载和 host orchestration 仍可能占据主要内存、延迟与能耗。更完整的 contract 要把 embedding、reranking 与 generation 作为同一条 NPU-resident path 测量，并把加载顺序、static-graph 约束、context bound 与整机 energy/latency 一起纳入 owner。是否使用 NPU 因而是全链驻留与生命周期决策，不是算子级布尔值。
-
-GPU、CPU 和 hybrid execution 仍与之共存；dynamic shape、超长上下文、模型不受支持或内存峰值超限时，hybrid path 可能更稳健。现有证据仅来自 Snapdragon X Elite 单机和 120-query corpus，不能外推其他 NPU 或线上多租户容量；迁移不完整时，新增 device transfer 还可能抵消节能收益。
-
 ## Review notes
+
+- Daily 2026-04-30：`2604.26074v1` §4.2–4.3/§6、`2604.26557v1` §IV–V、`2604.26837v1` §4.1/§5 的 operation remote→SMEM、双 NVMe 路径与活跃 metadata 窄命题，已由 apr29_close 独立 source→actual owner 核；作者实写，root已实际读取正文及前后衔接，非作者写后通过。均为受限作者实验，未复现、非生产 SLO。[DAK](https://arxiv.org/html/2604.26074v1)、[DualBlade](https://arxiv.org/html/2604.26557v1)、[SPIN](https://arxiv.org/html/2604.26837v1)。
+
+- [STEPQuant v1](https://arxiv.org/html/2609.38169v1) §2–5、Appendix F/H；Daily 2026-09-30。相同inputs/gates条件下的误差传播、当前readout与后续packed writeback分离；time/space敏感度不是已证明统一最优，未复现。
+
+- `SF-2026-ZAI-SCALING-PAIN-LAYERSPLIT`（Status: Experimental）：[智谱官方《Scaling Pain》](https://www.zhipuai.cn/zh/research/159)，2026-04-29 16:00 北京时间，§优化：KV Cache 分层存储 LayerSplit。采用 CP rank 按层持有 KV、Attention 前广播与 Indexer 计算重叠这一 Prefill 容量—通信分支；不同于闲置 peer HBM 副本或 layer weights 流送。约 90% prefix hit、GLM-5.1、40k–120k 的 10%–132% 吞吐增益仅为作者受限设置；Indexer 广播约为 KV 八分之一不可外推为通用常数，未证明生产 TTFT 尾部、低命中或弱互联收益。BugFix#2 的 Indexer read-before-ready 只作已有 tier readiness 的具体反例。作者 apr01 已读原文/正文/邻段，root 非作者实际写后复核通过；未复现实验。
+
+- `SF-2026-ARXIV-2604-08044`：[ATLAS exact-v1 PDF](https://arxiv.org/pdf/2604.08044v1) §3.1–3.4/§4.2–4.3/§5。采用channel/interleaving/row locality与MC面积、compute/thermal共同选择的条件分支；cloud/edge/batch异质，低batch MoE保留Stratum优势。性能testchip分层验证、TDTR材料参数与探索架构热模型分开，不给通用16channel最优/生产交付保证。2+2+2=6、知识缺口深入，root必要原文与实际写后核验通过。
+
+- SHIELD（Status: Experimental，SF-2026-ARXIV-2604-07396）：[exact-v1 PDF](https://arxiv.org/pdf/2604.07396v1) §II–IV/Alg1/TableII。采用 lifetime×BF16 bit sensitivity 的刷新策略分支，不采用“普遍保持准确率”或 NPU 整机节能结论。Q/O lifetime 测量绑定 H100、sequence2048；3T retention 与 DESTINY2MB 为模型，随机 mantissa fault injection 不等于真实相关器件错误。五模型/WikiText-2、PIQA、ARC-Easy 受限结果仍含切片退步；batch、生产并发/SLO未披露。作者侧必要源与正文已对读，待 root 非作者写后复核；未运行实现或复现实验。
+
+- Edge0（Status: Experimental）：[arXiv:2609.18063v1](https://arxiv.org/html/2609.18063v1) §3.2 明确 prerouter prediction 直接成为下一层 routing，§3.3/§4 说明 Recovery LoRA 沿 student path 训练且 serving 时保持 unmerged；§5.1～5.4 的证据绑定披露的 Qwen/Ling、Mac、OpenCompass 与同-session A/B，§6 不支持外推任意 MoE、SSD 或生产 SLO。它不是 router-confirmed prefetch，也没有 misprediction fallback load 语义。
 
 - mzCache（Status: Experimental）：[arXiv:2609.01338v1](https://arxiv.org/html/2609.01338v1) 的 Android/Adreno 实验支持 UMA 共享 RAM 下的容量核算与可部分恢复分支；压缩仍占 RAM，恢复依赖 buffer readiness。实验不保证任意外部压力下进程存活或零等待，固定 profile 还受热降频影响；不将混合 kernel/allocation/overlap 收益全部归因驱逐策略。
 
@@ -620,12 +764,6 @@ GPU、CPU 和 hybrid execution 仍与之共存；dynamic shape、超长上下文
 - CXL-Hybrid long-context memory（arXiv:2606.12556v1；Status: Experimental）：多级 byte-addressable tier 与 ITME prefetch 只在测试拓扑和可预测访问下成立，不证明所有 KV access 都可隐藏。https://arxiv.org/html/2606.12556v1
 - Pooled DRAM/SSD KV offload（arXiv:2606.14779v1；Status: Experimental）：bandwidth-weighted pool 与 SPDK passthrough 降低串行 I/O；不消除 allocator、failure recovery 和运维成本。https://arxiv.org/html/2606.14779v1
 
-
-### 低比特收益还取决于同一 SM 内的 Compute Balance
-
-低精度先减少 weight/activation footprint 与 memory traffic，但 W4A4 kernel 若让 Tensor Core 与 CUDA Core 工作失衡，理论 bit reduction 不会自动变成 throughput。Kernel owner 需要同时记录 quantization artifact、dequant/packing path、SM work mapping 与目标 batch regime；memory planner 只能消费经过质量 Gate 且有可执行 kernel 的 committed precision。
-
-纯 W4A4 用更复杂的 intra-SM mapping 换高 batch 吞吐；低 batch、不同 GPU 或 kernel 未覆盖时，FP16、W4A16、W4A8 或 mixed fallback 仍合理。作者观察到 A100 在 batch≥64 才恢复优势，说明 benchmark batch 不能被误写为并发 SLO。Ch54 拥有 precision-residency identity，Ch49 拥有 runtime integration，Ch56 拥有 continuous batching 与请求调度。
 
 - APEX4（arXiv:2606.08761v1；Status: Experimental）：证据绑定 A100-40G、RTX 3090、A40、L40S，LLaMA-2/3、Qwen2.5，WikiText-2/zero-shot/kernel/vLLM tests，batch sweep 至 256；不披露 external request concurrency 或 production SLO，也不证明所有 GPU 代际都应采用纯 W4A4。https://arxiv.org/html/2606.08761v1
 

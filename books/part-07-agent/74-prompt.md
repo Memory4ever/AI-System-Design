@@ -133,6 +133,12 @@ Repository instruction 文件进一步把 Prompt 变成工程控制面：它可�
 
 形式检查拥有的是“抽取后约束是否一致”，不是自然语言意图真值。抽取错误、开放世界知识与概率行为仍需 regression、canary 和人工判断；过度形式化也会抬高维护成本。短 prompt 仍可直接审阅，只有多层 policy、重复继承与高代价冲突出现时，才值得用 executable spec 提前暴露不一致，并让 witness 成为可复现测试，而不是把求解器当作模型行为保证。
 
+### 自动 Prompt 优化还要区分设计信号与采样噪声
+
+反复测试候选 system prompt 时，reward 的波动同时来自 Prompt 对成功概率的真实改变和冻结 response model 的随机生成。若任务只返回二元正确性，同一 Prompt 的多次 response 可估计后一个噪声项；候选间总 variance 减去这项估计，才近似反映可优化的 Prompt 差异。将许多异质任务直接平均，可能互相抵消不同任务对 Prompt 的偏好，增加数据却削弱优化信号；这不是“少数据总更好”，也不等于 reward variance 越大越可学习。
+
+一条受限分支先用足够重复采样估计这两类 variance，再选真实候选差异较大的小任务子集优化 prompt generator，并在未参与选择的任务上验收。额外采样、穷举子集和选择偏差都要计入预算；单题可过拟合，低噪声而容易的样本也会使 signal/noise 比值不稳定。[作者数学实验](https://arxiv.org/html/2604.08801v1)中小子集优于全量训练，但更同质的 instruction-following 任务仍以全量更好，跨模型迁移也只在受测 Qwen 家族内成立。任务偏好一致、数据少或二元反馈假设不成立时，人工 Prompt、全量 regression 与固定候选比较继续合理；选择器拥有的是实验预算，不是外部真值和安全权限。<!-- source-family:SF-2026-ARXIV-2604-08801 -->
+
 ### 追加规则容易，可逆地删除规则很难
 
 长期维护的 Prompt、`AGENTS.md` 或 procedural skill 往往从一次次局部失败中追加规则。每次追加都可能
@@ -241,6 +247,8 @@ Prompt 是概率模型的运行时接口，可以表达任务和软约束，却�
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-23180:end -->
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-08801`，Experimental：[exact-v1](https://arxiv.org/html/2604.08801v1) §3.2–3.3/Eq4–5、§4–5、§7。二元/iid response假设下分拆两类variance，选择用扣除噪声后的signal非不稳SNR；Qwen3-4B prompt generator，4B/1.7B冻结响应，4H100/3日预算，K×M大致固定。Ktop1过拟合，IFBench全量优于子集，不能将数学结果变成通用小数据规则；precision、完整服务并发/SLO未披露。本次必要原文与实际正文/相邻交接已由root独立复核通过，未复现实验。
 
 本章承接第 18、20 章的条件生成语义与第 72、73 章的安全/发布契约。Prompt engineering 保持在 runtime input 层，不与 SFT 或模型能力本身混写。
 

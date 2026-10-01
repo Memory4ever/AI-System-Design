@@ -9,7 +9,7 @@
 
 **目标读者：** 已具备软件工程、分布式系统、Kubernetes 或平台工程经验，正在建设 Data / Training → Model → Deployment → Serving → Observability 全链路的工程师。
 
-**写作原则：** 先解释问题为何存在、旧方案为何合理、约束如何变化，再解释机制、证据边界、trade-off、共存条件和下一阶段压力。框架、论文和版本只用于验证长期机制。
+**学习与写作：** 见 [学习理念](docs/LEARNING_PHILOSOPHY.md) 与 [写作指南](docs/WRITING_GUIDE.md)。
 
 ## 核心学习路径
 
@@ -144,12 +144,12 @@
 
 ### Part II 模型基础（Ch11～22）
 
-沿 Tokenizer → Embedding → Position → Attention → MLP → Layer → Decoder Only → KV Cache → Sampling 展开，再以 MoE 和 Long Context 描述参数容量与序列容量。这里拥有通用模型组件，不拥有跨模态 codec、生成范式或物理控制。
+沿 Tokenizer → Embedding → Position → Attention → MLP → Layer → Decoder Only → KV Cache → Sampling 展开，再以 MoE 和 Long Context 描述参数容量与序列容量。Ch22 比较显式历史、线性 Attention、SSM 与 hybrid 的状态取舍，不把后者写成前者的普遍替代。这里拥有通用模型组件，不拥有跨模态 codec、生成范式或物理控制。
 
 ### Part III 多模态、生成与世界模型（Ch23～26）
 
 - **Ch23 多模态表示与融合**：raw signal 如何变成带 modality、time 和 provenance identity 的可学习表示。
-- **Ch24 多模态生成范式**：AR、Diffusion、Masked/Block Diffusion 如何在 factorization、并行、cache、修正与 commit 之间取舍。
+- **Ch24 多模态生成范式**：AR、Diffusion/Flow Matching、Masked/Block Diffusion 的路径、训练目标与采样如何决定 factorization、并行、cache、修正与 commit 的取舍。
 - **Ch25 World Models**：从 observation generation 演进到 action-conditioned transition、latent dynamics、imagined rollout 与 persistent world state。
 - **Ch26 Embodied AI 与 VLA**：感知、语言条件动作、trajectory/action chunk、low-level controller、真实环境反馈和 safety envelope 如何闭环。
 
@@ -159,7 +159,7 @@ Ch27～34 拥有数据、pretraining、SFT/LoRA 与 preference optimization；Ch
 
 ### Part V 推理系统（Inference System，Ch42～56）
 
-Ch42～48 从 request lifecycle、Prefill/Decode、KV、batching、paging、speculation 建立单 engine 机制；Ch49～53 映射 execution plan、serving engine、structured runtime、distributed state 与 topology；Ch54～56收束 HBM、PD 和 SLO scheduling。
+Ch42～48 从 request lifecycle、Prefill/Decode、KV、batching、paging、speculation 建立单 engine 机制；Ch49～53 映射 execution plan、serving engine、structured runtime、distributed state 与 topology。Ch49 从量化表示、校准与产物解释低比特执行，Ch54～56 再收束 HBM、PD 和 SLO scheduling。
 
 ### Part VI AI 基础设施（AI Infrastructure，Ch57～73）
 
@@ -167,7 +167,7 @@ Ch42～48 从 request lifecycle、Prefill/Decode、KV、batching、paging、spec
 
 ### Part VII Agent（Ch74～84）
 
-从 Prompt、Context、RAG、derived Memory 到 Tool、Planning、Reflection、Workflow、Multi-Agent、MCP 和 Agent Platform。Agent memory 不拥有 environment dynamics；Agent planning 可以消费 World Model，但不把预测状态当作事实状态。
+从 Prompt、Context、RAG、derived Memory 到 Tool、Planning、Reflection、Workflow、Multi-Agent、连接协议和 Agent Platform。Ch76 拥有检索表示与索引的质量、升级和生命周期；Ch83 以 MCP 能力调用和 A2A 远端任务说明协议边界，不接管 Ch81/82 的执行与委派策略。Agent memory 不拥有 environment dynamics；Agent planning 可以消费 World Model，但不把预测状态当作事实状态。
 
 ## 双轴知识树
 
@@ -181,7 +181,7 @@ Ch42～48 从 request lifecycle、Prefill/Decode、KV、batching、paging、spec
 | 调度（Scheduling） | Ch24/26 → Ch38 → Ch46/52/53/56 → Ch63～65 → Ch81/84 |
 | 状态（State） | Ch19 → Ch23/25/26 → Ch35 → Ch42/45/52/55 → Ch59 → Ch75/77/81/84 |
 
-历史关系必须标记为 `Direct Evolution`、`Layering / Dependency`、`Principle Reuse` 或 `Explanatory Analogy`。后发技术不得静默覆盖旧方案。
+横轴表示问题之间的关系；演进、依赖与替代分支的区分按[学习理念](docs/LEARNING_PHILOSOPHY.md#分清技术关系)解释，不要求正文逐处贴分类标签。
 
 ## 跨领域阅读路线
 

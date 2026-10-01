@@ -167,12 +167,6 @@ SwiGLU(X) = SiLU(X W_gate) elementwise_mul (X W_up)
 
 Gate 允许模型根据当前 token state 动态调节哪些 candidate features 通过。代价是多一个 `d_model x d_ff` projection，因此实际模型常调整 `d_ff`，在参数预算下比较，而不是保持所有维度不变。
 
-这个乘法不能只解释成“多一个 gate”。非 gated FFN 依靠 activation 后的加性组合，GLU 则让两条可学习分支共同决定局部 kernel 与 conditioning，因而改变训练可达的函数区域。旧 FFN 在参数、kernel 与稳定性预算更紧时仍是合理基线；gated 分支获得更强的条件交互，却增加 projection、初始化耦合和执行成本，conditioning 变差时应回退非 gated FFN 或缩小 gate branch。
-
-`arXiv:2605.20749v1` 的 §4 分析与 §3.3、§5、Appendix C 实验只支持 NTK/two-layer 及作者规模下的可达性差异；§6 不证明 SwiGLU 在所有深度、优化器或硬件上都更优。
-
-<!-- source-family:SF-2026-ARXIV-2605-20749 -->
-
 ## 参数量与 FLOPs
 
 忽略 bias，标准两层 MLP 参数量约为：
@@ -194,6 +188,16 @@ FLOPs_FFN per layer ~ O(B*T*d_model*d_ff)
 ```
 
 Attention 对 `T` 有成对项，MLP 对 `T` 近似线性，但 `d_ff` 往往较大。实际哪个模块更耗时取决于 sequence length、模型 shape、precision、kernel 和硬件，不能只比较复杂度阶数。
+
+### 相同预算也不等于相同训练行为
+
+参数和 FLOPs 让比较有了共同尺度，但它们仍不能回答两条分支怎样共同学习。因此还要把结构的表达差异与特定训练条件下的证据分开。
+
+这个乘法不能只解释成“多一个 gate”。非 gated FFN 依靠 activation 后的加性组合，GLU 则让两条可学习分支共同决定局部 kernel 与 conditioning，因而改变训练可达的函数区域。旧 FFN 在参数、kernel 与稳定性预算更紧时仍是合理基线；gated 分支获得更强的条件交互，却增加 projection、初始化耦合和执行成本，conditioning 变差时应回退非 gated FFN 或缩小 gate branch。
+
+`arXiv:2605.20749v1` 的 §4 分析与 §3.3、§5、Appendix C 实验只支持 NTK/two-layer 及作者规模下的可达性差异；§6 不证明 SwiGLU 在所有深度、优化器或硬件上都更优。
+
+<!-- source-family:SF-2026-ARXIV-2605-20749 -->
 
 ## Linear 为什么最终成为 GEMM
 
@@ -242,6 +246,12 @@ FLOPs_GEMM ~= 2 * M * N * K
 
 因此更准确的表述是：MLP 提供高容量逐位置非线性特征变换，并参与存储和调用训练中形成的关联；它不是可按 key 直接检索的数据库表。
 
+### MLP 不必独自保存每条事实
+
+把 MLP 权重解释成逐条事实的 key-value memory，容易导出事实数量与参数近似线性增长的图景；如果 embedding space 已把实体、属性和关系组织为可叠加几何结构，小 MLP 可以复用同一 relation-conditioned selection rule，而非为每条事实分配独立槽位。参数效率来自表示与选择规则分工，也带来 embedding interference、margin/维度要求和多跳深度成本。几何结构不成立或需要可更新 provenance 时，显式 retrieval、更多参数或层仍更可靠。exact-v1 的证明和实验限于受控结构，不能定位真实 LLM 的全部知识、保证编辑安全，或把 MLP 宣称为唯一知识 owner。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12426 -->
+
 ## 从 Dense MLP 到 MoE
 
 Dense MLP 对每个 token 激活同一组参数。扩大 `d_ff` 会同时增加总参数和每 token compute。
@@ -254,6 +264,14 @@ MoE:       each token -> selected expert MLPs
 ```
 
 这使总参数容量与 active parameters 部分解耦，却引入 router、load balance 和 All-to-All。MoE 是本章机制的条件化扩展，不是 Attention 的替代。
+
+## 参数也可以成为运行时生成的有界状态
+
+MoE 在预先训练的参数池中选择计算路径，并不为每次请求重新生成参数。若变化来自用户或会话中的新数据，则需要区分另一种条件化方式：改变少量实际参与计算的权重。
+
+固定 FFN 最容易版本化、缓存和部署；当 live data 持续变化时，另一条实验性分支让一个生成器为当前样本或会话产生低秩 weight modulation，再用受限在线更新调整该状态。它改变的不是“无限增加模型参数”，而是把少量条件权重从静态 artifact 移到带输入、版本和生命周期的 runtime state。
+
+这种适配以额外生成计算、状态隔离和回滚复杂度换取快速个性化。在线生成的权重必须绑定 base checkpoint、数据 provenance、rank/shape、会话和有效期，并由独立评价决定是否接纳；否则污染会跨请求扩散。现有小规模实验不能证明无限容量、持续学习稳定性或生产收益，条件不满足时固定 FFN、adapter 或外部 retrieval 仍是更可控的路径。<!-- source-family:SF-2026-ARXIV-2609-18842 -->
 
 ## 工程实现边界
 
@@ -301,12 +319,6 @@ Attention output [B,T,d_model]
 MLP 与 Attention 分工明确：Attention 在 token 之间路由信息，MLP 在每个 token 内构造和组合非线性 features。扩维提供容量，activation 或 gate 提供条件选择，down projection 恢复 residual stream shape。
 
 在执行层，`[B,T,d]` 会被映射成 `M=B*T` 的 GEMM；这解释了为什么相同模型语义会因 Training、Prefill、Decode 的 `M/N/K` 不同而产生不同硬件效率。MLP 参与形成模型知识与计算特征，但知识是分布式、上下文化的。这个边界既避免低估 MLP，也避免把权重矩阵误解成可直接读取的事实表。
-
-### MLP 不必独自保存每条事实
-
-把 MLP 权重解释成逐条事实的 key-value memory，容易导出事实数量与参数近似线性增长的图景；如果 embedding space 已把实体、属性和关系组织为可叠加几何结构，小 MLP 可以复用同一 relation-conditioned selection rule，而非为每条事实分配独立槽位。参数效率来自表示与选择规则分工，也带来 embedding interference、margin/维度要求和多跳深度成本。几何结构不成立或需要可更新 provenance 时，显式 retrieval、更多参数或层仍更可靠。exact-v1 的证明和实验限于受控结构，不能定位真实 LLM 的全部知识、保证编辑安全，或把 MLP 宣称为唯一知识 owner。
-
-<!-- semantic-body-binding:SF-2026-ARXIV-2605-12426 -->
 
 ## Review notes
 

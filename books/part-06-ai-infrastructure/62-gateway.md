@@ -62,6 +62,12 @@ estimated_work
 
 对可变 reasoning depth 的请求，`expected_output_tokens` 还不够：admission 应估计额外计算能带来的边际质量，并把最大 amplification、deadline 与 tenant budget 一起冻结。模型或 router 可以请求更多计算，但只有 Gateway/control plane 能批准新的预算 epoch；收益证据不足、队列拥塞或高分位延迟接近上限时回退固定 effort。这样避免“更会思考”变成无界资源占用，也承认在高价值难题上额外计算可能合理。<!-- semantic-body-binding:SF-2026-ARXIV-2608-18921 -->
 
+### 推理更快以后，API 前处理也需要增量状态
+
+GPU变快后，入口的重复工作会反而成为主瓶颈。工具循环每轮只新增少量结果，却重新校验和渲染完整历史时，延迟随会话累积；一个条件分支用持久连接保存先前response、工具描述和已渲染token，后续引用明确的前序identity，只为新输入执行相应前处理。这改变的是API/CPU状态复用，而不是engine的KV分页或Agent的长期记忆；仅换传输协议，不能自动消除完整历史工作。<!-- source-family:SF-2026-OPENAI-WEBSOCKET-API-INCREMENTAL -->
+
+连接局部缓存增加内存、状态归属和失效处理责任。从系统设计上，只有旧状态身份、模型/工具配置与策略仍合资格，才能复用旧处理结果；把部分校验改成delta处理，不代表新旧内容组合的约束被自动证明。官方工程披露支持这种增量分支，但未给断线恢复、跨连接迁移或所有安全规则的完整保证。若旧状态不可取、资格变化或增量验证不能建立，就显式重建/重新验证；短请求和无会话场景仍可使用stateless入口。收益应分解API前处理、工具时间与模型推理，不能把更快模型或up-to结果全归给WebSockets。
+
 ## Gateway、EPP 与 Engine Scheduler
 
 三者处于不同时间尺度：
@@ -230,6 +236,8 @@ Gateway 从认证与负载均衡入口演进到跨站点、跨 provider 和 Agen
 Gateway 将外部流量转化为带身份、协议、配额和可观测上下文的内部请求。它可以借助 EPP 做 inference-aware endpoint selection，但不进入 token iteration。下一章转向更慢、更稀缺的资源决策：GPU placement。
 
 ## Review notes
+
+- `SF-2026-OPENAI-WEBSOCKET-API-INCREMENTAL`：[OpenAI工程披露](https://openai.com/index/speeding-up-agentic-workflows-with-websockets/)，原RSS事件04/22T10:00Z；核心When API became bottleneck / Building persistent connection / Keeping API familiar / Setting new bar。只采用connection-local API渲染与增量前处理分支，上线`response.create`+`previous_response_id`不是弃用原型`response.append`。up-to40%为作者alpha/client观察，model/hardware并非matched对照，完整precision/length/batch/concurrency/SLO未披露；未复现。资格检查和显式重建是系统设计推断，不是厂商全validator/恢复保证。apr20_resume已完成source→实际owner及literal独立采用，并实际顺读正文57～78及本证据条目，写后复核通过。
 
 - `SF-2026-ARXIV-2606-22560` — primary `arXiv:2606.22560v1`；Method=`arXiv:2606.22560v1 §3 Provenance Model; §4 Gateway-Path Binding; §5 Implementation`；Evaluation=`arXiv:2606.22560v1 §7 Evaluation`；Non-proof=`arXiv:2606.22560v1 §9 Limitations and Conclusion`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 

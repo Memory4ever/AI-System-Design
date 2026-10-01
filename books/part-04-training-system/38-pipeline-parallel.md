@@ -110,6 +110,18 @@ warm-up forwards
 
 1F1B 没有消除 pipeline dependency 或所有 bubble。Schedule 还必须保证同一 optimizer step 内参数版本一致；同步训练通常在全部 micro-batches 完成后更新。允许跨 batch 异步更新的 pipeline 方法需要 weight stashing 或处理 stale parameters，属于不同算法假设。
 
+### Split-Backward 与低精度状态：Schedule 之外还有执行合同
+
+普通 1F1B 将一个 micro-batch 的 backward 视为相对完整、按栈回收的动作；在 eager 执行下，这让 activation lifetime 与依赖次序较容易追踪。若为了填补空隙，把反向拆成尽早传播的输入梯度 `dI` 和可延后的权重梯度 `dW`，再以捕获图复用固定地址，逻辑 micro-batch 与物理 buffer 就不再天然一一对应。低精度训练还持有 `amax` 历史、scale、量化权重缓存等不在显式 tensor 边上的可变状态；单一顺序 token 无法证明所保留任务的身份与版本，可能错绑或过早释放 tape、错序或重复更新 scaling state，或在 optimizer 提交后消费旧缓存。
+
+因此这类 runtime 需要把四个合同分开：低精度 scale 更新的顺序；保留任务的逻辑身份与可重用物理槽的世代；参数提交版本与量化缓存版本；调用 stream 进入和离开捕获图的双向完成边界。`dI` 留下 `dW` 任务时，tape 仍归该 micro-batch 的逻辑身份所有，直到两类 consumer 均完成才可释放；optimizer commit 后旧权重缓存不能借相同地址冒充新版本。Checkpoint 保存持久数值状态，并在安静的更新边界重建进程内 graph、event 与槽位，而不是序列化旧地址。这样把吞吐优化从隐含栈次序变成可验证的状态转移，代价是世代检查、预留 buffer、额外显存和捕获 setup；静态 scale、即时 `dW` 或开销并非 launch 主导的 workload，仍可用更简单的 eager/full-backward 路径。
+
+一项 exact-v1 实验在单节点 H800 PCIe / RTX 5880 Ada、短序列 `seq=256`、`microbatch=1` 的细粒度场景演示这种组合合同，并报告额外峰值显存与 setup 成本。其完整 step 收益混合了 split/full-backward、捕获与 gradient placement 等变化；只有局部消融能隔离其中一项，不能外推成“CUDA Graph 单项普遍加速”或长序列、多节点的训练结论。论文描述了实现和附属报告，但本次未核实可访问的代码 artifact，亦未独立复现。
+
+上述 split-backward 仍可保持同步 optimizer step；下一节讨论跨更新边界的异步参数版本问题。
+
+<!-- source-family:SF-2026-ARXIV-2609-23536 -->
+
 ## 异步 Pipeline：去掉 Bubble 会把成本移到参数版本
 
 同步 GPipe / 1F1B 用 idle time 换取清晰的 step boundary：同一 logical step 的
@@ -248,6 +260,10 @@ boundary bytes
 ```
 
 平均切 `L/p` 层只是初始估算。实际 partition 需要 profile per-layer cost，并为 embedding/loss 等特殊模块留出预算。
+
+同构 profile 选出的 expert 并行度，也不一定能直接带入异构 pipeline。可在各设备和链路上先测 dense/expert 计算、dispatch/combine、router 负载及 activation/optimizer 容量，再让 stage 层数、设备分配、expert tensor/parallel 度与 recompute 共同决定候选 step 计划。较快 stage 不必与较慢 stage 分同样层数，较大 expert group 也可能让跨类型通信抵消计算节省；成本模型应区分已重叠与暴露通信，不能重复加总。最终 layer/device/process mesh 与重计算策略必须一起 materialize，planner 只提供候选，不改变训练 batch、routing 语义或完整 step 提交。
+
+这是校准窗口内的离线分支，不是在线适应保证。HAPMoE 的受限异构 MoE 对照支持联合计划与非均匀分区，却用 warmup、memory/router instrumentation 和搜索换较少 steady-state 等待；pruning 也可能错过模型外候选。路由持续改变、网络争用或设备失效会使原 profile 过期，短 search time 不能消去重新校准成本，作者没有验证动态重配置。收益不足或状态无法一致 materialize 时，保留同构子组、固定 EP 与成熟 1F1B，在实际 step time、峰值 memory 和任务/收敛合同上重新验收，而不是用低预测误差证明生产最优。[必要机制与反证](https://arxiv.org/html/2609.39350v1)。<!-- source-family:SF-2026-ARXIV-2609-39350 -->
 
 ## 一个不平衡小例子
 

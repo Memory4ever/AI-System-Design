@@ -4,8 +4,8 @@
 
 ## 开始前
 
-读取 `AGENTS.md`、[研究合同](docs/RESEARCH_CONTRACT.md)、[来源清单](docs/RESEARCH_SOURCES.md)、
-[Report 合同](docs/REPORT_CONTRACTS.md)、`ROADMAP.md` 与相关 checkpoint；保护已有修改。
+按 `AGENTS.md` 加载适用上下文：[研究合同](docs/RESEARCH_CONTRACT.md)、[来源清单](docs/RESEARCH_SOURCES.md)、
+[Report 合同](docs/REPORT_CONTRACTS.md)、`ROADMAP.md` 与本日/周停点。
 确定报告类型、目标日期/周和是否由用户明确限定“仅报告”。未指定日期的日常运行处理当日，
 指定历史范围则只处理该范围，不顺带跑当前日或创建另一种报告。
 
@@ -17,6 +17,5 @@
 4. 日常运行在周日 Daily 完成后生成到期 Weekly；历史任务按用户指定的报告类型执行。
 5. 完成授权范围或确实受阻时保存必要 checkpoint，不扩大范围，不继承未经核实的完成声明。
 
-多个日期/周按独立文件并行，只有共享 Books/索引文件协调写入。历史 Daily 不从旧 Weekly 反推，
-已有且未变化的证据可以核实后复用。日常流程结束后，只有 Learning State 明确存在未暂停的历史 cursor
-才继续一个独立 checkpoint；没有、已暂停或已完成则不启动历史任务。不 stage、commit、push。
+日常流程结束后，只有 Learning State 明确存在未暂停的历史 cursor 才继续一个独立 checkpoint；
+没有、已暂停或已完成则不启动历史任务。

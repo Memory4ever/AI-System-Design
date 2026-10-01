@@ -1,0 +1,8 @@
+# `2609.23432v1` — 物理试验 reset 不一定清除动力学记忆
+
+- 来源：[arXiv exact-v1 HTML](https://arxiv.org/html/2609.23432v1)、[摘要和版本页](https://arxiv.org/abs/2609.23432)，访问：2026-09-23。官方 09-22 `cs.RO /new` 公告落在 09-23 08:00 北京时间；HTML 的 `20 Sep` 是投稿日期。作者项目页和代码是 artifact 线索，本轮未锁定 commit，也没有实验复现。
+- 问题与旧方案：若每次 trial 是独立环境，物理重置时清空 policy context 可防止旧状态污染；但绳的材质、阻尼和执行器响应在同一组重复试验中保持相对稳定，前次动作—响应又提供了单帧无法观察的动力学信息。显式参数识别/仿真校准是一条合理路线，但复杂可变形物体的参数和 sim-to-real 误差较难可靠获得。论文承认跨试验上下文控制已有 RL²、Gated Memory Policy、LocoFormer 先例；新意主要是受限的外部绳动力学场景及 matched retained/reset 证据，不是发明跨试验记忆。
+- 机制与所有权：§III 把多次 trial 组成同一个 dynamics episode。物理状态在每次 trial 后回到规定初态，但 Transformer-XL 的有界段 KV 上下文保持；新的 dynamics episode 才隔离和清空旧 context。actor 读关节状态、绳关键点、任务指令、前次动作及历史响应，输出 joint-target proposal；权重冻结，没有在线参数更新，也没有显式绳参数估计。训练时 asymmetric critic 可见模拟器私有参数，actor 不可见；GAE/value bootstrap 在 trial reset 处停止，虽然 policy context 继续。因而 `physical reset`、`training-return boundary` 与 `latent-memory boundary` 是三种不同语义，不应机械捆绑。
+- 评价与反证：§IV 的模拟比较对同一 TXL checkpoint、384 条绳、相同目标/噪声/初态，保留或清空跨 trial context；各配置只一个训练 seed，受限比较在 Rope_Swing/Rope_Twirl/Whip 中显示收益但随绳刚度和观察点数变化，高刚度的一点观察条件还可能更慢。实机 Unitree H1-2 的三类任务在先前未见的物理绳上做短三次尝试，30 Hz policy/250 Hz 指令发布，T1→T3 持续旋转任务有改善，但实机并无同 checkpoint 的 retain-vs-reset 随机对照，故实机趋势不能单独证明记忆因果。评价没有长 session、跨换绳隔离失败、安全控制或生产稳定性证据。
+- Trade-off 与适用边界：保存上下文增加 attention 工作、旧绳/旧 episode 串扰、延迟反馈与可解释性成本；段长 128 是当前缓存段，不等于全历史无限可见。物理条件每次确实重新采样、旧传感器标定失效或状态过期时必须清空；短任务或可直接测得充分状态时，stateless policy 更稳。这里的 episode-scoped memory 不继承 Agent 长期用户记忆的权限语义。
+- Books Decision：`MULTIMODAL-EMBODIED-VLA` Ch26，细化原有“reset 频繁时无状态更可靠”为按持久动力学身份决定 memory reset；既有机制没有被取代。Design Delta 2、System Reach 1、Durability 2，合计 5/9。独立审阅核对 exact-v1、已有 owner 与写回正文后通过；并据此把“回到初态”改为“复位到规定初始条件”，把校准变化明确标作工程推断。本项完成不代表整份 Daily 的候选分母已闭合。

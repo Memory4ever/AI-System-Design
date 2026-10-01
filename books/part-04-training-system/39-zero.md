@@ -47,6 +47,22 @@ Parameters 与 gradients 仍完整存在。Owned shard 更新后，需要让其�
 
 Stage 1 适合 optimizer states 是主要压力、完整 parameters/gradients 仍可容纳的场景。
 
+上述 `D` 分片公式默认被处理的参数在同一个 DP group 内等价复制。MoE 同时使用 Expert Parallelism 时，这个前提不再对所有参数相同：各 expert 只放在自己的 EP rank 上、跨 DP 复制；attention 等非 expert 参数则跨 DP 和 EP 都复制。若仍把所有 optimizer state 只按 DP 分片，非 expert state 会在 EP rank 之间保留多余副本。一个更精确的 owner 选择是按参数复制域分组：expert state 在 DP 维度分片，非 expert state 在 DP×EP 维度分片，更新和 checkpoint 都保存对应 process-group/参数身份，而不能把两组 shard 当成同一组 offset。
+
+这条分支减少的是可复制的 optimizer state 与相关更新压力，不改变 expert dispatch、forward/backward 或 activation 的成本；它还增加参数分类、跨组同步与恢复时重新分片的复杂度。EP 未启用、非 expert state 占比很小或 group 管理成本占主导时，普通 ZeRO-1 更简单。Aurora 上的受限 MoE 实验报告 optimizer step 的改进并不等于端到端训练等比例加速，也不能移植成其他 GPU/网络拓扑的通用收益。<!-- source-family:SF-2026-ARXIV-2604-00785 -->
+
+### 分片与低比特状态压缩是两条不同的轴
+
+ZeRO-1减少副本数，低比特optimizer则减少每个副本的`b_o`；二者可以组合，但不能用更少bytes证明更新等价。固定8-bit在统计稳定时简单；层与训练阶段的敏感度变化后，一条分支周期性收集gradient RMS、离散度及二阶统计，相对全局EMA选择各层状态精度，再对一阶moment作分块线性量化、二阶moment作对数量化。这里调整的是optimizer state，不是learning rate；分布式owner还需一致地执行精度与编码转换。
+
+动态精度把容量压力换成统计同步、重编码与累积误差，也可能在低精度中先损失信息，之后升位并不能恢复它。[STQuant的受限实验](https://arxiv.org/html/2604.06836v1)覆盖GPT-2、ViT/RoBERTa及四卡/单卡A800 FP16；去掉空间因素的消融反而以较高平均bit换来更低PPL，说明目标是质量—容量取舍，不是每个组件都改善质量。不能据此保证大规模多模态收敛、端到端吞吐、常数辅助内存或checkpoint恢复；统计不稳定时保留固定精度基线，编码与精度策略则随optimizer state一起保存。<!-- source-family:SF-2026-ARXIV-2604-06836 -->
+
+### 低秩状态还需要保存坐标身份
+
+减少副本数与减少每个状态的 bit 数，都没有处理 activation 随 batch 和序列增长的压力。另一条可组合但并非 ZeRO 自身的分支，是在线学习输入 activation 的低秩基：forward 仍使用完整输入，只为 backward 保存投影；由投影得到低秩 weight gradient 和 optimizer state，再把更新映回完整权重。这不是冻结 base 只训练 adapter，也不保证 backward 与完整训练等价。
+
+基随训练变化后，旧 moment 不能直接沿用原坐标。一个实现用 Oja 更新并重正交化 basis，以新旧基的重叠运输一阶 moment；二阶 moment 只保存逐坐标统计，无法精确恢复全部 cross-coordinate covariance，因此需要近似运输。basis、rank、运输规则和 moment 共同构成训练状态，而不是可随意替换的压缩附件。它用投影、重正交化、统计运输和近似更新换取容量，rank 或 subspace learning rate 失配会损害质量；梯度不集中、漂移过快或质量回归失败时，保留完整 activation、recompute 及普通分片更可靠。[OASIS 的有限实验](https://arxiv.org/html/2604.09406v1)有低 rank 退步，不能把 exact forward 写成精确训练或大规模分布式收敛保证。<!-- source-family:SF-2026-ARXIV-2604-09406 -->
+
 ## Stage 2：进一步分片 Gradients
 
 Stage 2 让 gradient aggregation 直接产生 owned gradient shards：
@@ -266,6 +282,10 @@ CPU master parameters + gradients + optimizer state
 → evict transient layer cache
 ```
 
+这条流式路径还需要把“已预取”细化成可检查的buffer生命周期。层执行模板不能永久绑定一组驻留GPU权重指针，而是在Weights-Ready之后绑定当前working set；Backward-Done表示梯度已可搬回CPU，Buffer-Free则必须等相关offload排空后才允许复用。同一ping-pong槽位若在D2H完成前被下一层覆盖，forward可能正常，CPU optimizer却消费了错误梯度。H2D、compute、D2H分流和有界pinned staging slabs减少互相等待，但不是把整模型pin住，也不是删除这些依赖。
+
+因此overlap只在计算足以覆盖搬运时隐藏延迟；PCIe或CPU更新成为瓶颈时仍会串行等待。事件、layer绑定、gradient accumulation和CPU update版本须一并进入checkpoint一致性边界。这是[流式训练实现](https://arxiv.org/html/2604.05091v1)对前述容量分支的具体落实，不改变ZeRO的状态owner，也不把H200 PCIe与GH200 C2C看成同一传输条件。<!-- source-family:SF-2026-ARXIV-2604-05091 -->
+
 这是容量优先的 offload extreme，不是 ZeRO 的普遍后继。它以 PCIe traffic、CPU memory bandwidth、optimizer
 latency、pinned-buffer pressure 和更长 step time 换取单卡容量；checkpoint 必须在 CPU update、next-layer prefetch
 与 model-version commit 之间定义一致边界。NVMe offload 可继续扩大容量但增加更深 pipeline；多 GPU ZeRO 在
@@ -350,6 +370,14 @@ ZeRO 逐步分片 optimizer states、gradients 和 parameters，消除标准 DP 
 它不是通用 OOM 开关。Activation、workspace、network、offload 层级和恢复语义必须分别建模。正确 ZeRO 配置应从 memory breakdown 出发，并用通信、吞吐、数值与 restore 共同验证。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-09406`，Experimental：[exact-v1](https://arxiv.org/html/2604.09406v1) §3/Algorithm 1/§3.2、Tables 1–3、§4.3/5 支持在线 activation basis 与近似 moment transport 分支。受测 Llama-2 7B、Llama-3.2 1B 微调及 130M/350M C4 预训练；1B rank 32 的 GSM8K 23.78 低于 Adam 27.09，350M validation loss 也不是全面优于 LDAdam。未采用 peak-memory 倍率作为任意 hardware/batch/length 保证；未验证与 ZeRO 组合、distributed checkpoint restore 或全面训练加速。root 已完成必要原文与实际正文/相邻链路的写后独立复核，通过，本地实验未复现。
+
+- [STQuant 2604.06836v1](https://arxiv.org/html/2604.06836v1)，Experimental；§3.2–3.5、Algorithm1、§4与Table4。采用按层/时间的gradient-statistics precision proposal及moment编码分工，不采用摘要的near-optimal/O(1)/万亿模型保证；Fisher/Hessian类比不是一般等式，算法与正文CV定义也需实现确认。作者内存统计不是全训练峰值，消融同时移动bit与PPL。
+
+- [MegaTrain 2604.05091v1](https://arxiv.org/html/2604.05091v1)，Experimental；§3.1–3.4、§4及AppendixA。采用layer-template动态绑定、Weights-Ready/Backward-Done/Buffer-Free、有限host slab；不采用无条件隐藏搬运、跨互联普遍吞吐或未测试的故障恢复保证。
+
+- `SF-2026-ARXIV-2604-00785`，Status: Experimental：[exact-v1 §3.2、Table 3](https://arxiv.org/html/2604.00785v1) 支持按 expert/non-expert 复制域选择 optimizer shard group；Aurora Intel PVC 的 optimizer-step 1.07–1.36× 与全步最高 1.19× 是作者特定模型/拓扑结果，不证明任意 EP/DP、checkpoint 恢复或跨硬件收益。
 
 - `SF-2026-ARXIV-2609-04609`，CIERA，Status: Experimental：exact-v1 §2–4、Algorithm A 的双端缓存、字段编码和有限训练测试支持状态化无损通信分支；独立64-bit hash假设不是绝无碰撞证明，4/8/16卡实测与更大规模模拟分开。未采用普适加速数字，未验证失配/故障恢复；正文的重建与回退是设计要求。https://arxiv.org/html/2609.04609v1
 

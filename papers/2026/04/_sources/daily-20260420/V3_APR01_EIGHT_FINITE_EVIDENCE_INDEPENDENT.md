@@ -1,0 +1,16 @@
+# 04/20 八项有限非作者 Evidence→Owner 核验
+
+2026-09-28。只核下列八个已入 04/20 正式 §4、但尚待非作者单篇裁决的家族。作者证据见 [README §4](../../20/README.md) 和 [v3-reopen-notes](v3-reopen-notes.md)；本轮重新打开各官方 exact-v1 的决定性方法/反证及现有章节实际命题，不重读全部附录、不重抓来源。这里的 PASS 仅指所列处置与边界可维持，不等于整日日期、来源、Books 或日级 Gate，也不表示实验复现。
+
+| ID | 独立必要核查与真实 owner 对照 | 裁决 |
+| --- | --- | --- |
+| [15710 VoxMind](https://arxiv.org/html/2604.15710v1) | §3.4 的 Eq.4–5 是生成 reasoning 后主 Agent 对 local set 取下一 action，同时辅助模型从 global pool 提候选；只有显式 retrieval action 才合并入下轮工具集，非辅助模型直接执行。§4 的工具数/等待实验及 VoiceBench 反退不支持任意规模常数时延或能力无损。Ch78 的 intent→discovery→authorization→execution→observation 链在正文开头已明确，候选预取不取得执行权。 | **PASS 5 标准、仅报告。** 有局部关键路径分支，但没有改变长期工具授权/执行 owner；不以前沿语音名词强写 Books。 |
+| [15717 Gray Zone](https://arxiv.org/html/2604.15717v1) | §5.1/Appendix A.4 的三次 retry、每次两 trial、每 trial 四轮、八变体与 judge 筛选使 ASR 为选择后协议值；§5.1 的 judge 及有限人工核不能解释成真实部署风险或训练成因。Ch72 已把外来 context 与授权分开，并明确 attempt、feedback、turn budget 和正常效用并验。 | **PASS 6 深入、仅报告。** 保 context×目标的受限反证，不采“安全研究语境授予权限”或普遍防线崩溃。 |
+| [15715 GTA-2](https://arxiv.org/html/2604.15715v1) | §3.3/§4/Table6 的 Tool SR、weighted leaf/root 和 terminal deliverable 是不同分母；Kimi Tool SR 89.85 对 Root SR 8.33。Table7 的换 harness 子集同时增加时间/费用，judge 有受限正偏。Ch66 System Evaluation 已区分 tool choice、execution evidence 与端到端 outcome，Ch79 的计划状态也不将 call success 当最终用户任务完成。 | **PASS 6 标准、仅报告。** 提供有价值的受限 evaluator 对照，不新增通用长期 owner 契约。 |
+| [15728 PPRoute](https://arxiv.org/html/2604.15728v1) | §3.3 印刷 `C_ij=1[A_ij>B_ij]`、列和阈值 `S_j≥n−k`；全分数相等且 `0<k<n` 时各列和0，返回空集而非 k 项。Table4 的52轮、约9.985 MB、.248s与 bitonic 的通信量1.23 MB分账；semi-honest MPC只在 router encoder/selection。Ch72 不能把这条有中心反例的 exact-top-k 宣称作隐私正面证明。 | **PASS 6 争议、窄暂缓。** 只隔离打印 top-k 保证；不推断代码同错、隐私泄漏或所有实验无效。同版 tie-break/零分母与实现说明可重开。 |
+| [15732 LAAR](https://arxiv.org/html/2604.15732v1) | §4 明示 TTCA 是到首个自动判对的累积时长，十次仍错为右删失、不是生产遥测；§5 的 `L/Q` 只在独立同分布重试等理想条件为 proxy。§6–7 明示 router 耗时未计、64k 部分反例。Ch56 已有 quality/latency/queue/SLO 的 routing 分权。 | **PASS 6 标准、仅报告。** UUID-key 受限工作点不能变成在线正确性 oracle 或生产最优 SLO。 |
+| [15774 MemEvoBench](https://arxiv.org/html/2604.15774v1) | §4.1 三轮直接把上轮输出附入可检索 memory，非偏置反馈的平均 ASR 75.9/75.2/80.1 无单调上升；偏置反馈 71.6/84.9/87.8 才显示该构造压力。§4.3 QA 的 ModTool 同时含 `web_search` 与 `correct_memory`，workflow 只有后者，差额不能单因果归 memory edit。Ch77 的 episode provenance、feedback 不自动获事实/policy authority、durable write/retention gate 已有实际正文。 | **PASS 6 标准、窄 Existing Ch77。** 不声称现章已含本 benchmark 的 taxonomy 或测得防御效果。 |
+| [15840 CoEvolve](https://arxiv.org/html/2604.15840v1) | §3.1–3.3 从当前 policy 的 forgetting、同题成功/失败边界与 rare pattern 产 environment proposal，经探索和验证后变训练样本；作者还披露 reward 阳性不必等于真实完成，探索/反馈成本与静态对照不完全匹配。Ch31 §Feedback Loop 已明确 capability boundary→verifier diagnosis→environment/interface proposal→独立 gate，且保非平稳污染与 held-out 回退。 | **PASS 6 标准、窄 Existing Ch31。** 不说三种具体 heuristic 已写入或作者实现可无条件迁移。 |
+| [15938 VADF](https://arxiv.org/html/2604.15938v1) | §4.2 Eq.4/6/7：若 `q=w/Σw` 却不对采样 MSE 作 `1/q` 校正，`E_q[loss]` 不等原 `E_uniform[w·loss]`；例如 `w=(1,3), loss=(1,2)` 为 1.75 vs 3.5。Alg.1 的 `r=−standardized(loss)` 更新又与 Eq.8 以正 loss 提高 hard 权重方向相反。其视觉阶段调整 denoise/action horizon 是局部有效分支，但不能沿中央无偏/难例保证写 Ch24/25 正面决策。 | **PASS 6 纠错深入、窄争议暂缓。** 保受限机器人表，不推实现必然同错；需作者澄清归一/importance 与符号路径才重开强保证。 |
+
+八项结果：2 Existing、4 仅报告、2 中心争议暂缓；与作者现行 04/20 表及具体源/owner 边界一致。本轮未改变正式报告、Books、来源或日期状态。

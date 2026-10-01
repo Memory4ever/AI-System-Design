@@ -340,7 +340,7 @@ sequence shape、sampling path 与硬件拓扑，以端到端 goodput 而不是 
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-29565 -->
 
-跨请求预推进把一部分 Prefill 和入口 Decode 移出 critical path，却会消耗闲时算力并引入 false accept、stale state、隐私保留和资源公平问题。它与 draft-model speculative decoding 不同：这里推测的是“下一次会话状态”，而不是同一请求中的 token；命中率、错误接纳率、能耗和取消成本必须一起进入 SLO。现有结果只覆盖作者披露的单机、量化模型和 capability-gated fast path，不能外推为任意 session 的收益；单次无状态请求、低重复会话或状态频繁变化时，按需执行仍是更简单且更容易隔离的分支。
+跨请求预推进把一部分 Prefill 和入口 Decode 移出 critical path，却会消耗闲时算力并引入 false accept、stale state、隐私保留和资源公平问题。它与 draft-model speculative decoding 不同：这里推测的是“下一次会话状态”，而不是同一请求中的 token；命中率、错误接纳率、能耗和取消成本必须一起进入 SLO。现有结果限专有 engine、单机量化 target 与 capability-gated fast path，较小 target 在受测配置下并未触发 gate，且大量收益来自测量常数上的闭式推导，不能外推为任意 session 的实测收益。置信漂移或任何 state mutation 都必须使预推进失效并恢复普通 Decode；单次无状态请求、低重复会话或状态频繁变化时，按需执行仍是更简单且更容易隔离的分支。
 
 ### Session-local Surrogate 必须携带切换与回退身份
 
@@ -412,14 +412,10 @@ Primary-source / official entry points：
 
 Review note：`SF-2026-ARXIV-2606-29565`；Method `https://arxiv.org/html/2606.29565v1 — §2 Problem Formulation; speculative pre-positioning state machine`；Evaluation `https://arxiv.org/html/2606.29565v1 — §4 Experimental Setup; 5 Evaluation`；未证明边界 `https://arxiv.org/html/2606.29565v1 — §6 Discussion`。
 
-### Source-family integration record
-
-
-
 <!-- june29-owner:INFER-REQUEST-LIFECYCLE:start -->
-### 2026-06-29 约束变化与机制增量
+### 2026-06-29 来源范围补记
 
-**Owner-merged 正文（覆盖 `SF-2026-ARXIV-2606-29565`）。** 现有 request state machine 到 RELEASED 为止，没有持有跨请求 idle-window speculative state、base-state identity、confidence gate 与 mutation invalidation。 因此本次把这些增量合并到同一知识 owner：有状态会话的 idle time 可用于推演到下个 decision point；request lifecycle owner 保存 speculative state、acceptance confidence 与 base-state identity，命中后才原子提交。False accept、用户输入或 state drift 立即作废预推进并回退正常 decode。 共同代价与回退边界是：只在 LayerScale 专有 engine、单 H100、70B-class 4-bit target 上测得 capability-gated fast path；8B BF16 不触发 gate，且大量收益为测量常数上的闭式推导。任何 state mutation 或置信漂移都必须 invalidate 并恢复普通 decode。
+`SF-2026-ARXIV-2606-29565` 的既有审阅记录限 LayerScale 专有 engine、单 H100、70B-class 4-bit target 的 capability-gated fast path；8B BF16 不触发 gate，大量收益为测量常数上的闭式推导，并非任意会话与模型的实测收益。Method/Evaluation/Discussion 定位见上方 source-specific Review note。
 
 <!-- june29-owner:INFER-REQUEST-LIFECYCLE:end -->
 

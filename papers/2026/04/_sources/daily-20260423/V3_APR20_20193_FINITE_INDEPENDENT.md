@@ -1,0 +1,7 @@
+# 2604.20193v1 有界非作者源→owner 核
+
+复核者 `apr20_resume`，2026-09-28。只核[官方 exact-v1](https://arxiv.org/html/2604.20193v1) §3.2 Algorithm 1、§3.3.2–3.4 Algorithm 2、§4.2–4.3 Tables 1–2，与实际[Ch26](../../../../../books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md) 的闭环主干和物理安全责任。未读全附件、未复现实机或审核 ISO 认证；不签 04/23 日期/来源/整日 Gate。
+
+**有限裁决：PASS，须保留 root 的限定措辞。** Algorithm 1 从 LLM 文本解析 `v_max/T_stop/d_brake/DC`，再对同一文本调用 `CheckCompliance(…, Cat.3)`；原文未给独立于 LLM 解释的规范 oracle 或完整验证对象，不能把语义解析成功说成 ISO 资格证明。Algorithm 2 对 ADC 稳定且 `t_exec<T_limit` 输出 Safety Logic，否则 E-stop，属于明确的执行分支而非所有传感器/共同原因故障均被覆盖的实证。Table 1 的 `T_stop=t_perc+t_infer+t_post` 三场景观测峰值 52.60–57.66 ms，来自 10,000 次受限 profile；论文把机械制动放入距离 margin，并未在此测量完整 actuator/stop 链。有限样本最大值可作局部观测，不是任意输入/故障下的 WCET 上界。Table 2 的 sensor-fault 检出 2010.45 ms、heartbeat 恢复 39627.63 ms 属另一故障时序，不能与 Table 1 拼成“所有故障下始终 58 ms 保护响应”。两板继续输出也不能证明共同感知错误已检测；这不反向证明实际系统一定不安全。
+
+Ch26 已明确 `perception → proposal → controller → environment → observation`，模型只拥有 trajectory/action proposal，low-level controller 与 safety envelope 拥有物理提交权，并要求 near miss、intervention、recovery、unsafe rejection 等闭环验收。论文的 LLM 设计期解析与有限 RK3588/INT8/C++/SCHED_FIFO 硬件案例不新增另一可据以更改该长期命题的已验证控制责任。故同意 **ISO/通用 WCET/连续安全的印刷正面保证窄 `Disputed`，受限边缘案例 `Weekly/Daily Only`，Books `No Change — Existing Coverage`**。保留其局部时延与故障注入表，不把表 3 host-side semantic AUC 算作 edge 安全路径。可重开仅需针对所宣称保护范围的独立规范/故障覆盖、完整 sensor→actuator 时序与故障安全状态的可核证据，或作者将保证收窄；无须全附件/全部 benchmark。

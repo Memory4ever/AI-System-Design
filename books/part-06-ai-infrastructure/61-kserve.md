@@ -125,6 +125,12 @@ KServe v0.19.0 的 signed release 为 applied/observed topology、LocalModel、s
 与 graceful termination 提供版本化实现证据；它不证明所有 runtime、Gateway、accelerator 与 failure path 已在
 统一生产 SLO 下成立。普通 `InferenceService` 在 topology 简单时仍是低复杂度分支。
 
+终止清理还不能依赖无关 peer 的 desired state 已经有效。正常运行时按完整配置重建路由是合理路径，但删除一个 group member 需要存活 peer 先从自己控制的 route 中移除该 backend；若 peer 因缺少 preset 进入 terminal 配置错误，复用正常 reconcile 就可能让 finalizer 永远等待。更窄的生命周期分支先根据观察到的成员与路由状态清理 terminating backend，再继续正常协调。它只修改自身控制的 group route；资源不存在与无权读取必须分开，不能把授权失败当作无需清理的证明。
+
+顺序独立还不够，错误的重试分类也要独立：清理错误可以与配置错误共同记录，但不能把需要重试的清理失败与 terminal 配置错误合并返回，否则 retry 可能被抑制。路由 patch、冲突重试与 applied membership 修复增加控制面成本，状态提交也不表示所有用户规则已经收敛；原 spec 重渲染仍可能重新加入被清理的 peer。因此这是一条按 ownership 隔离退出工作与正常协调的分支，不证明所有 finalizer 都可靠终止，也不改变 runtime 的 token/KV 权力。下面的发布与回滚只有结合这种可观察的退出结果，才不至于把“新 revision 已上线”误当作“旧 revision 已完全退出”。
+
+<!-- source-family:SF-2026-KSERVE-V0-21-0 -->
+
 ## 发布、流量与回滚
 
 KServe 可以把 service revision 与底层网络能力结合，但生产发布仍要明确：
@@ -195,3 +201,4 @@ KServe 把模型服务从手工容器变成可协调、可版本化的 desired s
   https://github.com/kserve/kserve/releases/tag/v0.19.0
 - The Lazy Pod That Lies（lazy model delivery、deferred cost 与 snapshotter failure semantics；
   Status: Experimental）: https://arxiv.org/abs/2608.19412
+- `SF-2026-KSERVE-V0-21-0`：[v0.21.0 release](https://github.com/kserve/kserve/releases/tag/v0.21.0)，commit `d1482554fc4f66dd41aee70e01f5174e24f265bd`；必要 [PR #6156](https://github.com/kserve/kserve/pull/6156)、该版本 `controller.go` / `router_group_cleanup.go`。09/08 PR先公开，09/26正式release是本窗发布事件。采用范围仅controller-owned group route；cleanup与desired-state error仅日志合并，返回清理错误保持retry。作者manager/envtest与fault-injection支持该边界，但user-authored规则重渲染仍可能重加terminating peer；未在本项目集群复现，不保证所有删除完成。

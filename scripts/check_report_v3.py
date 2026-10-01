@@ -181,6 +181,10 @@ def validate(text, registry, root=None, path=None, stable_node_ids=None):
         repeated = "不重复评分" in score
         important_revision = bool(re.search(r"重要\s*(?:修订|revision)|important[_ ]revision", score, re.IGNORECASE))
         scoring = re.search(r"(?<!\d)(\d+)\s*\+\s*(\d+)\s*\+\s*(\d+)\s*=\s*(\d+)(?!\d)", score)
+        if repeated and not important_revision:
+            errors.append(f"候选仅重要修订可不重复评分；已处理的重复事件不重列：{material}")
+        if important_revision and (not repeated or scoring):
+            errors.append(f"重要修订须写不重复评分，不能同时列数字评分：{material}")
         total = None
         if scoring:
             d, r, l, total = map(int, scoring.groups())
@@ -188,8 +192,6 @@ def validate(text, registry, root=None, path=None, stable_node_ids=None):
                 errors.append(f"候选评分必须三项 0..3 且合计正确：{material}")
         elif not repeated:
             errors.append(f"新候选缺少 d+r+l=total 评分：{material}")
-        if repeated and not re.search(r"revision|修订|已处理", score, re.IGNORECASE):
-            errors.append(f"不重复评分需明确 revision 或已处理：{material}")
         if review not in {"深入完成", "标准完成", "已关闭", "待审阅", "受阻", "争议"}:
             errors.append(f"候选审阅结果无效：{review}")
         if total is not None and total >= 7 and review in {"标准完成", "已关闭"}:
@@ -215,9 +217,12 @@ def validate(text, registry, root=None, path=None, stable_node_ids=None):
             errors.append(f"Books 整合需要深入完成：{material}")
         if decision == "已有覆盖" and review in {"受阻", "争议", "待审阅"}:
             errors.append(f"Books 已有覆盖不能由未完成审阅支持：{material}")
-        if (not repeated or important_revision) and review in {"深入完成", "标准完成", "已关闭"} and link:
+        needs_evidence = review in {"深入完成", "标准完成", "已关闭"} or (
+            important_revision and review in {"受阻", "争议"}
+        )
+        if needs_evidence and link:
             if bodies.get((link[1], link[2]), "") in ABSENT:
-                errors.append(f"已审阅新候选缺少 §4 同标题同 URL 的具体正文：{material}")
+                errors.append(f"候选缺少 §4 同标题同 URL 的具体正文或受阻争议说明：{material}")
         pending |= review == "待审阅"
         blocked |= review in {"受阻", "争议"}
         deferred |= decision == "暂缓"
@@ -242,16 +247,14 @@ def validate(text, registry, root=None, path=None, stable_node_ids=None):
                 "完成报告的外部缺口必须在 §5 标为终态保留项，明确不支持正面证据、"
                 "Books 或无遗漏断言，并给出定点重开条件"
             )
-    if status == "完成":
         review_text = sections.get(SECTIONS[5], "")
         reviewer = re.search(r"^复核者：[ \t]*(.*)$", review_text, re.MULTILINE)
         if not reviewer or reviewer[1].strip() in ABSENT:
             errors.append("完成报告需要非空复核者身份")
         conclusion = re.search(r"^结论：[ \t]*(通过|未通过)[ \t]*$", review_text, re.MULTILINE)
-        if not conclusion or (status == "完成" and conclusion[1] != "通过"):
+        if not conclusion or conclusion[1] != "通过":
             errors.append("完成报告需要已结束且通过的复核结论")
-        elif conclusion[1] == "未通过":
-            explanation = re.sub(r"^(?:复核者|结论)：.*$", "", review_text, flags=re.MULTILINE).strip()
-            if explanation in ABSENT:
-                errors.append("复核未通过必须具体说明外部问题")
+        explanation = re.sub(r"^(?:复核者|结论)：.*$", "", review_text, flags=re.MULTILINE).strip()
+        if explanation in ABSENT:
+            errors.append("完成报告须说明实际复核范围与结果，不能只有复核者和通过结论")
     return errors

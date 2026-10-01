@@ -1,0 +1,7 @@
+# Hosted LLM Replication Without Persistence — 2026-09-23 定点证据
+
+- Source Family：`SF-2026-ARXIV-2609-22478`；[版本记录](https://arxiv.org/abs/2609.22478)、[exact-v1 HTML](https://arxiv.org/html/2609.22478v1)。官方 arXiv 09-22 New 公告批次属于本窗；v1 09-18 投稿字段不能当公开日期。本篇复测的旧研究与新研究是同一测量问题的连续证据，不把旧结论重新当作新首发。
+- 准入与评分：它以同一 sequential hidden-state 任务分开 fresh-data replication、同 identifier 当日重建 instrument 的 sensitivity、共同 instrument 下跨 identifier persistence。其贡献是评价合同的受限实证，不是新 hosted-serving 内部机制。Design Delta 1、System Reach 2、Durability 2，合计 5。
+- 方法：§2–4。Regent Chess 的隐藏目标状态由环境引擎独立记录，每次 action 时分别调用行动与 belief elicitation，避免把答案和置信度混作同一输出。H→R 改动六个 measurement/inference 配置成分，虽同 identifier/同日，其效果只能归给**整组配置**，不能识别单个成分。跨 identifier 的 A/C 对照使用同一 4K ceiling、同一 R 配置且同一窗口 interleaved；两者仍同时改变 release、tier 和所诱导轨迹，不能归因纯版本。D 先于规则冻结，E/F exploratory，不享有同等确认性。
+- 结果与边界：§5–9、Appendix A.5/A.6/A.12。旧 H 配置新数据复测保持原端点方向，R 同日对照使端点移动；R 下后续 identifier 方向变化，但只能说明 tested identifiers/measurement contract 不同。研究限一个固定对手、单一游戏隐状态、Gemini lineage 的主 factorial 和一个 provider 迁移；输出 ceiling 在主格未截断，不能解释为 token-budget 因果效应。统计区间按 game cluster 而非逐事件独立重采样。作者没有证明 hosted backend 发生特定漂移，也没有证明后续模型已消除错误。
+- Books：`PLATFORM-EVALUATION-SYSTEM` Ch66 已明确 `model × benchmark × harness × environment × scorer` 身份及 raw cohort→render/prompt hash→resolved model/call→annotation→analysis 的 run identity（章内“数值可复算不等于复现了同一个实验”）。本篇的三种比较是该合同在单一任务的受限实例，没有改变长期发布/评估设计结论；处置为 `已有覆盖`，不增加论文列举或重复正文。

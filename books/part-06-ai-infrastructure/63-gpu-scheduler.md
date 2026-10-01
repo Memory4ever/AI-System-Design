@@ -83,6 +83,13 @@ subject to
 
 权重不是普适常数。训练、interactive notebook 和 online inference 具有不同等待成本与抢占代价。
 
+Fragmentation 也要区分两种 owner。Job 的 GPU 数与 node 形状天然不整除时，剩余空间是 workload-induced；调度器把本可合并的 jobs 分散到更多 partial nodes，则是 scheduler-induced。只最大化当前可行 placement 会把后者藏进“总空闲 GPU”指标。一个更可审计的策略以 anchor node 表示可复原的紧凑布局，在 arrival/departure 时显式执行 place/remove/compact，并把迁移成本和 gang feasibility 纳入决定。它用重排、状态迁移与控制面开销换取未来可用的连续拓扑；作者 trace/testbed 不能证明任意 workload 都值得 compact。迁移昂贵、作业不可抢占或空闲量主要来自不可避免形状时，应保留 best-fit/queueing，而不是为了指标强制搬迁。
+
+失败后的 restart 也不是固定常数。只按瞬时 goodput 排序会反复延后长等待 job，并忽略 checkpoint load 已经支付的成本；age key 与分解后的 restart factor 可以分别表示等待债务、productive time 和 reload overhead，再与 goodput 一起进入每轮效用。它改善的是 starvation/restart-aware frontier，不授予某套权重跨集群通用性。OAK 的 12-GPU 仿真与 4-V100 实验只支持披露 failure/load 模型；预测漂移、不可抢占 job 或硬优先级存在时，应回退显式 reservation、FIFO/DRF 或保守 restart policy。
+
+<!-- source-family:arxiv:2609.18519v1 -->
+<!-- source-family:arxiv:2609.19024v1 -->
+
 ### 从 Pod Placement 到 Workload Snapshot
 
 单 Pod 的 Filter/Score/Bind 在成员彼此独立时最简单；gang、分布式训练或有依赖的服务若逐 Pod 决策，早到成员
@@ -137,6 +144,10 @@ Segment 减少跨低带宽边界的 collective traffic，却会因 nodes-down、
 常见公平模型包括 quota、weighted fair share 与 Dominant Resource Fairness。GPU 集群中不能只看 GPU 数量；CPU、memory、network、storage bandwidth 也可能成为 dominant resource。
 
 借用空闲 quota 能提升利用率，但需要 reclaim/preemption 规则。抢占一个训练任务的成本取决于最近 checkpoint；抢占一个 serving replica 的成本取决于剩余 capacity、KV state 和 SLO。Scheduler 必须看到 workload class，不能把 victim 只表示成“释放 8 GPU”。
+
+静态 quota 和借用规则容易解释，却难让租户私有的当期 SLO/迁移代价与运营方私有的供电、冷却、维护和拓扑压力持续协调。一条条件分支允许租户在运行中提出保留、放弃或重议现有 allocation 的 proposal，由运营方把物理压力折成价格或回收信号，并保留最终匹配、事务与紧急硬约束仲裁权。价格传递的是受限资源压力，不赋予租户设备所有权，也不证明报价等于真实效用或分配全局公平。<!-- source-family:SF-2026-ARXIV-2604-22509 -->
+
+持续重议会支付 profile、控制面通信、价格波动与 checkpoint/migration 成本；重配置太贵时，原固定 quota 或先来先服务仍可能更稳妥。租户报价不可信、硬电力/故障约束需要立即执行，或作业不可安全迁移时，operator 的 quota、lease、硬安全和保守 reclaim 必须优先于软价格。作者 trace/profile 模拟覆盖所测 LLM serving、训练与 batch analytics，不是生产云 A/B，也未证明 request-tail SLO、策略真实性或隐私保证。
 
 ## GPU Sharing 的语义不同
 
@@ -299,7 +310,15 @@ GPU scheduler 最初按卡数和显存做 placement；异构 accelerator、MIG�
 
 GPU scheduler 的任务不是简单填满设备，而是在设备/拓扑硬约束下形成可执行 workload，并维持长期公平与可接受抢占成本。下一章进入 Volcano，查看这些原则如何被表达为 PodGroup、Queue、actions 与 plugins。
 
+### Reclaimable Sharing 需要 Entitlement 与 Interference 的联合 Assurance
+
+静态配额易解释却降低利用率；可回收共享允许借用空闲 GPU，但调度器必须同时追踪 entitlement deficit、reclaim latency/preemption risk 与 colocated interference。借用者拥有可撤销 lease，不取得永久容量；归还路径与受影响作业的 SLO evidence 必须先于更高 oversubscription。<!-- source-family:SF-2026-ARXIV-2609-16682 -->
+
+预测式 reclaim 提高利用率也会放大误判、checkpoint 成本和性能干扰。模型置信不足、作业不可安全抢占或集群差异超出校准范围时，应回退硬配额、隔离 placement 或保守 headroom；作者结果不能提供通用 oversubscription 比例。
+
 ## Review notes
+
+- `SF-2026-ARXIV-2604-22509`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2604.22509v1) §2.3、§4.1–4.5、§5.1/5.5、§7；Daily 2026-04-27。只吸收租户私有效用与运营方私有物理约束通过持续重议接口分权的条件分支。8–23% 属作者 trace/profile 模拟及其同租户 autoscaler/预算对照；高重配置成本可退近 FCFS，不作生产 SLO、strategy-proofness 或 privacy 保证。未复现实验，待独立写后与整日 Gate。
 
 本章只定义通用机制，不绑定具体 scheduler。自检答案回填增加了从 installed capacity 到 useful capacity 的约束收缩链，说明 GPU 调度为何是平台控制面的核心问题。它承接第 60 章的 training gang、第 56 章的 inference state，并为第 64～65 章提供统一比较坐标。
 

@@ -13,11 +13,13 @@ Decoder-only 模型每步输出 `V` 个 logits，为什么不能说“模型已�
 
 本章的核心判断是：**Sampling 是把模型条件分布转换为单条实际生成轨迹的决策过程。**它可以改变随机性、重复、尾部风险和输出多样性，不能增加 checkpoint 中不存在的知识，也不能把低概率正确答案稳定变成高概率答案。
 
+[上一章](./19-kv-cache.md)保存了逐层 K/V，使下一步能够复用历史计算；但 cache 不决定输出哪个 token。本章先完成 logits、候选处理、选择与停止的最小闭环，再讨论何时值得延长一条轨迹、生成多条轨迹，或增加更强的约束与验证。这些是受任务和预算约束的分支，不是每次生成都必须经过的阶段。
+
 本章使用 `B` 表示 batch size，`T` 表示 sequence length，`V` 表示 vocabulary size。
 
 ## Logits 还不是概率
 
-第18章得到：
+[第18章](./18-decoder-only.md)得到：
 
 ```text
 logits shape = [B,T,V]
@@ -43,7 +45,9 @@ p_i = exp(z_i-z_max) / sum_j exp(z_j-z_max)
 
 减去同一常数不会改变概率，却能减少 overflow。
 
-## 一个固定 logits 例子
+有了归一化后的分布，下一步仍不是唯一的：它可以支持确定选择，也可以支持随机抽样。先固定同一组 logits，才能看清各策略究竟改了什么。
+
+### 一个固定 logits 例子
 
 假设 vocabulary 只有三个候选，logits 为：
 
@@ -73,6 +77,8 @@ token = argmax_i z_i
 
 ## Temperature 改变分布锐度
 
+Greedy 在需要低随机性时足够直接；当同一个前缀允许多个合理续写时，先保留随机抽样，再控制分布的尖锐程度，比只取最大值更灵活。
+
 Temperature `tau > 0` 作用于 logits：
 
 ```text
@@ -95,6 +101,8 @@ Temperature 不改变 logits 排名，只改变相对概率。`tau -> 0` 的极�
 
 ## Top-k：固定保留 k 个候选
 
+温度会重新分配概率，却不会单独移除尾部候选。如果问题是少量极低概率 token 会把续写带偏，就需要限制允许抽样的集合。
+
 Top-k 只保留概率或 logits 最高的 `k` 个 token，其余设为 0，再重新归一化。
 
 例子中 `k=2`：
@@ -108,6 +116,8 @@ renorm = [0.731,0.269,0.000]
 它直接移除长尾候选，降低抽到极低概率 token 的风险。但固定 `k` 不感知分布形状：模型非常确定时仍保留 `k` 个，模型非常不确定时又可能只保留过少候选。
 
 ## Top-p：按累计概率动态截断
+
+固定候选数适合可接受集合大小相对稳定的情形；当不同前缀的分布锐度差异很大时，约束保留的概率质量更能随模型状态变化。
 
 Nucleus sampling 先按概率降序排列，选择累计概率达到阈值 `p` 的最小 token 集合，再归一化抽样。
 
@@ -128,7 +138,19 @@ token 1 cumulative = 0.910 >= 0.8
 
 Top-p 的候选数会随分布变化：模型确定时集合小，不确定时集合大。这是它相对固定 top-k 的主要适应性。
 
+## Logit penalties 与约束的边界
+
+Top-k 与 top-p 依据当前分数删减候选；如果任务还要求减少已出现内容的重复，或只允许合法格式，就需要把历史与任务约束也带入这一步。
+
+Repetition、frequency、presence penalties 会根据已生成 tokens 修改 logits；grammar-constrained decoding 会屏蔽不符合语法的候选。
+
+它们都发生在 token selection 层，却解决不同问题：penalty 是启发式偏好，grammar mask 是硬候选约束。它们可能改善格式或减少重复，也可能屏蔽正确 token。
+
+本章不展开具体 API，因为参数定义和顺序依赖实现。稳定原则是：任何 logits 变换都应进入 Evaluation 和可复现配置。
+
 ## 参数组合的顺序很重要
+
+现在已有改变分数、删减候选与调整锐度的不同操作。它们要共同作用于一次选择，因此必须先确定操作顺序，再讨论实际抽到了什么。
 
 常见逻辑是：
 
@@ -147,6 +169,8 @@ raw logits
 
 ## Random seed 与确定性边界
 
+固定处理顺序只固定了目标分布；随机样本能否复现，还取决于执行时如何消费随机数。
+
 随机抽样需要伪随机数。固定 seed、相同 logits、相同候选处理和相同随机数消费顺序时，通常可以复现 token 选择。
 
 但端到端确定性还可能受以下因素影响：
@@ -158,6 +182,35 @@ raw logits
 - 模型、tokenizer、prompt 或 adapter 不同。
 
 所以 `seed` 是生成配置的一部分，不是跨系统字节级复现保证。
+
+## EOS、停止条件和最大长度
+
+选中 token 后还不能无条件进入下一轮：输出可能已经完成，也可能需要由系统预算强制终止。停止规则因此与候选选择一起定义生成行为。
+
+EOS 是 vocabulary 中的特殊 token。若被选中，generation 可以结束。系统还可能使用：
+
+- Maximum generated tokens。
+- Stop token ids 或 stop strings。
+- Grammar/schema constraints。
+- 超时与任务预算。
+
+Stop string 可能跨 token 边界，需要 detokenization 或增量匹配；EOS 则直接在 token 层终止。二者不能混为一谈。
+
+若模型长期不给 EOS，max tokens 是系统安全边界。若 EOS 被错误 suppress，输出和 KV Cache 会持续增长。
+
+### 把单步选择接回自回归循环
+
+```text
+Decoder hidden state
+-> logits [B,V]
+-> temperature / filtering / constraints
+-> token id [B]
+-> append token id to sequence
+-> next Decode step computes and appends its K/V
+-> repeat until stop
+```
+
+这里有一个容易混淆的时序：采样先把 token id 追加到序列，下一次 Decode 才计算这个 token 的 K/V；若已经满足停止条件，就无需为了继续生成而再执行一步。至此，普通单轨迹生成已经完整，后面的控制与搜索只在这条基础路径触及约束时启用。
 
 ## Sampling 为什么会影响长程行为
 
@@ -173,7 +226,6 @@ x_(t+1) ~ p(. | x_<=t)
 
 不存在全任务通用的最佳参数。代码生成、创意写作、事实问答、结构化 JSON 和 Agent tool arguments 对随机性的容忍不同。
 
-
 ### 局部校准误差会复合成序列级多样性坍缩
 
 top-k、top-p 或 temperature 假设 token 概率的相对顺序和形状足以支持逐步选择；在短输出和低歧义任务中这是合理近似。长序列会把 order miscalibration 与 shape miscalibration 持续写回 prefix：前者让候选排序错误，后者让概率质量过尖或过平，局部误差最终表现为 sequence-level diversity collapse。评测因此要同时保存 token-level calibration slice 与整段输出的覆盖、多样性和正确性，不能只调一个解码超参数。
@@ -182,18 +234,9 @@ top-k、top-p 或 temperature 假设 token 概率的相对顺序和形状足以�
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-11128 -->
 
-## EOS、停止条件和最大长度
+## 单轨迹控制：何时多算、何时提交
 
-EOS 是 vocabulary 中的特殊 token。若被选中，generation 可以结束。系统还可能使用：
-
-- Maximum generated tokens。
-- Stop token ids 或 stop strings。
-- Grammar/schema constraints。
-- 超时与任务预算。
-
-Stop string 可能跨 token 边界，需要 detokenization 或增量匹配；EOS 则直接在 token 层终止。二者不能混为一谈。
-
-若模型长期不给 EOS，max tokens 是系统安全边界。若 EOS 被错误 suppress，输出和 KV Cache 会持续增长。
+逐步选择会改变后续前缀，因此长度不只是输出统计，也是一项可控制的计算预算。先从不修改模型的停止策略开始，再区分对轨迹内部状态的干预和对答案提交顺序的调整；它们优化的对象并不相同。
 
 ### Test-time Budget 是 Runtime Policy，不是免费能力
 
@@ -231,13 +274,23 @@ tokenizer、注入 layer、control vector、window、阈值和 prompt/adapter re
 
 ### Semantic Steering 可以从单向 Vector 扩展为受限 Subspace
 
+前一分支围绕是否继续探索调节轨迹；若目标变成引导特定语义行为，控制对象就从时长转向 hidden-state 方向。两者都干预生成过程，但语义 steering 不能充当停止策略或正确性验证。
+
 单个 steering vector 适合近似一维、方向稳定的概念；当概念在 hidden state 中占据多个相关方向时，固定向量会漏掉模式，过强插值又可能破坏流畅性。Conceptor 一类分支用 contrastive activations 估计概念子空间，再通过 interpolation 或 replacement 控制投影强度；layer quota 只用于发现可能有效的 intervention point，不能作为 correctness 或安全真值。
 
 子空间扩大 coverage，也会因 overlap、有限 pairs、layer drift 与 Boolean composition 产生非预期耦合，replacement 过强还可能生成退化输出。概念近似线性、简单向量已经稳定时保留旧方案；校准不足或外部行为 verifier 不通过时，应降低强度、关闭 steering 或回退提示/微调。exact-v1 只测试三种较小 instruction model、三个英文概念、单层 intervention 与自动 classifier，不证明生产行为正确或安全。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-04980 -->
 
-### Parallel Sampling：先分开 Coverage 与 Selection
+### Answer-first 与 Optional Justification
+
+延长或压短推理仍默认先生成过程、后提交答案。如果任务只要求尽早拿到答案、解释可以稍后提供，那么还可以调整输出次序，而不把这项接口选择混同于增加搜索能力。
+
+传统 reasoning decoding 把答案提交排在完整推理轨迹之后，这在 verifier、tool 或后续步骤必须消费过程时合理，却把 answer latency 与解释成本绑在一起。另一条条件分支是先生成并提交 final answer，再按需生成 answer-conditioned justification；训练时还可以 mask answer loss，只对 justification 提供监督。<!-- semantic-body-binding:SF-2026-ARXIV-2605-06165 -->
+
+后生成的解释不证明它忠实反映答案的因果过程，也可能把错误答案包装得更连贯。需要 faithful process、外部 verifier 消费 trace，或任务本身要求显式搜索时，仍应保留 pre-answer reasoning 或把搜索移入可审计的 workflow。该分支优化的是输出接口与延迟，不是凭空获得推理能力。
+
+## Parallel Sampling：先分开 Coverage 与 Selection
 
 延长一条轨迹是在纵向增加 sequential compute；并行采样则在横向生成多条候选，再决定接受哪一条：
 
@@ -254,11 +307,25 @@ prompt + decoding policy
 上界。扩大 `N` 可能提高覆盖率，也会带来更多近似答案、相关错误和选择成本；若 selector 的辨别力
 没有同步提高，更多样本甚至可能让最终选择更不稳定。
 
+候选 selection 还可以明确选择后的分布，而不只报告较高 reward。对有限 response support 上独立采自同一 base 的 n 个候选，在每个 reward/λ 上加独立 exponential noise 后取最大，得到的是目标 reward-tilted 分布与残余分布的有限-n mixture；n 有限时不能直接叫精确 tilted sampling。若 noisy score 越过真实 reward 上界导出的阈值，则 hit 分支恰好具有 tilted law；按独立随机顺序扫描并取第一个 hit，可利用 exponential overshoot 的 memorylessness 提前结束评分，无 hit 时仍需完成候选评分与选择。
+
+这些权限依赖有限 support、独立样本/噪声、真实 score 上界与固定评分规则，不是任意 judge threshold 的提前停止保证。加入截断的 draft–target likelihood ratio 会改变目标，更多候选只能缩小有限-n误差，不能消掉 clipping bias；另加 reward gate 或 base fallback 也不自动继承前面的 sampling law。候选若已全部预生成，提前退出省的是 target/reward 评分而非这些生成；受限实验的 token-compute估计与每步墙钟也有不同分母。support、上界或成本不可靠时保留完整候选评价、标准 BoN/target sampling，正确性仍由独立 verifier 验收，不用分布定理证明所有任务质量或免费提速。 [必要机制与反证](https://arxiv.org/html/2609.21899v1)。<!-- source-family:SF-2026-ARXIV-2609-21899 -->
+
 这里还要区分三种对象：单条 trajectory 的概率、归一化 answer 的总概率质量，以及有限样本真正覆盖到多少种可用 reasoning path。对 token 分布做全局 power sharpening，可能提高正确答案的理论总质量，却同时压低若干中等概率但互补的正确路径；当最终答案依赖 self-consistency 聚合时，有限样本反而更容易集中到相关错误 mode。因而分布变尖不是单调的质量开关，deformation 参数应按任务与 selection rule 校准，并同时观察 answer accuracy 与 path support。
 
 这条分支以更复杂的 query-local 校准换取更好的 coverage/selection 配合；单样本、分布近单峰或没有轨迹聚合时，低温或普通 Top-P 仍更简单。`arXiv:2608.14420v1` 在作者受测模型与 reasoning benchmarks 上给出固定 exponent 的反例，最高下降 18.5 个百分点，但不证明所有 verifier、search pipeline 或 workload 都有相同失效。
 
 <!-- source-family:SF-2026-ARXIV-2608-14420 -->
+
+### 提前评价前缀，决定哪些路径值得完成
+
+单条轨迹的 feedback controller 调节继续探索或尽快提交；预算分给多条轨迹后，还需要决定哪些前缀值得支付剩余生成成本。外部 verifier 可以读取文本，接口清晰且不要求修改生成模型，但会重新编码前缀并增加独立模型成本。能读取内部状态时，一个替代分支先由冻结的 generator 生成多条前缀并保留其 KV，再在每个前缀的临时评分分支中追加专用 query token，只在这一步启用评价 adapter 与分类头。评分结束即丢弃临时分支，保留下来的轨迹从原来的前缀状态恢复生成；评价 token 和 adapter 派生状态不成为 base continuation 的已提交前缀。这里的分数估计“给定当前模型、前缀和采样规则后完成正确的概率”，可以用多次 continuation 的成功率训练，却不是证明轨迹逻辑有效的 verifier。
+
+这种状态隔离用新增评分参数、Monte Carlo 监督构造与一次局部 forward，换取少完成一些低价值路径；它没有使评分和训练免费。固定前缀长度会在识别错误的可靠性与已经支付的生成成本之间取舍，错误剪枝还可能删掉后续能自行修正的路径。验收应分别记录初始路径数、保留数、前缀长度、selected-path 平均正确率与最终 query-level success，并把 check、临时 cache、恢复与吞吐影响计入总预算；分数较好、评分时延较低不等于端到端成本一定更低。现有证据支持若干数学、逻辑和受限工具任务的单阶段过滤，不证明经验保留率拟合跨任务普适、attention 图揭示必要推理机制或生产 tail SLO。无法访问内部状态、评价 adapter 漂移或剩余预算不足时，随机保留、固定宽度完成与独立文本 verifier 仍是共存路径。[受限状态隔离与评价证据](https://arxiv.org/html/2604.16029v1)
+
+### 从候选集合到选择状态
+
+前缀剪枝决定是否继续支付生成成本；候选完成后，仍需要决定哪个答案值得交付。两者可以复用评分信号，但不能把“值得继续”直接当成“已经正确”。
 
 旧的聚合方法各自对应不同假设：majority vote 假设正确轨迹形成最大等价类；pointwise scoring
 假设每条候选可被独立校准；pairwise comparison 只要求局部判断两个候选的相对优劣。Pairwise
@@ -328,39 +395,89 @@ majority under diverse errors
 更多 candidates 只有在 coverage 增长且 selector 可靠时才增加系统正确率；在 modal-wrong 且无可读 correctness signal
 时，采样和投票都不能制造新知识。
 
+### 多数票选择的是稳定盆地，不是真值
+
+内部表示无法稳定区分对错时，继续堆采样和投票不会解决证据缺失；另一条选择分支是引入与当前票数不同的外部信号，同时限制它可以改变排序的幅度。
+
+当多条采样轨迹的错误近似独立时，多数票是便宜的 selector；一旦同一模型反复落入稳定但错误的 reasoning basin，票数只测到自洽密度。此时 selection owner 可以在多数证据上叠加一个有界外部证据修正：只有可审计信号足够强才改变排序，信号弱时保留原决定或交给 verifier。收益是避免微弱、噪声证据任意翻转结果；代价是额外 evidence acquisition 与校准，失败模式则是 evidence source 同样相关或被污染。低风险、错误近似独立的任务仍可使用多数票。exact-v1 只在论文测试的数学任务、三个模型族与证据构造中支持这条分支，不证明它是开放域 truth oracle。<!-- source-family:SF-2026-ARXIV-2605-26172 -->
+
+### 统一核算生成、筛选与选择的预算
+
 Parallel sampling 的预算也不能只写“调用次数”。完整 contract 至少包括各候选的 prompt/prefill
 复用、生成 tokens、KV 占用、judge 输入输出 tokens、并行度、端到端 latency、成本与停止规则。
 一次长 pairwise judge 与一次短 candidate generation 不是等价工作量。Greedy 或单样本在低延迟、低
 风险和 selector 不可靠时仍更合理；majority 在可规范化且错误相对独立时仍很有效；pairwise graph 是
 当绝对评分困难、又无法承受全量两两比较时出现的中间设计，而不是它们的单向替代。
 
-### Answer-first 与 Optional Justification
+## 约束输出：合法前缀、完整序列与内容正确
 
-传统 reasoning decoding 把答案提交排在完整推理轨迹之后，这在 verifier、tool 或后续步骤必须消费过程时合理，却把 answer latency 与解释成本绑在一起。另一条条件分支是先生成并提交 final answer，再按需生成 answer-conditioned justification；训练时还可以 mask answer loss，只对 justification 提供监督。<!-- semantic-body-binding:SF-2026-ARXIV-2605-06165 -->
+前面的 penalty 与 grammar mask 已足以定义单步选择，但更强的输出要求会暴露三个不同缺口：前缀是否合法、能否在预算内完成，以及完成后的内容是否正确。下面先处理可形式化的输出空间，再检查格式条件怎样改变内容，最后划清风险控制与接受证据的边界。这些条件分支不要求同时启用。
 
-后生成的解释不证明它忠实反映答案的因果过程，也可能把错误答案包装得更连贯。需要 faithful process、外部 verifier 消费 trace，或任务本身要求显式搜索时，仍应保留 pre-answer reasoning 或把搜索移入可审计的 workflow。该分支优化的是输出接口与延迟，不是凭空获得推理能力。
+### 大型有限输出集合适合专用 Trie Automaton
 
-## Logit penalties 与约束的边界
+当合法输出是一个很大的有限集合时，通用 grammar 每步解析会重复计算，而 trie 可以把共享前缀编成紧凑 automaton，只允许仍可到达某个合法叶子的 token。它以预处理时间和内存换取稳定 decode；集合频繁变化、语义约束开放或 tokenizer 不一致时，专用结构的维护成本会超过收益，应回退通用 constrained decoding 或后置验证。
+<!-- source-family: arxiv:2608.12574v1; semantic-body-binding: finite-set-trie-decoding-path -->
 
-Repetition、frequency、presence penalties 会根据已生成 tokens 修改 logits；grammar-constrained decoding 会屏蔽不符合语法的候选。
+### Prefix Feasibility 不等于能在 Token Budget 内完成
 
-它们都发生在 token selection 层，却解决不同问题：penalty 是启发式偏好，grammar mask 是硬候选约束。它们可能改善格式或减少重复，也可能屏蔽正确 token。
+有限集合可以沿共享前缀定位合法叶子；对于带嵌套结构的输出，除了“不走入非法路径”，还需要知道剩余预算是否够走到接受状态。
 
-本章不展开具体 API，因为参数定义和顺序依赖实现。稳定原则是：任何 logits 变换都应进入 Evaluation 和可复现配置。
+一个前缀仍可扩展为合法输出，只说明没有进入死路；它可能距离 accepting state 太远，最终在 token budget 用尽时截断。带栈约束的解码可以同时维护 PDA reachability 与 distance-to-acceptance，在接近预算时优先选择可完成路径。这样提高结构完成的 soundness，却增加预处理、beam 状态与运行开销，也不能表达所有语义约束；自由文本仍需后置验证。
+<!-- source-family: arxiv:2608.28229v1; semantic-body-binding: constrained-decoding-distance-to-acceptance -->
 
 ### Stateful Exact Conditioning 是有限状态约束的条件分支
 
-Rejection sampling 或生成后 repair 在约束稀疏、状态难形式化时最通用，却可能反复产生无效前缀。若约束能编译为冻结、可判定的有限状态 validator，可以把它与模型状态做 product construction，并通过精确条件化只采样仍可接受的路径。这样获得 soundness，却会让多个约束的状态空间乘法增长；约束过大、动态或无法完备建模时，应回退 grammar mask、rejection 或生成后验证，不能把局部 validator 当作开放语义正确性证明。
+保证最终合法，仍不意味着按照原模型在所有合法完整序列上的条件分布抽样。只有应用需要这个更强分布语义时，才值得承担全局条件化的状态与计算成本。
+
+Rejection sampling 或生成后 repair 在约束稀疏、状态难形式化时最通用，却可能反复产生无效前缀。若约束能编译为冻结、可判定的有限状态 validator，且模型对 prefix 的依赖也能被足够小的状态精确汇总，可以把二者做 product construction，并在可计算未来接受概率质量的条件下精确条件化。合法性 soundness 与保持原模型在合法完整序列上的条件概率是不同保证；仅屏蔽当前非法 token，并不自动实现后者。多个约束会使 product state 乘法增长，模型状态自身也可能无法压缩到可处理规模；约束过大、动态或模型无法满足这些计算条件时，应回退 grammar mask、rejection 或生成后验证，不能把局部 validator 当作开放语义正确性证明。
 
 <!-- source-family: arxiv:2608.08282v1; daily-trace: papers/2026/08/11/README.md; semantic-body-binding: finite-state-exact-conditioning-product-cost -->
 
+约束语法简单，也不意味着全局条件概率容易计算。对一类描述长度有限、每步 next-token 概率可在多项式时间精确计算的自回归模型，即使约束只是“固定长度后以 eos 结束”，合法序列的总概率质量也可编码满足赋值计数，因而其精确计算是 #P-hard。困难在未来所有 suffix 的模型概率，而不只在 validator 有多少状态。有限状态 Markov 模型配合有限状态约束仍可用动态规划；一般 prefix-dependent 模型则需要另证模型状态汇总与 continuation mass 的可计算性。这个计数复杂性反例不证明每个具体模型都很难，也不证明任何可能的 exact sampler 都必须显式计算归一化常数；它限制的是通用、可高效的全局条件化保证。<!-- source-family:SF-2026-ARXIV-2604-07855 -->
+
+### 格式损失要先定位在 Prompt，还是 Decoder
+
+即使结构约束的计算已经正确，内容质量也可能变化。此时先区分模型收到的条件与 decoder 执行的屏蔽，才能判断该改 prompt、生成流程还是 sampler。
+
+Grammar mask 只约束候选是否合法；要求模型同时解题并输出特定格式，也会在屏蔽 token 之前改变条件分布。因此不能把结构化输出的质量下降全部归因于 decoder。最低比较应固定任务和模型，分开自由输出、仅在 prompt 请求格式、相同 prompt 再启用 mask 三条路径，并分别测格式合规与内容正确。解析更成功，不等于推理更准确。
+
+若格式只是答案的呈现方式，可尝试先自由生成答案，再用第二次调用重格式化；这与单次生成内先 thinking 后输出是不同分支。分离可能恢复内容质量，却增加调用、tokens、延迟和重格式化改错的风险，仍须核验答案是否保留。格式本身编码正确性时——如代码、测试或 tool arguments——不能照搬这项呈现格式实验来放宽约束；第 78 章继续拥有参数语义和执行授权。低延迟、简单抽取或已能稳定兼顾格式的模型，单次生成与 grammar mask 仍成立。
+
+上述[受限证据](https://arxiv.org/html/2604.03616v1)并未证明格式请求必然有害、thinking 必然补偿损失，或某种闭源训练机制造成鲁棒性；它新增的是先分清损失发生位置，再选择干预层的评价分支。<!-- source-family:SF-2026-ARXIV-2604-03616 -->
+
+### Grammar 放行的 Schema Key 仍是语义条件
+
+区分 prompt 与 decoder mask 还不够：合法 schema 中的字段名会进入自回归输出的 prefix，影响后续内容分布，不只是 parser 的占位符。因此即使字段数、顺序和 grammar 不变，rename 也不是内容语义不变操作。可以分别比较语义提示只在 prompt、只在 key、两处都有或都没有的四配置，并将 prompt wording、schema wording、grammar/tokenizer 与 parser/字段映射共同冻结，分别验格式和内容；这不是等 token 长度或任意字符串语义等价的证明。
+
+命名提供低成本的 instruction channel，却引入模型依赖、重复提示竞争及接口版本/下游映射成本。`arXiv:2604.14862v1` 在七个 Qwen/Llama 变体、GSM8K/Math500 与固定 XGrammar 下观察到 key-only 退步、两处并用也非普遍加成；不能推出通用最佳命名、恶意注入防御或未披露的硬件/并发 SLO。接口兼容优先或效果不稳定时，标准稳定 key、prompt-only 说明和独立内容验证仍成立；tool arguments 的实体/字段语义与执行权限继续由第78章拥有，parse 通过不批准动作。
+
+<!-- source-family:SF-2026-ARXIV-2604-14862 -->
+
 ### 从固定 Logit 变换到 Sensor-gated Safety Decoding
+
+格式与字段名能够约束或引导输出，却不能表达所有行为风险。若风险只在生成途中显现，可以考虑随轨迹变化的干预强度；其信号仍须与安全保证分开。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2602-02027:start -->
 固定 safety mask 或 request-level guidance strength 在风险边界稳定时最简单，但它无法适应风险在生成轨迹中途才出现的情况。一条实验性分支同时保留 base 与 safety-expert 分布，以二者逐 token 的差异作为 risk sensor，经 temporal accumulator 判断风险是否持续，再只在触发时对 union Top-k candidates 做分布插值后提交 token。prompt-level self-reflection 决定一次请求的 intervention strength，token-level disagreement 决定当前 step 是否介入；两者是不同状态，不能合并成一个“模型知道自己危险”的置信度。
 
 这仍只是 sensor-driven logits policy，不是事实或安全 authority。专家差异可能来自无害的能力偏差，累积阈值可能漏掉单步危险 token，gate 漂移又会造成过度拒答或漏防；safety expert 还带来额外计算。`base/safety checkpoint / risk dimensions / accumulator / threshold / candidate-set rule / judge version` 必须共同版本化并在 false refusal、未见攻击与 utility 上校准。公开实验使用特定模型、安全/效用 benchmark 和 GPT-4-Turbo judge，只能证明该条件化分支在这些设定中的行为，不构成生产安全保证。弱 alignment、分布外攻击或 gate 失配时，grammar constraint、tool authorization、外部 policy 与 release gate 仍必须保留。
 <!-- semantic-body-binding:SF-2026-ARXIV-2602-02027:end -->
+
+### Anchored Decoding 把版权风险编译为序列信息预算
+
+逐步干预还可以由显式序列预算驱动，而不只由风险传感器触发。下面的预算约束针对可测的逐字复现风险，不能与前面的计算 token budget 或通用安全判定互换。
+
+仅在输出后查找相同片段，无法阻止高风险 LM 在生成过程中已经进入逐字复现路径。Anchored Decoding 保留原模型的 proposal，同时引入只用宽松许可数据训练的 reference distribution，把用户选择的 sequence-level information budget 分配到每个 token step，只提交满足局部距离约束的候选。跨 tokenizer 组合时，byte-level fusion 也必须成为 sampler identity 的一部分。
+
+这条路径降低可测的 verbatim-copying 风险，代价是双模型执行、词表对齐、utility 损失与 reference model 本身的数据边界。它不是法律合规证书，也不覆盖意译、情节或外部检索泄漏；当 reference 不可信、budget 无法校准或 exact sampling 是必要语义时，回退固定 decoding、输出检查与人工版权复核。<!-- source-family:SF-2026-ARXIV-2602-07120 -->
+
+### Accepted-generation Risk 需要 Chance Constraint，不是 Confidence Threshold
+
+上述约束改变允许生成什么，却没有自动规定何时有足够证据接受结果。若目标是控制已接受输出的失败风险，必须另行定义随机约束、证据累积方式与拒绝路径。
+
+当同一接口被反复调用时，降低平均幻觉率不等于控制“已接受生成中的失败频率”。一条更强的提交路径把每次生成视为随机约束试验，以 sequential，anytime-valid 证据逐步判定当前输入是否达到了预设的 chance constraint，然后再 accept、defer 或宣告不可行。这与按 confidence 排序不同：后者可以提升选择后质量，却不自动给出概率风险边界。
+
+该分支以多次采样成本、constraint scorer 误差和独立/相关性假设换取可组合的风险控制；输入分布、scorer 或采样假设偏移时，证书不得继续流用。低风险且延迟敏感的请求仍可使用固定 decoding 或普通 selective prediction；公开证据只支持作者的 QA、多跳任务与披露采样协议，不证明生产幻觉率上界。<!-- source-family:SF-2026-ARXIV-2602-01637 -->
 
 ## Sampling 不能修复模型能力
 
@@ -369,6 +486,8 @@ Rejection sampling 或生成后 repair 在约束稀疏、状态难形式化时�
 同样，top-p 只重分配已有分布，不判断事实正确性。Sampling 调整的是 capability 的表达与轨迹，不替代数据、训练、retrieval、tool 或 verifier。
 
 ## 工程与评估含义
+
+这些分支最终都要回到同一评估对象：模型与完整生成策略的组合。先核算质量、风险和成本，再区分改变分布的策略优化与保持分布的执行优化。
 
 生成配置应与模型版本一起评估：
 
@@ -396,29 +515,15 @@ group probability mass 做层次采样。只要 mask、temperature、RNG 与归�
 logprobs、复杂 grammar、不可融合 processor、跨重试可复现或高 batch GEMM 占优时，物化 logits 仍更
 简单。某一 revision 的 kernel speedup 不能外推到不同 vocabulary、batch、hardware 或 processor chain。
 
-### 多数票选择的是稳定盆地，不是真值
-
-当多条采样轨迹的错误近似独立时，多数票是便宜的 selector；一旦同一模型反复落入稳定但错误的 reasoning basin，票数只测到自洽密度。此时 selection owner 可以在多数证据上叠加一个有界外部证据修正：只有可审计信号足够强才改变排序，信号弱时保留原决定或交给 verifier。收益是避免微弱、噪声证据任意翻转结果；代价是额外 evidence acquisition 与校准，失败模式则是 evidence source 同样相关或被污染。低风险、错误近似独立的任务仍可使用多数票。exact-v1 只在论文测试的数学任务、三个模型族与证据构造中支持这条分支，不证明它是开放域 truth oracle。<!-- source-family:SF-2026-ARXIV-2605-26172 -->
-
 ## 本章在知识树中的位置
 
-```text
-Decoder hidden state
--> logits [B,V]
--> temperature / filtering / constraints
--> token id [B]
--> append token id to sequence
--> next Decode step computes and appends its K/V
--> repeat until stop
-```
+本章闭合一个 token 的生成循环。[第 31 章](../part-04-training-system/31-rlhf.md)及其后的算法章节会说明 rollout sampling 怎样
+进入 preference optimization，[第 44 章](../part-05-inference-system/44-decode.md)说明在线 Decode 怎样执行 token 决策，
+[第 48 章](../part-05-inference-system/48-speculative-decoding.md)则要求 exact speculative decoding 保持同一 target sampling 分布。
 
-本章闭合一个 token 的生成循环。第 31～34 章会说明 rollout sampling 怎样
-进入 preference optimization，第 44 章说明在线 Decode 怎样执行 token 决策，
-第 48 章则要求 exact speculative decoding 保持同一 target sampling 分布。
+[第24章](../part-03-multimodal-world-models/24-multimodal-generative-paradigms.md)拥有另一条分支：当生成状态允许 masked refinement 或 retroactive editing 时，sampler 不只选择“下一个 token”，还要选择哪些 provisional positions 可修改、何时 commit。该分支可能改变输出分布；只有带正确 acceptance rule 的 speculative verification 才能声称保持 target distribution。
 
-第24章拥有另一条分支：当生成状态允许 masked refinement 或 retroactive editing 时，sampler 不只选择“下一个 token”，还要选择哪些 provisional positions 可修改、何时 commit。该分支可能改变输出分布；只有带正确 acceptance rule 的 speculative verification 才能声称保持 target distribution。
-
-到这里，第 11～20 章的顺序主干已经闭合：文本变成 token ids，ids 变成带位置的 hidden states，Transformer 产生 logits 与 KV state，Sampling 选择 token 并把它追加回前缀。接下来的第 21、22 章不是 Sampling 之后的新步骤，而是回到这条主干内部，分别讨论参数容量和序列容量怎样扩展。
+到这里，第 11～20 章的顺序主干已经闭合：文本变成 token ids，ids 变成带位置的 hidden states，Transformer 产生 logits 与 KV state，Sampling 选择 token 并把它追加回前缀。接下来的[第 21 章](./21-moe.md)和[第 22 章](./22-long-context.md)不是 Sampling 之后的新步骤，而是回到这条主干内部，分别讨论参数容量和序列容量怎样扩展。
 
 ## 自检问题
 
@@ -435,28 +540,8 @@ Decoder hidden state
 11. 为什么 `pass@N` 不能直接代表系统最终答对的概率？
 12. Pairwise selector 需要持久化哪些 graph state，为什么 score difference 不等于置信度？
 13. 为什么 selector 的 calibration 必须按 question 分组并测量 within-question ranking？
-
-### Accepted-generation Risk 需要 Chance Constraint，不是 Confidence Threshold
-
-当同一接口被反复调用时，降低平均幻觉率不等于控制“已接受生成中的失败频率”。一条更强的提交路径把每次生成视为随机约束试验，以 sequential，anytime-valid 证据逐步判定当前输入是否达到了预设的 chance constraint，然后再 accept、defer 或宣告不可行。这与按 confidence 排序不同：后者可以提升选择后质量，却不自动给出概率风险边界。
-
-该分支以多次采样成本、constraint scorer 误差和独立/相关性假设换取可组合的风险控制；输入分布、scorer 或采样假设偏移时，证书不得继续流用。低风险且延迟敏感的请求仍可使用固定 decoding 或普通 selective prediction；公开证据只支持作者的 QA、多跳任务与披露采样协议，不证明生产幻觉率上界。<!-- source-family:SF-2026-ARXIV-2602-01637 -->
-
-### Anchored Decoding 把版权风险编译为序列信息预算
-
-仅在输出后查找相同片段，无法阻止高风险 LM 在生成过程中已经进入逐字复现路径。Anchored Decoding 保留原模型的 proposal，同时引入只用宽松许可数据训练的 reference distribution，把用户选择的 sequence-level information budget 分配到每个 token step，只提交满足局部距离约束的候选。跨 tokenizer 组合时，byte-level fusion 也必须成为 sampler identity 的一部分。
-
-这条路径降低可测的 verbatim-copying 风险，代价是双模型执行、词表对齐、utility 损失与 reference model 本身的数据边界。它不是法律合规证书，也不覆盖意译、情节或外部检索泄漏；当 reference 不可信、budget 无法校准或 exact sampling 是必要语义时，回退固定 decoding、输出检查与人工版权复核。<!-- source-family:SF-2026-ARXIV-2602-07120 -->
-
-### Prefix Feasibility 不等于能在 Token Budget 内完成
-
-一个前缀仍可扩展为合法输出，只说明没有进入死路；它可能距离 accepting state 太远，最终在 token budget 用尽时截断。带栈约束的解码可以同时维护 PDA reachability 与 distance-to-acceptance，在接近预算时优先选择可完成路径。这样提高结构完成的 soundness，却增加预处理、beam 状态与运行开销，也不能表达所有语义约束；自由文本仍需后置验证。
-<!-- source-family: arxiv:2608.28229v1; semantic-body-binding: constrained-decoding-distance-to-acceptance -->
-
-### 大型有限输出集合适合专用 Trie Automaton
-
-当合法输出是一个很大的有限集合时，通用 grammar 每步解析会重复计算，而 trie 可以把共享前缀编成紧凑 automaton，只允许仍可到达某个合法叶子的 token。它以预处理时间和内存换取稳定 decode；集合频繁变化、语义约束开放或 tokenizer 不一致时，专用结构的维护成本会超过收益，应回退通用 constrained decoding 或后置验证。
-<!-- source-family: arxiv:2608.12574v1; semantic-body-binding: finite-set-trie-decoding-path -->
+14. 合法前缀、预算内完成、保持条件分布与内容正确分别需要什么保证？
+15. 前缀剪枝的临时评价状态为什么不能直接进入保留路径的 base continuation？
 
 ## 小结
 
@@ -465,6 +550,12 @@ Sampling 将模型给出的条件分布变成一条实际 token 轨迹。Greedy 
 这些选择会在自回归循环中持续改变后续状态，因此必须与模型、prompt、seed、停止条件和 Evaluation 一起版本化。Sampling 控制能力如何表达，不创造模型没有的能力。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-16029` — [Cut Your Losses! Learning to Prune Paths Early for Efficient Parallel Reasoning v1](https://arxiv.org/html/2604.16029v1)，Daily `2026-04-20`。采用 §3.2/F.2 的冻结前缀、临时 STOP/LoRA 评分分支丢弃后恢复 base continuation；MC32 标签是模型/解码条件成功估计，非逻辑 verifier。F.2 单 H100/7B/batch16/prefix2048 总时长34.33s大于33.20s、吞吐−2.71%及监督构造成本保留，不采零开销/普适保留率或 tail SLO。apr02 已实际必要源→当前 owner/literal 独立通过（`V3_APR02_LATEST_FIVE_16022_16044_INDEPENDENT.md`）；作者在 root 窄锁内落实两段，root实际顺读真实正文与相邻写后PASS（`V3_STOP_OWNER_PROPOSAL.md`末），真实整合；非整个日Gate。
+
+- `SF-2026-ARXIV-2604-14862` — [Schema Key Wording v1](https://arxiv.org/html/2604.14862v1)，Daily `2026-04-17`。采用 §3.1–3.4/4.1/Table1/3 的 key-prefix 语义通道及None/Key/Prompt/Both四配置；不声称等token长度、普遍最佳key或projection定理。复用 apr01 必要原文/当前owner PASS（daily-20260417/v3-reopen-notes.md「新收到三项非作者source→owner」）；root已实际顺读正文与两侧/复用有效必要证据后写后独立PASS；真实整合，本批章锁释放。
+
+- `SF-2026-ARXIV-2604-07855`（Status: Theoretical）：[exact-v1](https://arxiv.org/html/2604.07855v1) §2 的 succinct rational next-token 模型、§5 Theorem2 的 `Z=#SAT/2^m` 构造、§8 有界模型状态与 validator product。正文补齐有限 validator 并非充分计算条件，不采用 Corollary2 对任意 exact sampler 的更强推断；无硬件/吞吐/SLO实验，不伪造性能收益。6分因修正既有条件缺口深入，root 已独立核必要原文与实际正文，通过。
 
 - Light Alignment / neuron-gated safety decoding（Status: Experimental）:
   https://arxiv.org/abs/2602.02027
@@ -490,3 +581,5 @@ Primary-source 校验入口：
   https://arxiv.org/abs/2608.17124
 - FlashSampling（Status: Experimental；exact fused sampling 与 TP hierarchical reduction）:
   https://arxiv.org/abs/2603.15854
+- The Format Tax（Status: Experimental；`arXiv:2604.03616v1`）：
+  https://arxiv.org/html/2604.03616v1 — §3–7、Table 5、Appendix G/I。六个 3B–32B 开源模型、四个 API 模型，数学/选择题/写作及四种呈现格式；同 prompt 的 GCD 对照支持分离上游条件与 token mask，不支持内部因果机制或工具参数/代码正确性外推。数学/写作采用 LLM judge，thinking 有退步例，两调用增加成本；生产 hardware/precision/concurrency/SLO=`Not Disclosed`。本文未复现作者代码；根任务已独立重开 exact-v1 并对读相邻正文，完成本项采用与写后复核，不代表整日报 Gate 通过。

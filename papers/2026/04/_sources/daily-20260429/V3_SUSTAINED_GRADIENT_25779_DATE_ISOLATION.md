@@ -1,0 +1,9 @@
+# 2604.25779v1：同家族 03/11 已公开，04/29 arXiv 不新增身份
+
+这是 04/29 作者侧的具名 first-public 例外隔离，不是本日独立日期 Gate。官方 [arXiv exact-v1](https://arxiv.org/abs/2604.25779v1)题名 *Sustained Gradient Alignment Mediates Subliminal Learning in a Multi-Step Setting: Evidence from MNIST Auxiliary Logit Distillation Experiment*，v1 `submitted=2026-04-28T15:46:18Z` 落本日公告 ID 批，**仅**说明 arXiv 上架身份，不能抹去同家族更早对外公开。
+
+作者项目 [BlueDot Impact 原页](https://blog.bluedot.org/p/sustained-gradient-alignment-mediates)明确标注 **Mar 11, 2026**、同一完整标题、提交者 **Chayanon Kitkana**。其摘要在 03/11 已披露本篇的三个中心结果：MNIST auxiliary-logit 蒸馏中弱正 gradient alignment 跨训练持续；正对齐时把 distillation gradient 投影到 trait gradient 的法平面可压掉 trait transfer 而不明显减慢蒸馏；liminal training 早期减对齐却没阻断最终 trait acquisition。[04/29 exact-v1 §2–4](https://arxiv.org/html/2604.25779v1)仍在同一 13-logit MNIST MLP、同初始化教师/学生、100 seeds 与这些实验上展开。因而这不是仅标题相似或普通相关背景，而是 04/29 arXiv 之前已公开的**同一研究家族核心命题**。
+
+定点原文还划清有效范围：100 seeds 的最终 digit test accuracy control `55.28±10.48%`、梯度投影后 `10.14±1.33%`，liminal training 后 `48.97±9.63%`；正 alignment 的步比例 `0.781±0.102` 但平均 cosine 仅 `0.00752±0.00167`。§4 明说不能外推高阶机制主导的设置；投影干预需要独立 trait 的 ground-truth gradient，而一般隐藏性状未必可用。它不证明 LLM 蒸馏的通用风险率或实际可部署的防御。实际 [Ch29](../../../../../books/part-04-training-system/29-sft.md)已有 teacher/student output-head、附带 trait 与早期 KL 条件性控制，[Ch72](../../../../../books/part-06-ai-infrastructure/72-security.md)已有 subliminal audit 的 channel/probe 对齐边界；即使另日讨论，不能把本家族 04/29 重新计为新 Books 触发。
+
+日期判断无需依赖受浏览器 challenge 限制的 OpenReview 提交/出版元数据，也不使用 `submitted`、DOI-created 或 arXiv `Updated` 孤证。BlueDot 原页是作者项目的具名公开页面，且核心方法/结果在本窗前一个多月已可读，足以把这**一个** family 的 `new_in_window` 作 prior-public 隔离；不推断整个 Sci4DL workshop 论文集的日期或其它论文。此前第三批题摘反查把它从旧过宽关闭恢复为“贡献潜在”，这一步并不否认其科研价值，而是把来源/日期 Gate 正确分开。当前同一 106 篇已读题摘的工作账应将这项从潜在移至独立的**早公开 1**，不混入贡献前闭、也不向 04/29 候选或 Books 计数。非作者日级日期复核仍待。

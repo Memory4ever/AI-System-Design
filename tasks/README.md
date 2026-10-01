@@ -7,6 +7,8 @@
 - `interview/` 保存求职训练与 Mock；
 - `tasks/` 只回答：本周学什么、每章掌握到哪一级、升级依据是什么。
 
+此外，`tasks/` 可以保存与本项目长期方向直接相关、但尚未进入 Books 知识树的专题任务。专题任务必须与章节进度隔离，不能直接改变 `progress.yaml` 中的学习状态。
+
 ## 使用入口
 
 1. 阅读 [24 周学习计划](./STUDY_PLAN.md)，确认当前阶段与本周主题。
@@ -14,6 +16,10 @@
 3. 使用 [执行 Checklist](./CHECKLIST.md) 推进本周任务。
 4. 章节通过验收后，更新唯一进度真值 [progress.yaml](./progress.yaml)，并附上证据路径。
 5. 每周使用 [周复盘模板](./templates/WEEKLY_REVIEW.md) 记录预测偏差、知识债务和下一步。
+
+## 长期专题
+
+- [Personal AI Capability：产品命题与验证任务](./PERSONAL_AI_CAPABILITY.md)：记录 Agentic 时代的 Capability Intelligence 产品方向、关键假设、MVP 和验证清单。
 
 已有 Books、聊天回答、实验或工作经验不自动折算为 Level。只有重新对照以下 Gate 并留下可定位证据后，
 才能更新 `current_level`。

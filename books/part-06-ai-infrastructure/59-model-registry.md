@@ -163,6 +163,12 @@ logical model revision
 否则一次存储优化会同时破坏多个 deployment revision。
 <!-- semantic-body-binding:SF-2025-ZIPLLM-STORAGE:end -->
 
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-17104:start -->
+物理共享怎样选 base，也需要区分身份与压缩预测。共同 model family 或 fine-tuning lineage 能缩小搜索范围，却不保证任意两组 tensor 的 delta 都便宜；已有位距方法也会为读取完整 tensor 付出成本。一个在线规划分支先对 raw bits 建紧凑 sketch，以它估计相似性，再把估计位距映射成候选 delta 的压缩率，最后按预计总存储成本选择 base。对已经膨胀的 cluster，重新提升一个成员为新 base 必须把完整新 base 的保存成本和其他成员的 delta 节省一并计算，而不能只挑局部最相似的配对。
+
+这条路径用 sketch、预测器和增量 split 换取少读大 tensor，新增预测偏差、编码器依赖和重规划成本；预测压缩率不是内容完整性证明，在线 heuristic 也不是全局最优。Registry 因而仍保留每个逻辑 revision 的 digest、授权与可验证 materialization，压缩 planner 只拥有物理布局。受限研究使用 2,890 模型、40.11TB trace；其 192 线程吞吐是在数据全驻内存、没有存储 I/O 的条件下测得，不能作为下载尾延迟或远程恢复 SLO。小规模资产、family 漂移、授权不允许共享或恢复确定性更重要时，完整保存与直接位距检查仍是合理分支。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-17104:end -->
+
 收益是减少容量和传输，代价是 clustering 误判、base deletion、恢复放大、加密/量化不兼容和跨租户侧信道。
 family 相似性不稳定、license/tenant boundary 不允许共享，或独立恢复比容量更重要时，完整 checkpoint 仍是正确
 分支。公开实验只覆盖作者披露的 Hugging Face model families 与编码组合，不能外推到任意 encrypted、quantized
@@ -220,6 +226,8 @@ immutable contribution IDs
 <!-- source-family:SF-2026-ARXIV-2605-19373 -->
 
 ### MoE Merge 的发布身份还要包含 Router Calibration
+
+即使是更简单的冻结 base + LoRA delta 合并，也不能只测合并后在原训练目标上保留了多少能力。Adapter 可能同时表现出从未作为训练目标的 held-out 行为；与不携带它的 partner 合并时，这些行为可能比显式训练能力更早消失，反过来，共有的行为可能继续保留。Registry 应把 merge parents、权重、方法与 digest 形成新 artifact identity，并让独立 Evaluation 对**原训练目标和未训练但可观察的重要行为**分别回归，尤其不能把某项危险行为消失当作其他风险也已消失。两套切片增加评测和误报成本；单一可信 adapter、无需合并时仍保留原 artifact 作为最直接基线。现有实证仅覆盖固定 base 上 LoRA-space 合并、两个测试床和所列模型家族，不证明全模型权重插值或未知行为可被完备枚举。<!-- semantic-body-binding:SF-2026-ARXIV-2609-24504 -->
 
 把两个 dense checkpoint 合并后，registry 至少可以用贡献集合、merge strategy 与结果 digest 标识新 artifact；MoE
 还多了一层非线性 routing state。即使 expert weights 的合并可复算，合并后的 router 也可能不再把 token 分配到原本承担
@@ -343,11 +351,19 @@ Registry 从保存权重文件演进为模型交付身份图：base、adapter、
 digest 能确认公开字节完全一致，却无法让不暴露权重的服务证明自己运行了预期模型。对行为敏感的 adversarial probes 配合隐私保护证明，可以补充 registry 的远程身份验证；它只能证明被探测行为与承诺模型一致，不能证明完整权重等价，也可能受蒸馏、转发和 probe 泄露影响。因此行为证明应与 artifact digest、attestation 和运行证据并列，而不是替代它们。
 <!-- source-family: arxiv:2608.27954v1; semantic-body-binding: private-model-behavior-sensitive-proof -->
 
+### Weight Artifact 也可能是 Payload Carrier
+
+签名、hash 与行为 canary 能证明字节来源和有限输入下的行为，却不能证明参数只承载模型语义。Transformer 的权重置换对称性允许在几乎保持函数不变的同时编码额外 payload；因此第三方权重进入 Registry 时，artifact admission 还应按 threat model 执行结构/隐写扫描，并把“在对称变换族中重新 materialize 后再签名”作为高风险 neutralization proposal。<!-- source-family:SF-2026-ARXIV-2609-16193 -->
+
+这种重排只对已知 permutation encoding 提供受限缓解，会增加 materialization、兼容性检查和数值回归成本，也不能清除其他隐写或恶意加载代码。低风险、可信供应链仍以签名与 provenance 为基线；高风险来源应先隔离，neutralization 后重新执行 capability/safety regression，无法证明兼容时拒绝 promotion。
+
 ## 小结
 
 Model Registry 让模型从一组文件变成有身份、有来源、有证据、可发布和可回滚的资产。它连接 Part IV 的 checkpoint 与 Part V 的 runtime artifact，但保持 metadata control plane 的被动边界。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-17104` — [TensorHub exact-v1](https://arxiv.org/html/2604.17104v1)，Daily `2026-04-21`；库存 alias `TStore`，官方 abs/HTML/PDF 标题与必要正文一致。必要证据 §4.1–4.4/Alg1、§6.1–6.4/Table3；EC2 c6a.48xlarge、96 cores、384GB，Table3 的 192 threads 全内存无 I/O。采用 tensor sketch→压缩率预测→含新 base 成本的在线规划，不作为 hash 认证、下载 SLO 或全局最优保证。有限非作者 source→owner 核验及 root 对实际正文、两侧 identity/恢复成本交接的写后独立复核通过，实验未复现。
 
 - `SF-2026-ARXIV-2606-10794`（Status: Experimental）：官方 exact-v1 的 frozen proxy、token-state temporal mean、L2
   multinomial probe 与 Bayesian evidence accumulation 支持“query-varying 黑盒流量可形成累计身份 sensor”。Agent500 为

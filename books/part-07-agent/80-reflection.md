@@ -55,6 +55,18 @@ Feedback 可以来自：
 
 同一模型可能在 generation 与 critique 中重复同一盲点。External tests 和 environment outcomes 通常比自由文本“再想想”更可操作。
 
+Deterministic verifier 的高独立性只覆盖它实际收到的对象。把自然语言推理逐步翻译成逻辑断言时，solver 可以检查给定前提是否蕴含结论，却不能顺带证明翻译忠实、补入的常识为真，或这些前提确实来自原任务而非待证明答案。应保留原文、所选历史前提、额外假设与形式化版本，把 translation/fidelity 审核和 solver result 分账；auto-formalizer 或同模型 judge 仍是可错的提案者，机械有效不等整条自然语言推理可信。
+
+搜索的停止策略还可能改变“verified”的含义。低分步骤可以触发定点重生、回退或保留已核前缀；若有限重试耗尽后为了进展选最高分候选强制前进，或返回未完成路径，应明确交付 unresolved 结果，不能继承逐步通过的标签。[LogicTrack 的受限实验](https://arxiv.org/html/2609.21492v1)同时出现最终正确率与核验率不同方向的变化；形式化、judge 和搜索调用增加成本，离线蒸馏 backtracking 轨迹也不把 solver 证明迁移到无 solver 模型。高风险路径不能强制前进时应停止或升级，普通可容错任务仍可使用有明确未决标记的尽力搜索。<!-- source-family:SF-2026-ARXIV-2609-21492 -->
+
+但反馈带来一次成功，也不代表原诊断已经正确。需要归因时，Reflection 只提出修复假设；保留原执行 prefix、检验修复是否遵循该假设及限定 outcome flip 的证据强度，由 [Trace 的受控重放](../part-06-ai-infrastructure/69-trace.md#从-linear-trace-到-root-cause-graph)接手。这样把“修好任务”和“解释原失败”分开，避免成功重试反过来授权错误归因。
+
+独立反馈的价值还取决于提出什么问题。若模型只测试当前假设已经预测为真的例子，环境不断返回“成立”仍不足以排除其他规则；多生成正确答案，也不代表更善于发现自己的假设错误。一个条件分支把反思对象移到下一次查询：显式保留当前假设及其补集，或改变例子的一个关键属性，优先选择可能否定当前解释的测试，再用真实环境反馈更新假设。模型拥有查询提议，环境拥有观察结果；“看起来相反”的测试不一定真的能区分假设，反例数量也不是最终成功率。
+
+这条路径增加交互、推理和测试预算；没有可验证反馈、查询会产生不可恢复副作用，或反例主要偏离任务时，应使用静态测试、受限 sandbox 或人工确认。离线训练可以模仿 teacher 的测试查询，甚至保留最终未解出的 episode，而不只蒸馏成功答案；这会继承查询与 judge 偏差，不能自动形成通用证伪能力。`arXiv:2604.02485v1` 的规则发现与有限迁移对照中，任务成功、与当前假设不兼容/兼容的查询比 `I:C` 和 thinking mode 的变化并不总一致；`I:C` 不表示已经成功证伪的比例，部分小模型迁移也未显著。不能把这一查询策略写成正确性保证。<!-- source-family:SF-2026-ARXIV-2604-02485 -->
+
+还有一条发生在**执行前**的反思分支：先判断候选推理—行动对是推进任务、合理探索还是会污染后续状态；只对后者重写成对的理由和动作，再交由真实工具执行。它避免为高熵 tool response 虚构完整环境预测，也比单纯给一句 critique 更直接地改变下一步提案；但专用 judge 只能决定是否建议修订，不能拥有工具权限或最终结果真值。提交的仍是带版本的 action proposal，执行后的 observation 才能确认状态。AEWM 的作者实验覆盖 Search、Terminal、SWE 的受控轨迹及若干 Agent backbone，不能证明此三分类在新环境准确，且增加额外模型调用与错误改写风险；判断器不稳时回退原提案加独立 verifier 或直接停止。<!-- source-family:SF-2026-ARXIV-2609-28416 -->
+
 多约束任务还存在一种有用的不对称：一次发现同时满足所有条件的 candidate 可能很难，
 但检查 candidate 是否分别满足每个条件往往更容易。Reflection 因而不应只输出整体
 “通过/失败”，而应把 verification 结果转成下一轮的控制信号：
@@ -186,6 +198,17 @@ human decision required
 
 Runtime 必须持久化 attempt、feedback 和 decision。只把全部历史重新塞入 Context 会越来越长，还可能强化错误。
 
+停止决策还须把“修正错误”与“误改正确答案”分开。设初答正确的比例为 `A`、纠错使错误变正确的条件概率
+为 `ECR`、使正确变错误的条件概率为 `EIR`，一次修订在二态近似下的净正确率变化是
+`(1-A)·ECR − A·EIR`。当 `A` 已高时，即使模型能修复部分错误，误改成本也可能使默认再答不合算；
+因此继续、验证、保留初答或交人工应依据这两个转移及额外调用预算，而不是只看“有错误被修好”。
+<!-- source-family:SF-2026-ARXIV-2604-22273 -->
+
+Verify-first 可以先用独立证据缩小需修订的分母，但 verifier 的判断不能由同一个模型的自信陈述充当真值。
+这项证据只在 GSM8K 的 500 题与七个受测模型上比较受限的 self-correction 策略；额外验证与模型调用
+有成本，方法间调用预算也未严格等同。二态转移是单轮诊断，不直接给多轮稳定策略或开放工具任务的
+停止保证；缺可靠 verifier、高误改率或预算紧张时，应保留初答、转入有界人工复核或使用旧固定停止条件。
+
 每一步都调用强 critic 可以更早纠偏，却把成本和 critic 盲点放大到整条 trajectory。一个分层 monitor 可先用
 便宜、已校准的 uncertainty proxy 检测 search/reasoning drift，只在残差越界时触发 slow critic 与经验检索：
 
@@ -199,6 +222,10 @@ cheap trajectory sensor
 Token entropy、embedding cluster entropy 等只是 proxy，不是 factual confidence；threshold 会随模型、retriever
 和 domain 漂移。未校准或高风险任务仍应直接使用 deterministic verifier/strong review，slow critic 的输出也
 必须经过第 77 章的 Memory write gate。分层监控优化的是 critique allocation，不是让 self-reflection 成为 oracle。
+
+一种更主动的分支不只是调用 critic：当局部 token entropy 与窗口波动同时升高时，用同一模型在当前前缀后追加负向反思提示，得到另一组 logits，再作有系数的对比引导；另定期用不同提示对当前状态抽取答案，仅在提示内主答案稳定且提示间一致时提议早停。前者改变下一步生成分布，后者决定是否继续付出生成成本，不能把二者混成“反思发现了真相”。负提示诱导的分布未必代表错误，跨提示一致也可能共同出错，仍需独立任务评价。<!-- source-family:SF-2026-ARXIV-2604-02967 -->
+
+这类干预需访问 logits、维护附加分支并支付周期性 probe 成本；减少主轨迹 token 不等于等比例降低 latency。受限数学/问答与 A100 实验支持其净成本比较，不证明开放工具任务或生产并发收益。错误传播的分支过程模型依赖指定生成与风险假设，比较两个错误概率上界不能证明首个答案总更正确。新证据能纠正旧假设、任务需要探索或 probe 不可靠时，应继续受预算约束的检索与验证，而不是普遍删掉后续推理；无需修正的低风险任务仍可直接回答。
 
 局部 proxy 还有一个结构盲点：当前 action 看起来低风险，不表示它没有继承数步之前的错误 tool result、timeout
 或错误假设。把历史只压成 sequence score，又会混淆真正的 continuation、平行尝试与已收到 environment feedback
@@ -236,6 +263,10 @@ uncertainty proxy 的受限补充，并展示了较早失败检测与多样本�
 Retry 对相同 operation 再执行，适合 transient failure；Reflection 修改 candidate/plan 后再尝试，适合可诊断缺陷。
 
 端到端恢复常把两者混在一起：检测失败、路由重试、提供 critique、重新 grounding 与 candidate selection 是不同 treatment。只有 paired ablation 能把额外收益归因于 rich reflection；若简单 retry 已解释大部分 recovery，就不应把结果记给长 critique。机制分解提高实验成本，却能避免把第二次采样机会误写成自我纠错能力。
+
+第二轮读到草稿时，还应拆开三个可能作用：重新解题的额外采样、空白但符合输出格式的 review scaffold、以及草稿内容本身。对照需匹配模型、题目、调用预算与提示结构，再分别给出无草稿重答、空 scaffold 和真实草稿条件；否则弱模型草稿的“帮助”可能只是重新解题，代码任务的收益也可能来自补齐语法骨架。真实内容甚至可能锚定错误实现，空骨架反而更好；但弱草稿对某些更弱 reviewer 仍有用，不能把单个代码基准外推为“总该丢弃草稿”。这条归因把额外调用与评估成本换成可选择的 retry/review 路径，具体策略仍需按任务、模型能力和外部 verifier 校准。
+
+<!-- source-family:SF-2026-ARXIV-2604-01029 -->
 
 <!-- source-family:SF-2026-ARXIV-2609-12746 -->
 
@@ -313,6 +344,8 @@ Reflection 的价值来自 evidence-backed feedback、constraint-wise audit 和�
 但不自动成为长期 Memory。下一章用 Workflow 为这些循环提供持久状态和确定控制。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-22273`：[exact-v1](https://arxiv.org/html/2604.22273v1) §III–IV；Daily 2026-04-27。只吸收 ECR/EIR 与初始正确率共同决定单次修订净值、verify-first 需独立证据与额外成本的受限 stopping 分支；GSM8K/七模型、调用数不严格匹配及二态非多轮保证保留。作者已完成必要源与 Ch80/Ch84 owner 对读，root 独立 source→owner 及实际正文/邻接写后复核通过；未复现实验。
 
 - Marco DeepResearch（verification-centric repair；Status: Experimental）: https://arxiv.org/abs/2603.28376
 - Meta-TTL（learned test-time adaptation policy；Status: Experimental）: https://arxiv.org/abs/2604.00830

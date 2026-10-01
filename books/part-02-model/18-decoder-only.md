@@ -9,7 +9,7 @@
 
 ## 本章要回答的问题
 
-第17章已经构造出可堆叠 Transformer Layer，为什么通用生成模型通常只保留 causal decoder stack？Encoder-only、encoder-decoder 与 decoder-only 分别规定了怎样的信息流和任务接口？
+[第17章](./17-transformer-layer.md)已经构造出可堆叠 Transformer Layer，并说明在采用 causal 信息流时应满足 prefix invariance；但 shape 稳定、因果信息流正确，还没有定义模型应该预测什么。为什么通用生成模型通常只保留 causal decoder stack？Encoder-only、encoder-decoder 与 decoder-only 分别规定了怎样的信息流和任务接口？
 
 本章的核心判断是：**Decoder-only 架构用一个 causal next-token objective 统一了训练和生成接口。**任意任务只要能表达为“给定前缀，继续生成序列”，就可以共享同一参数栈；代价是输出天然串行，双向理解与输入输出分工不再由独立模块显式提供。
 
@@ -126,9 +126,51 @@ labels    [1,5]
 
 位置 0 根据 `BOS` 预测 `The`，位置 3 根据 `[BOS,The,sky,is]` 预测 `blue`。训练可以一次并行计算所有 positions，因为正确历史 tokens 已经由数据提供；causal mask 阻断未来位置的 Attention edge，而完整实现是否仍存在其他跨位置泄漏，需要用第 17 章的 prefix invariance 行为审计确认。
 
+## Loss mask 与“所有 token 都训练”
+
+Shift 确定了每个位置的正确答案，接下来还要决定哪些答案参与优化。Pretraining 常对大量有效 positions 计算 next-token loss。Instruction tuning 可能只对 assistant response positions 计算 loss，而把 system/user tokens 作为条件。
+
+这仍然可以使用同一 decoder-only stack：
+
+```text
+loss = sum_t mask_t * CrossEntropy(logits_t, label_t)
+```
+
+`mask_t` 决定哪些位置贡献 loss，不改变 causal Attention 本身。具体数据格式和训练阶段属于 Part IV，本章只建立模型接口。
+
 ## Teacher forcing 与生成串行性的差异
 
 训练时每个位置读取真实历史 token，这常称为 teacher forcing。完整序列已知，因此 positions 可以并行执行。
+
+这说明的是训练输入为何能并行给出，不是模型一次前向就能生成所有未知 token。要看清两者的差别，还需把 hidden state 到词表评分、再到实际 token 的接口补全。
+
+## Output projection 与 weight tying
+
+前面的 `[B,T,V]` logits 来自 hidden state 的词表投影；输入端则使用[第12章](./12-embedding.md)的 input embedding matrix：
+
+```text
+E [V,d_model]
+```
+
+若使用 weight tying：
+
+```text
+W_vocab = E^T [d_model,V]
+```
+
+模型用同一组词表坐标完成输入 lookup 与输出评分。是否共享取决于 checkpoint，不能把它当作 decoder-only 必然条件。
+
+## 从 logits 到 token 还差一步
+
+Decoder stack 的直接输出不是文字，也不是唯一 token，而是 `[B,T,V]` logits。生成时通常只使用每个 sequence 最后一个有效 position 的 logits：
+
+```text
+next_logits shape = [B,V]
+```
+
+[第20章](./20-sampling.md)会解释 greedy、temperature、top-k 和 top-p 怎样从这组 logits 选出实际 token。选出的 id 再通过 tokenizer decoder 转回 bytes/text；它同时作为下一次前向的输入，生成循环才真正闭合。
+
+## 从训练前向到逐步生成
 
 推理时未来 token 不存在。模型先生成 `x_(t+1)`，把它追加到 prefix，才能生成下一步：
 
@@ -145,7 +187,7 @@ prefix
 
 ## 为什么 Decoder-only 适合通用 LLM
 
-第一，目标统一。网页、代码、对话和文档都可以转成 token stream，使用同一个 next-token objective。
+把这条训练与生成链放回任务选择，就能看见单一 stack 的收益。第一，目标统一。网页、代码、对话和文档都可以转成 token stream，使用同一个 next-token objective。
 
 第二，模块统一。只有一种主要 Transformer stack，不需要为每种任务设计独立 head 或 encoder-decoder 接口。
 
@@ -167,19 +209,11 @@ Decoder-only 将所有内容放进同一 sequence，带来几个 trade-off：
 
 系统因此需要 Tokenizer contract、chat template、KV Cache、Sampling 和停止条件共同完成一次生成。
 
-## Loss mask 与“所有 token 都训练”
+## 保留 Next-token 接口，内部状态可以怎样分工
 
-Pretraining 常对大量有效 positions 计算 next-token loss。Instruction tuning 可能只对 assistant response positions 计算 loss，而把 system/user tokens 作为条件。
+至此，标准 Decoder-only 的训练与生成接口已经完整。接下来的问题不是这条基线是否过时，而是在特定压力下，哪些内部职责可以拆开：预测目标是否只能逐 token 定义，所有预测层是否都必须生产历史 KV，以及不同输入输出是否必须共用一条流。下面三种分支改变的是不同约束，不构成先后替代关系。
 
-这仍然可以使用同一 decoder-only stack：
-
-```text
-loss = sum_t mask_t * CrossEntropy(logits_t, label_t)
-```
-
-`mask_t` 决定哪些位置贡献 loss，不改变 causal Attention 本身。具体数据格式和训练阶段属于 Part IV，本章只建立模型接口。
-
-## Next-token 接口不要求内部状态只有一个粒度
+### 内部预测粒度可以不同于输出粒度
 
 普通 Decoder-only 让表示、监督与生成都沿同一个 token 时钟推进。它的优势不只是结构简单：每个位置都有与最终输出
 同构的密集监督，KV Cache、vocabulary projection 与流式 runtime 也共享明确的 token identity。只要单 token 粒度足以
@@ -217,44 +251,23 @@ analytical FLOPs 又没有计入状态物化、memory traffic 与 launch overhea
 粒度分离，但必须显式维护跨粒度 causality 与 state identity**，不是作者的通用性能排序。训练目标和 optimizer 的实现继续
 交给第 28 章。<!-- source-family:SF-2026-ARXIV-2609-10715 -->
 
+### 历史状态生产与最终预测可以分开
+
+上一分支改变了预测目标的粒度，另一条与 concept 时钟不同的分支仍保持逐 token 的因果输出，却将**历史 KV 的生产者**与**读取这些 KV 的预测容量**分开。普通深层 Decoder 的新增层也要重算全部 prompt token 的 KV；若目标是扩充模型能力而不同比例增加 Prefill，可以让较小的前段网络产出可复用 KV，再让新增的 token-local 后段只读前段 KV、负责更强的最终预测。新增后段不能写入未来位置要消费的 KV，否则“只运行前段处理长 prompt”的等价性就失效。训练时两段仍可联合更新，并非冻结旧 KV 数值；结构不变量是后段不改变 KV 的**生成路径**。它用更便宜的 bulk Prefill 换训练拓扑和推理引擎复杂度，也仍须为每个输出 token 支付完整后段计算。输入短、输出长、KV 共享实现困难或直接堆层更易维护时，标准 Decoder 继续成立。KITE/SST 的作者证据主要是训练损失、任务分数与按 Prefill/Decode 权重构造的推理成本 proxy，不是任意生产 workload 的端到端延迟证明。<!-- source-family:SF-2026-ARXIV-2609-27294 -->
 
 ### Multi-stream 把单一 Token Clock 降为接口选择
 
-单流 Decoder-only 让 thought、input 与 output 共用一个因果时钟，训练、KV 与流式协议最简单；并行工具输入、内部推理和可见输出会让单流阻塞暴露出来。multi-stream 分支为不同 stream 保持各自位置与可见性规则，再由显式 synchronization/merge point 交换状态；模型拥有 token proposal，runtime 持有 stream lifecycle、权限与外部 effect commit。
+前两种分工仍可保留单一外部序列；当压力来自多路输入输出的等待时，才需要重新审视流之间的同步。单流 Decoder-only 让 thought、input 与 output 共用一个因果时钟，训练、KV 与流式协议最简单；并行工具输入、内部推理和可见输出会让单流阻塞暴露出来。multi-stream 分支为不同 stream 保持各自位置与可见性规则，再由显式 synchronization/merge point 交换状态；模型拥有 token proposal，runtime 持有 stream lifecycle、权限与外部 effect commit。
 
 并行流可以减少等待并隔离可见输出，却引入跨流因果一致性、KV/layout、训练数据格式和 monitor blind spot；错误同步可能泄漏 private thought 或产生乱序 effect。普通聊天、工具少或审计优先时，单流协议仍是可靠基线。`arXiv:2605.12460v1` 的 §2–§7 与附录只验证作者的多流训练和实验，不证明 production scheduler 一定获益，也不替代 Agent 权限控制。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-12460 -->
 
-## Output projection 与 weight tying
-
-第12章提到 input embedding matrix：
-
-```text
-E [V,d_model]
-```
-
-若使用 weight tying：
-
-```text
-W_vocab = E^T [d_model,V]
-```
-
-模型用同一组词表坐标完成输入 lookup 与输出评分。是否共享取决于 checkpoint，不能把它当作 decoder-only 必然条件。
-
-## 从 logits 到 token 还差一步
-
-Decoder stack 的直接输出不是文字，也不是唯一 token，而是 `[B,T,V]` logits。生成时通常只使用每个 sequence 最后一个有效 position 的 logits：
-
-```text
-next_logits shape = [B,V]
-```
-
-第20章会解释 greedy、temperature、top-k 和 top-p 怎样从这组 logits 选出实际 token。选出的 id 再通过 tokenizer decoder 转回 bytes/text。
-
 ## 从显式 CoT 到 Latent Reasoning：减少 Token 不等于消除状态
 
-显式 Chain-of-Thought 把中间步骤写成 token，优点是训练目标、停止条件、缓存和人工审计都复用语言模型接口；代价是每一步都要经过 vocabulary projection、采样和下一轮 Decode。将中间推理压缩成连续 latent state，可以少生成可见 token，却没有消除递归依赖：系统仍需决定 state representation、更新次数、termination、checkpoint identity 与失败恢复。
+前面的分支重新安排了目标、KV 生产者或外部流，但没有要求取消中间可见 token。若瓶颈恰恰来自把每一步推理都写出来，才会进入另一个表示选择。显式 Chain-of-Thought 把中间步骤写成 token，优点是训练目标、停止条件、缓存和人工审计都复用语言模型接口；代价是每一步都要经过 vocabulary projection、采样和下一轮 Decode。将中间推理压缩成连续 latent state，可以少生成可见 token，却没有消除递归依赖：系统仍需决定 state representation、更新次数、termination、checkpoint identity 与失败恢复。
+
+下面按中间状态的可见程度排列这些选择；箭头表示解释顺序，不表示技术谱系，也不表示每种方法都必须经过前一阶段：
 
 ```text
 explicit token trace
@@ -267,11 +280,42 @@ explicit token trace
 
 因此显式 CoT 在高风险审计、工具副作用和需要逐步验证时仍然合理；latent reasoning 更适合中间步骤冗长、可由独立 outcome verifier 检查且 token latency 占主导的受控任务。二者是不同 observability / efficiency contract，而不是后一种对前一种的线性替代。
 
+显式轨迹还可以选择有限的操作语义粒度，而不必记录任意自由文本：由解释器模板产生局部状态转移，并对稀有stack/control模式作专项采样，让模型学习可检查的局部规则。外部runtime在call/return时清理非活跃帧，可使在线输入更接近活跃工作空间而非累计全部轨迹；帧身份、局部输入和清理规则必须明确，模型不拥有随意删除执行状态的权限。
+
+有限token-level正确率不能替代自治full-run成功，语言的计算完备性也不证明有限精度、有限窗口模型对任意程序可靠。受限MicroPy/PENCIL证据依赖外部scaffold、有限primitive及合成程序，模板和采样都增加数据/runtime成本；语义超范围、帧管理不可信或需要完整审计时，保留确定性解释器、完整显式trace与独立执行验证，不将scaffold称为新decoder架构。 [原文必要机制与限制](https://arxiv.org/html/2604.25166v1)。
+<!-- source-family:SF-2026-ARXIV-2604-25166 -->
+
+### 少生成 Token 之前，先验证 Latent Steps 是否必要
+
+在选择 latent 路径前，还要检查它是否真的承担中间计算。将多个 token embedding 按概率混合，首先表示的是词表不确定性；标点或无关词的混合不等于同时搜索多条语义推理路径。可在固定模型和任务下移除 latent steps、用离散 token 替换指定 soft step，并与行为和实体级 readout 对照：如果不经过这些步骤仍能正确回答，增加了内部状态也未证明模型依赖它完成推理。Readout 只能观察其可读方向，不能单凭 entropy 或线性投影宣称内部没有其他算法。
+
+这一必要性检查也有条件边界。[受控研究](https://arxiv.org/html/2604.06374v1)中，fine-tuned GPT-2 的 ProsQA 表现从六个 latent steps 的 99.0% 到移除 steps 的 96.6%，提示许多答案可由 shortcut 得到；浅层从零训练模型却明显依赖 latent steps，更深模型的这种优势又缩小。后者采用不同的逐 hop 监督，不能将差异全部因果归于 pretraining，也不能据此否定所有 recurrent 或 RL-trained latent reasoning。因而 latent state 的采用需要任务结果、必要性干预和实际成本共同支持；仅输出少、soft-token entropy 高或可投影出正确实体都不足以替代这些证据。<!-- source-family:SF-2026-ARXIV-2604-06374 -->
+
+### 压缩置信度决定表示，不决定结果提交
+
 固定使用完整显式轨迹或固定使用 latent state，是这一设计空间的两个端点。中间分支可以先预测下一段 reasoning span 的冗余度与压缩置信度，只把高置信、低信息增量的 span 编码为 latent representation，同时让 precision-critical span 继续走显式 CoT。这里的 gate 决定的是**下一段采用哪种 reasoning representation**，不是在生成后由 target verifier 接受或回滚 proposal；因此它属于 Decoder-only 的表示与状态演进，而不是 speculative decoding 的 commit protocol。
 
 这种选择性表示减少了部分可见 token，却新增 gate calibration、显式/latent 双路径训练和 latent error propagation。置信度失准或 distribution shift 会把本应显式保留的步骤过早压缩；高风险、需要逐步审计或 gate 未校准时，完整显式 CoT 仍是正确 fallback。现有 exact-v1 证据只覆盖论文披露的数学任务、模型、span anticipation、三阶段训练与消融，不证明压缩无损，也不证明开放域 reasoning 能获得相同结果。<!-- source-family:SF-2026-ARXIV-2605-25745 -->
 
-### 表达能力还取决于实现中的有限精度状态语义
+### 状态进入循环后，监督与停止必须重新定义
+
+选择表示只回答了状态存在哪里，还没有回答循环中的哪些状态受到约束、何时可以停止。Decoder-only 的状态不仅是可见 token。Looped 或 latent reasoning 把部分推理迁入 recurrent hidden state 后，dense per-loop loss 只能约束 readout 可见方向；normalization 隐藏的尺度仍可能在 residual recurrence 中携带信息。在 RMSNorm/LayerNorm 隐藏 radial scale 的这一条件下，需要让尺度对 loss 可见，或从 recurrence 中移除该尺度自由度。训练 contract 因而要明确哪些 latent state 对 loss 可见、何时提交以及如何停止。
+
+这正是减少可见 token 后增加不可观测状态、循环稳定性和调试成本的具体来源。latent state 无法校准或行为审计失败时，应回到显式 CoT、固定 loop 或普通 autoregressive decode；减少 token 不等于删除推理状态。
+
+增加推理循环数也不自动获得深度泛化：共享 block 必须先在训练中学会反复使用其状态更新。在受控的合成多跳实验中，训练 recurrence 的覆盖范围影响增加推理循环后的收益；不同课程可能暴露不同 hop 深度，因此不能把它们的最大外推深度直接归因于动态循环。即使固定同一训练数据，更多循环也可能在已有正确状态后继续漂移，形成 overthinking，而不是单调逼近答案。普通固定深度 decoder 与固定 loop 在任务、预算或停止信号不稳定时仍是合理基线。
+
+停止条件须分开“输出不再变化”和“已有可提交结果”。相邻循环分布的 KL 很小，可能只是停在高熵的含糊分布；一个受限替代是同时要求 KL 小与输出熵低，再决定是否停止。它增加阈值校准和逐轮 readout 成本，也不能阻止稳定、低熵的错误；熵是集中度 sensor，不是真值。作者用于解释 overthinking 的正确 token logit margin 依赖答案标签，不能直接当作线上可用停止器。该分支目前由从头训练的合成关系任务支持，不能外推到任意预训练 LLM；超出已验训练/推理循环范围时，仍应保留循环上限、固定预算与显式验证。<!-- source-family:SF-2026-ARXIV-2604-07822 -->
+
+### 循环中的读取位置与表示更新也不必同时冻结
+
+即使监督与停止有了明确约束，每一轮是否都要重新查找全部历史，仍是独立的成本问题。循环深度还带来另一种可分离的状态：模型可能较早确定“去哪里读”，但隐藏表示仍需多轮更新才能决定“怎样使用”。在所测 recurrent decoder 中，早期全局 Attention 可发现 query 的 block-level working set；后续循环仅复用这些位置，仍用当轮 Query/Key/Value 重新计算集合内权重与表示，而不是冻结 attention matrix 或停止推理。这样把反复全局路由的计算换成 support 选择误差、稀疏 kernel 和 discovery 深度调参；若 support 随任务继续变化，必须延长全局发现或回退全 Attention。作者证明依赖收敛与非退化间隔假设，实验只支持所测 recurrent backbone/任务的 attention 工作量与质量取舍，不是普通单遍 decoder 的通用加速。具体执行优化交给推理章节。<!-- source-family:SF-2026-ARXIV-2609-27373 -->
+
+## 更多内部状态，不等于无条件扩大表达能力
+
+上述分支都增加了对状态的选择，但不能只按状态数量、循环次数或架构图推断能力。还必须分别检查实现能保留什么区别，以及固定模型的输出空间允许哪些结果。
+
+### 有限精度决定实际状态语义
 
 实数域公式常把 causal Attention 看成任意精确的加权聚合，但真实 decoder 逐位置更新的是有限精度内部状态；accumulator、舍入、求值顺序和层间组合都会改变它能稳定区分的历史。因而“架构图相同”并不保证同一表达上界，kernel 重排或精度变化也可能改变可实现的 memory semantics。
 
@@ -279,13 +323,17 @@ explicit token trace
 
 <!-- source-family:SF-2026-ARXIV-2607-26988 -->
 
+### 固定模型还受到输出可达性的约束
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-22223:start -->
 有限精度之外还存在另一层上界：固定架构并不保证任意输出序列都可由某个 prompt 触达。prompt 只选择输入，decoder 的 embedding 与 decision regions 才决定输出 support；因此增加 context、Decode 时间或采样预算，可能在既有可达区域里搜索得更充分，却不会自动创造新的可达区域。在一组明确的 bounded-embedding、decision-cell 与 packing 假设下，可达序列的最大长度只随 prompt 长度线性增长，超过模型相关阈值后，可达序列占全部序列的比例会指数下降。
 
 这是一条架构条件下的诊断上界，不是对某个自然语言答案“模型必然无法生成”的判决，也不证明训练不能改变模型相关常数。工程上应由 Evaluation owner 用 copying、cramming 与长度切片实验估计实际 cliff，并把 tokenizer、decoder、precision 与 decoding policy 固定为同一评测身份。形式假设或常数无法核实时，直接行为测试仍是 fallback；理论结果只能提出风险假设，不能替代部署 checkpoint 的验证。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-22223:end -->
 
-## 本章在知识树中的位置
+## 回到生成循环：状态复用与选择 Token 分别交给谁
+
+无论是否采用上述受限分支，标准 next-token 接口仍是理解后续推理系统的基线。把本章结构重新接回第 11～17 章，可以同时看到持久状态和当前决策两条路径：
 
 ```text
 token ids
@@ -298,15 +346,9 @@ token ids
        -> next token -> append -> next Decode step
 ```
 
-本章把第 11～17 章组成完整 causal language model。一次 Decode step 同时产生两类结果：供未来步骤复用的逐层 K/V，以及供当前步骤选 token 的 logits。第 19 章沿状态分支解释 KV Cache，第 20 章沿决策分支解释 Sampling，二者共同闭合自回归循环。
+本章把第 11～17 章组成完整 causal language model。一次 Decode step 同时产生两类结果：供未来步骤复用的逐层 K/V，以及供当前步骤选 token 的 logits。[第19章](./19-kv-cache.md)沿状态分支解释 KV Cache，[第20章](./20-sampling.md)沿决策分支解释 Sampling，二者共同闭合自回归循环。
 
-第24章把 causal autoregressive factorization 放进更广的生成范式树。Diffusion、Masked/Block Diffusion 可以并行更新多个 provisional positions，却会增加 correction、cache invalidation 与 commit protocol；它们是不同生成 contract，不意味着 Decoder-only 被线性替代。
-
-## 从机制演进到系统设计
-
-Decoder-only 的状态不仅是可见 token。Looped 或 latent reasoning 把部分推理迁入 recurrent hidden state 后，dense per-loop loss 只能约束 readout 可见方向；normalization 隐藏的尺度仍可能在 residual recurrence 中携带信息。训练 contract 因而要明确哪些 latent state 对 loss 可见、何时提交以及如何停止。
-
-减少显式 token 可以降低输出带宽，却增加不可观测状态、循环稳定性和调试成本。latent state 无法校准或行为审计失败时，应回到显式 CoT、固定 loop 或普通 autoregressive decode；减少 token 不等于删除推理状态。
+[第24章](../part-03-multimodal-world-models/24-multimodal-generative-paradigms.md)把 causal autoregressive factorization 放进更广的生成范式树。Diffusion、Masked/Block Diffusion 可以并行更新多个 provisional positions，却会增加 correction、cache invalidation 与 commit protocol；它们是不同生成 contract，不意味着 Decoder-only 被线性替代。
 
 ## 自检问题
 
@@ -326,11 +368,17 @@ Decoder-only 的状态不仅是可见 token。Looped 或 latent reasoning 把部
 
 Decoder-only 用 causal factorization、Attention 路径上的 causal mask 与 next-token objective，把一个 Transformer stack 变成通用条件生成模型；完整 stack 还必须满足 prefix invariance，架构声明才真正成为可验证的因果行为。训练时 shifted targets 提供所有位置的监督，推理时模型必须逐步生成并追加 token。
 
-这种统一接口简化了数据与任务表达，也把序列状态、生成串行性、Sampling 和评估复杂度带入系统。它是现代 LLM 的重要架构选择，而不是所有任务的唯一最优解。
+这种统一接口简化了数据与任务表达，也把序列状态、生成串行性、Sampling 和评估复杂度带入系统。它是现代 LLM 的重要架构选择，而不是所有任务的唯一最优解。内部 concept、multi-stream 和 latent recurrence 分别改动不同状态职责，收益必须与因果边界、监督、停止和可观测性一起判断。
+
+下一章先回到最普通的生成循环：每追加一个 token，历史位置的 K/V 是否还需要重新计算？[第19章](./19-kv-cache.md)会从因果前缀不变性推导哪些状态可以缓存、为何不缓存历史 Query，以及省下计算后新增的显存与生命周期成本。
 
 ## Review notes
 
-本轮联章 Review 对齐了 causal factorization、tensor position 与 shifted target 的索引，并把第 19 章的状态分支和第 20 章的决策分支放回同一个 Decode step。本章仍只解释架构、mask、shifted targets 和 logits contract。Pretraining/SFT 数据与 loss 配置属于 Part IV，Prefill/Decode 的硬件执行与调度属于 Part V。
+- `SF-2026-ARXIV-2604-07822`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2604.07822v1) §4、§6.1–6.3 与 Limitations。采用训练 recurrence/推理 recurrence/课程 hop 范围分账，以及 KL-only premature halt 的受限反例；同12-hop数据下动态与R=8都外推到19-hop，不写动态循环普遍胜出。正确 token margin仅为有标签诊断，KL+entropy不保证真值；6分因具体知识缺口深入，root 已独立核必要原文与实际正文，通过，未复现实验。
+
+- `SF-2026-ARXIV-2604-06374`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2604.06374v1) §3–7 支持 soft-token 混合、latent-step 必要性与容量/监督条件的受限对照；不把 logit-lens 观察当完整内部算法证明。必要原文、实际正文及相邻衔接的非作者复核通过（root），不代表整日报验收。
+
+本轮联章 Review 对齐了 causal factorization、tensor position 与 shifted target 的索引，并把第 19 章的状态分支和第 20 章的决策分支放回同一个 Decode step。本章仍以架构、mask、shifted targets 和 logits contract 为主线；内部状态分支只保留与这些接口有关的机制及已有证据边界。Pretraining/SFT 数据与 loss 配置属于 Part IV，Prefill/Decode 的硬件执行与调度属于 Part V。
 
 Primary-source 校验入口：
 

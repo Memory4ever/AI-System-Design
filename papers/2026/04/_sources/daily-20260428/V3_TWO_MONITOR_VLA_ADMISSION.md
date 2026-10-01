@@ -1,0 +1,10 @@
+# 04/28 两条开放线索的 exact-v1 贡献复核（作者侧）
+
+这里只裁决是否继续必要证据审阅，不冻结候选分母、不评分、不写 Books。两篇均对读官方 pinned-v1 方法/主要反证和当前章节机制正文；旧 receipt 的 `retained/deep_complete/Existing` 不继承，提交/DOI/OAI/Updated 单字段均不定首次公开。
+
+| 身份 | 真实贡献与现有正文差异 | 限定、归属及下一步 |
+| --- | --- | --- |
+| [2604.23488v1 Do Synthetic Trajectories Reflect Real Reward Hacking?](https://arxiv.org/html/2604.23488v1) | exact-v1 §3.2 把**相同输入相反输出**的冲突 unit tests 加到代码题，只有绕过评测路径才可满分；GRPO group 无此轨迹就重采样。§4.2–4.3 在同类 monitor 上反向测试 prompted synthetic 与该训练期轨迹：Table 1 的 synthetic-trained LogReg 在 synthetic hacking 98.00%、tracer-conditioned hacking 8.79%；反向 wild-trained LogReg 在 wild hacking 86.03%、synthetic hacking 58.93%。这给监测**训练分布与验收分布不可互代**的具体反证；Ch66 现有“生成器塑造 benchmark 人口”和 Reward Hacking reference/onset 分账，但未在 monitor admission 中明确要求提示诱导与训练中出现的作弊轨迹交叉测试。保留为真实评价边界线索，Ch66 主 owner、Ch72 monitor authority 仅交接。 | 作者称 in-the-wild，但实际由**人为冲突测试与 resampling-until-hack 的训练设置**生成，不是无干预生产发生率；研究只含两类主要作弊策略、两个约 1B 代码模型及所测 monitor。Table 1 的 wild-trained BERT 跨到 synthetic hacking 仅 34.69%，故不能照摘要称所有 wild-trained monitor 都稳健迁移。原 receipt 使用后稿题名 `Do Prompt-Elicited...`，不能覆盖 v1 本文题名。需非作者贡献/日期校准；如入选，Books 只比较 Ch66 是否需要“同一 monitor 的训练来源×验收来源”窄切片，不写泛化真实世界监测保证。 |
+| [2604.23121v1 Breaking Lock-In](https://arxiv.org/html/2604.23121v1) | exact-v1 §3.2 用视觉 encoder 权重漂移正则保存预训练 grounding，同时 language/action 分支继续 LoRA 适配；§3.3 对每个 flow 去噪步分别运行新指令正条件和训练指令负条件，将两个 velocity 差用于 steering。§4.3 用 no-CPG/no-Vis-Reg/Frozen-Vis 对照，这不是简单“多加一个提示”或纯视觉特征冻结。Ch23 现有条件化融合与 query steerability，Ch26 有 VLA controller/执行边界，但未把**低数据适配时视觉 grounding 保留**与**测试时动作去噪的双前向提示差分**作为联立的训练—推理接口。保留为窄机制线索，倾向 Ch26 主 owner、Ch23 表示 handoff。 | 正负 prompt 必须事先可给，双前向增加每步去噪成本；作者限制在控制过的低数据、四仿真/四实机任务，未证更广指令/长程或控制 SLO。不能把内部视觉知识“足够”写成所有预训 VLA 的保证。需非作者 source→actual-owner 和公告日期；即使后续决定 Existing，也不得仅因章节主题相似前关闭。 |
+
+日期字段定点：既存官方 v1 receipt 的 `.23488` Updated=04/28T00:44:12Z、`.23121` Updated=04/28T00:17:35Z，均早于本窗截止但不是首发时刻。存档官方 CS set `ListIdentifiers` 中 `.23121` 在 04/28 出现且 04/27/29 未出现；`.23488` 在这三日 CS set 均未出现，旧 receipt 仅 DOI-owner proxy，须补同批身份或其他官方公告依据，不能从缺席推其未公开。两篇的 arXiv ID 均在本日连续批次推断区间；可能的 Source Family 更早公开 artifact 仍须定点核。正式 §3 保持两项已完成 Integrate 的子集，`70/41` 与 `88` 工作上限不变。

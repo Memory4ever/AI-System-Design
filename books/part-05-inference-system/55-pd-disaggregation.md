@@ -55,7 +55,15 @@ fallback 都必须计入。Mix-Quant 的作者结果仅支持指定 Blackwell/vL
 不能把约 3× operator latency 外推为服务收益。Co-located single precision、weight-only Decode 或更高精度
 Prefill 在兼容性、链路成本或质量 evidence 不足时仍成立。
 
+阶段分工还须区分改变数值格式与改变已学习参数。只在 Decode 关闭 activation quantization，仍可沿用一套权重；若分别训练适合 compute-native Prefill 与 weight-only Decode 的参数，交付对象就成为经过共同训练或兼容训练的 prefiller/decoder pair。KV 必须绑定产生它的权重、量化和执行路径，不能仅凭 layout 与 token history 相同就授权重建替换：Decode 已生成的 assistant token，其 cache 未被证明等于后来用 Prefill 参数回放所得的 cache。
+
+双参数 artifact 用更专门的阶段计算换额外存储、训练与加载状态。[Disaggregated Quantization 的受限实验](https://arxiv.org/html/2609.26333v1)验证单机、batch 1 和给定格式的质量/性能，本地按 block 借用 Decode buffer 加载 Prefill 权重并非任意稀疏 MoE 的通用方案；短 prompt 的切换成本更难摊薄，多轮 cache 重建也未测。末端多个 checkpoint 的误差条不是独立训练 seed。参数 pair、cache producer 身份或端到端收益未通过时，保留 format-only、单参数 co-located 或较高精度路径，不从阶段速度推统一 SLO 保证。<!-- source-family:SF-2026-ARXIV-2609-26333 -->
+
 更准确的目标不是让两个池各自的峰值吞吐最大，而是在 TTFT 与 TPOT SLO 下提高 goodput。Prefill 池过快而 Decode 池不足，只会把请求堆积在 handoff 边界；Decode 池空闲而 Prefill 排队，同样无法改善端到端体验。
+
+多模态请求还会在 Prefill 前增加 Encode，阶段拆分因此要联动入口等待和局部共驻配置，而不是只调整两个池的数量。Encode 可把输入积成 microbatch，在 batch 满、到达间隔超过阈值或首请求等待过久时执行；按到达率设置间隔阈值依赖 Poisson 等流量假设，age 上限也只限制该 batch 的等待，不是全程 TTFT 上界。部分 Prefill 可以与 Encode 共驻，剩余请求远程 Prefill；按请求计数控制分流偏差，不等于按 token 或模态计算量均衡。离线容量代理和 batch profile 可以缩小配置搜索，再用真实流水线 trial 验证，但 throughput 最大、平均延迟 tie-break 与显式 SLO goodput 优化是不同目标。[EAServe §2–4 的受限机制](https://arxiv.org/html/2609.31551v1)
+
+软件 TPC mask 约束 SM 份额，却不隔离 HBM 带宽，共驻仍会争夺内存，因此 Decode 保持专池，视频等 workload 也可能不适合 Encode–Prefill 共驻。Profile 与搜索有准备成本，突发到达或输入尺寸漂移还会改变容量模型；作者单机、指定模型与合成到达实验中，吞吐小幅变化并不阻止 tail TTFT 明显退化。不能由 microbatch age、阶段峰值或配置搜索宣称生产 SLO 已保证。端到端 goodput、传输和质量未达标时，保留 co-located、独立 Encode/Prefill/Decode 或更保守的批等待配置，而不是强制所有模态采用同一分离比例。<!-- source-family:SF-2026-ARXIV-2609-31551 -->
 
 ## 新问题：KV 怎么移动
 
@@ -397,6 +405,10 @@ PREFILL_RUNNING
 
 Cancellation 或 failure 可能发生在任一状态。Source 不能在 destination commit 前回收唯一 copy；destination 也不能在 transfer metadata 与实际 bytes 不一致时开始 Decode。
 
+反向的生命周期同样要验收：Decode 因超时 Abort 一个尚在 Prefill/传输中的请求，即使自己不再消费它，也不能立即把目标 KV 槽位分给新请求。若旧 Prefill 已提交的 RDMA 写仍在途，迟到的 bytes 会越过槽位复用边界，覆盖新请求的 KV，而新请求的元数据和 checksum 未必能定位这条旧写入。安全的回收路径应先把 Abort 传给原 Prefill owner，待其确认相关写尚未开始，或所有已提交写均完成，Decode 才将该 generation 的槽位标为可复用；没有确认时应等待、隔离槽位或走保守重试，不能把本地超时当成远端写入完成。<!-- source-family:SF-2026-ZAI-SCALING-PAIN -->
+
+这为高并发、长 Context 的 P/D 服务补上 `abort → remote-write-retired → slot-reclaim` 顺序，却增加 ACK 往返、超时保留容量和 Prefill 失联时的清理成本。没有跨节点在途写入或使用同步 handoff 的简单部署，仍可采用较轻的回收路径。智谱公开案例只报告其 GLM-5 Coding Agent 负载中该竞态及修复后的异常变化，不证明这一握手消除了所有异常、对所有 RDMA/引擎均必要，或在任意尾延迟预算下无代价。
+
 跨 worker correctness 应验证 model revision、adapter、KV dtype/layout、block size、position 与 parallel mapping，而不仅是 checksum。
 
 ### 多轮交互把 Prefill 重新变成可路由的增量任务
@@ -406,6 +418,14 @@ Cancellation 或 failure 可能发生在任一状态。Source 不能在 destinat
 session binding owner 继续拥有 KV 与 conversation generation，router 只拥有本轮 Prefill placement，destination completion 后才能推进同一 session。动态路由改善多轮复用，却增加离线 profile 漂移、local interference、remote transfer、lookahead fairness 与 worker failure state；短 session、负载稳定或 profile 不可信时，固定 PD 路由仍更易验证。`arXiv:2602.14516v1` 的 exact-v1 只支持 AMPD 披露的本地/远端决策、lazy KV read、bounded queue reordering 和作者配置结果，不证明任意 Agent trace、topology、P:D ratio 或 SLO 下的通用最优性。
 
 <!-- source-family:SF-2026-ARXIV-2602-14516 -->
+
+### 混合状态组不能用一个 Prefix-hit 长度替代恢复合同
+
+纯 full-attention 的 block cache 可以沿 prefix 部分命中，混合模型却可能同时包含长度敏感的 recurrent state。此时按统一命中 token 数选择远端 Prefill，会把“某些层可复用”误当成“整个模型可恢复”。一种受限实现按 state group 管理：full-attention 支持 block 级部分命中，作者采用的 linear/SWA 状态要求 cached length 精确匹配，各组使用对齐 block size 和共享 allocation pool，但恢复资格仍分别验收。跨请求复用的 prefix-cache block 必须填满；一次 P→D handoff 的尾块只承担 transfer 生命周期，在 transfer 完成且满足前述 destination commit 条件后才回收，不能提前丢弃唯一副本。
+
+这把路由输入从总 prompt 长度改为扣除合法 prefix 后的 incremental prefill length，并联同实际 state bytes、cache placement 和可用带宽判断远端 Prefill 是否值得；任何单组 hit 都不是全模型命中。额外代价是 state-group metadata、精确快照、热点再平衡与网络拥塞。`arXiv:2604.15039v1` 的 PrfaaS 使用内部 1T 混合模型、远端 32 H200 / 本地 64 H20 及约 100 Gbps 跨 VPC 路径；吞吐分析由实测 profile 输入稳态模型，不是 bursty workload 的端到端 goodput，也未披露可泛化的 precision 合同。这里的 SWA 管理方式不是所有滑窗实现的普遍定理；状态不兼容、链路不稳或增量短时，本地 PD 与完整重新计算仍是清楚的回退边界。
+
+<!-- source-family:SF-2026-ARXIV-2604-15039 -->
 
 ### 单一路径为什么会在高复用 Agent Workload 下失衡
 
@@ -525,7 +545,17 @@ PD 分离把一个共享 worker 的 interference 问题改写成两个独立 cap
 第56章将收束这些选择：scheduler 怎样在 phase、memory、locality、SLO 与成本之间做分层决策。
 
 
+### 跨地域 PD 的 Handoff 需要一个临时 Decode Authority
+
+同机房 PD 可以等 KV transfer 完成后再切换；跨 WAN 时，这个空档可能直接吞掉 TTFT/TPOT 预算。一个受限分支让源端在传输期间继续 relay decode，远端只接收 token delta，并在 KV 与 token frontier 同时对齐后原子接管。这样临时 decode owner、已确认 token、KV revision 与去重规则必须进入 handoff identity，不能让两端都认为自己拥有输出权。<!-- source-family:SF-2026-ARXIV-2609-13161 -->
+
+它用额外 relay compute、重算和一致性状态换取隐藏 WAN 延迟，只在长输入短输出、带宽受限且 handoff 可验证时合理。输出很长、WAN 成本过高或 frontier 无法证明一致时，应回退同机房 PD、保持源端 decode，或重新 Prefill；作者 H100/H200 与 WAN workload 不构成通用收益保证。
+
 ## Review notes
+
+- `SF-2026-ZAI-SCALING-PAIN` — [智谱官方《Scaling Pain》](https://www.zhipuai.cn/zh/research/159)，2026-04-29 16:00 北京时间；§BugFix#1 的 Decode Abort 未传播、旧 Prefill/RDMA 写覆盖已复用 KV 槽位、Prefill safe-to-release ACK。只采 Ch55 反向回收时序；§BugFix#2 的 Indexer read-before-ready 属 Ch54 已有 tier readiness 的受限实例，LayerSplit 的 CP rank 按层驻留/广播另由Ch54承载并已非作者root实际写后通过，同一来源家族不拆计数。不采用作者异常率为跨引擎保证；root 已对照官方正文与 Ch55 相邻交接完成非作者实际写后复核，未复现实验。
+
+- `SF-2026-ARXIV-2604-15039` — [PrfaaS v1](https://arxiv.org/html/2604.15039v1)，Daily `2026-04-17`。采用 §3.2–3.4 的 hybrid state-group 恢复、完整 prefix / transfer-tail 生命周期和 incremental-length 路由；§4.1–4.2 限于 measured-profile-fed 稳态模型与作者硬件/链路。前置必要原文/owner 独立 PASS 复用 `V3_ORDINARY_TEN_TWO_INDEPENDENT_AUDIT.md` §9；root已重开必要v1/实际正文及两侧交接写后独立PASS，真实整合；Ch55锁释放。
 
 - `SF-2026-ARXIV-2602-14516`（Status: Experimental）：exact-v1 支持 AMPD 的 session-bound KV ownership、per-turn local/remote Prefill routing、lazy history-KV read 与 bounded-lookahead queue reordering；证据限于作者 workload/profile/拓扑，不证明跨系统最优路由或生产 failure/fairness。https://arxiv.org/html/2602.14516v1
 

@@ -1,26 +1,8 @@
 # AGENTS.md
 
-## 项目
+## 定位
 
-本仓库是一套长期维护、持续演进的书稿与学习系统：
-
-《AI System：从第一性原理到 AI 基建》
-AI System: From First Principles to AI Infrastructure
-
-它不是随机 AI 笔记、新闻收藏或框架手册。目标是建立一套连贯的知识系统，用于理解和设计现代 AI 系统，从模型基础、多模态与世界模型延伸到 Training、Inference、AI Infrastructure 与 Agent。
-
-## 主要读者
-
-主要读者是经验丰富的软件与基础设施工程师，熟悉：
-- 模型训练平台与 LLM 推理基础设施。
-
-读者正在建设端到端 AI 模型生命周期平台：
-
-```text
-Data / Training → Model → Deployment → Serving → Observability
-```
-
-不是面向毫无基础的初学者写作。
+面向有模型训练与 LLM 推理基础设施经验的工程师，构建连贯、可验证的 AI System 知识体系。
 
 ## 项目级不变量
 
@@ -56,32 +38,18 @@ Data / Training → Model → Deployment → Serving → Observability
 先读取：
 
 1. `docs/RESEARCH_CONTRACT.md`
-2. `docs/RESEARCH_SOURCES.md`
+2. `docs/RESEARCH_SOURCES.md` 的使用说明与本次频率分组
 3. `docs/REPORT_CONTRACTS.md`
 4. `CODEX_RESEARCH_PROMPT.md`
 5. `ROADMAP.md` 与最新相关 checkpoint
 
-生成和继续生成 Report 一律执行当前合同；字段细节在对应步骤需要时加载。历史报告默认只读取去重身份和
-未决项索引，命中具体关联再读正文。不同日期/周按独立文件 ownership 并行，共享文件才协调写入。
+生成和续跑 Report 均按当前合同。**每份 Daily 独立执行**：启动、换日、委派或压缩恢复时重读本文件与上述适用内容，只加载当日窗口、材料和停点。月度 checkpoint 只作路由；跨日仅定点核去重、首公开归属或共享 Books 冲突。不同日期/周按独立文件 ownership 并行，共享 Books/索引文件写入前先协调 ownership。
 
 公共规则按唯一 owner 维护：`docs/RESEARCH_CONTRACT.md` 负责贡献筛选、去重、评分、证据审阅与 Books 判断；
 `docs/RESEARCH_SOURCES.md` 负责来源入口；`docs/REPORT_CONTRACTS.md` 负责时间窗口、报告结构、独立复核与完成条件。
 Prompt、Heartbeat 与其他说明文件只引用，不复制这些定义。
 
-`scripts/validate_research.py` 只检查格式与可判定的一致性，不能证明来源被正确理解或长期结论成立。
-报告完成必须有充分证据、落实必要的 Books 改动，并通过独立语义复核；不能用校验通过或额外收据替代实际研究。
-
-### Research → Books
-
-候选满足 Report 合同的单篇证据与独立复核条件且可能改变长期知识后，再读取目标命题及相邻交接内容，执行
-Books Decision；不等待无关候选，但整体报告不能提前 Complete。Weekly 摘要、评分或 `Must Read` 本身不构成 Books Gate。
-
-## 写作风格
-
-- 以中文为主；英文能提高精度时保留技术术语。
-- 使用连贯叙述，不堆砌割裂单行句。
-- 优先回答 Why、Mechanism、Trade-off、Evolution 与系统位置。
-- 项目或论文名称只作为机制证据、替代方案或受限案例；删除名称后，正文仍应成立。
+Research → Books 按研究合同执行；开始改书时再加载上面的 Books 上下文。校验器只检查格式与可判定的一致性，语义验收按 Report 合同执行。
 
 ## 修改纪律
 

@@ -357,6 +357,10 @@ PbD pipeline 不把录制动作平铺给 agent，而先按命名 subgoal 建层�
 
 <!-- source-family:SF-2026-ARXIV-2607-24720 -->
 
+### 环境的排序不应改写用户目标
+
+真实网站即使没有注入恶意指令，也可能通过赞助排序、促销框架、延迟披露价格等机制推动自己的目标。Planner 若把“先看到”误作“用户更想要”，会先改写偏好、再缩小搜索，最后在关键成本尚未核齐时提交不可逆动作。受托决策因此应先冻结用户约束和比较准则，保留候选集合的覆盖证据，并在购买或其他有副作用的 commit 前由独立检查核齐决定性字段；外部页面只提供事实候选，不拥有目标函数。代价是额外探索、页面读取和验证延迟。受控市场基准的 matched-control 对照支持这种 failure path，但其唯一最优商品、固定引导方式和有限跨域测试不能证明一般商业环境的防护效果；低风险、可撤销且目录透明的任务仍可用简短搜索。<!-- source-family:SF-2026-ARXIV-2609-27273 -->
+
 ## 本章在知识树中的位置
 
 Tool Calling 定义单次 action contract，Planning 组织多个可能 action。下一章研究 Reflection：当 observation 或 verifier 暴露缺陷时，系统如何产生反馈并修正，而不是无限自我批评。
@@ -396,6 +400,12 @@ owner 批准目标变化。这样提高可重放性，却增加语言设计、to
 把完整 tool DAG 每次序列化进 prompt，透明但昂贵，早期选错后也可能进入非法 graph state。静态图可被编码进专用 graph token，并用 on-policy samples 学习当前 policy 的漂移；模型因此更快提出 plan，但 dependency、permission 和 effect commit 仍由外部 workflow/runtime 验证。内部化减少 prompt 搬运，却增加 tokenizer/model coupling、graph versioning、retraining 和错误不可观察性。图动态变化或置信不足时，应回退 external typed DAG、constraint checker 与 stepwise replan。exact-v1 只支持所测静态 tool graph 和 legality 指标，不证明真实工具成功或权限安全。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-11706 -->
+
+### 内部 State 只能建议 Planning Mode
+
+低维内部 state 可以作为“探索、执行、复核”模式切换的 sensor，帮助 controller 分配预算；它不拥有答案正确性、工具授权或最终 commit。mode detector、模型 revision、trajectory slice 与外部 verifier 必须共同校准。<!-- source-family:SF-2026-ARXIV-2609-16245 -->
+
+冻结模型和有限 research trajectory 只支持受限可读性；模型特化或误判会把合理探索提前终止。信号不稳时回退显式 workflow、固定预算和外部 verifier。
 
 ## Review notes
 

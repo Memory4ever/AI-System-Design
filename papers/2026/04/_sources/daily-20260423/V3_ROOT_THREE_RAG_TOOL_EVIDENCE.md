@@ -1,0 +1,11 @@
+# 04/23 三项 RAG / Tool 材料的有界核验
+
+作者：root；2026-09-28。以下只是本日作者的必要方法、对照、限制和 Books owner 判断；首次公开槽和非作者准入尚未通过，不能转写成正式 `Complete`。
+
+| Source Family | 原文支持与不支持 | 工作处置 |
+| --- | --- | --- |
+| `SF-2026-ARXIV-2604-19899` [MetaRAG reproducibility](https://arxiv.org/html/2604.19899v1) | §4–6 复做 HotpotQA、2WikiMultiHopQA：相对基线趋势仍在，但绝对分数降低；闭源模型更新、原 hybrid retrieval 混合方式及 prompts 缺失使“复现同数值”不可得。§5.3 阈值改变 EM/F1、检索和 MS 调用；Table6 的 500 题 HotpotQA retrieval-only/指定 GPT-3.5 配置中 MetaRAG 每题约 14.85 次模型请求、**47.85 秒/请求**均值与**全 500 题 $37.66**，RAG 基线 1 次/0.5 秒/全 500 题 $1.30；不同分母与处理阶段不能拼成通用端到端 SLO。附加 reranker 后提升不说明原 critique 自行具备证据选择能力。 | 拟标准候选 V2=`2+1+2=5`，`AGENT-RAG` / `PLATFORM-EVALUATION-SYSTEM`。作者实验给停止阈值和额外调用代价的条件证据，但 Ch76 已区分 evidence sufficiency、reranker 与调用预算，Ch66 已要求版本化 harness；`No Change — Existing Coverage` 经[非作者有限复核](V3_APR20_THREE_RAG_TOOL_INDEPENDENT.md)通过，仅指这些窄命题。 |
+| `SF-2026-ARXIV-2604-20148` [Meta-Tool](https://arxiv.org/html/2604.20148v1) | §3 将 documentation+few-shot、227.8M 超网络产生的 LoRA、value-guided beam 组合；§5.4 对固定 Llama-3.2-3B-Instruct 与每个 benchmark 50 题报告相同 prompt 下开/关该超网络的**四任务平均**执行成功率同为 47.0%，不是每任务均为 47%；这不证明所有 hypernetwork/tool 适配无用。Spider2/WebArena 失败主要是语义而非格式，不能因 constrained decoding 格式可行便称工具任务完成。§6 限单模型、样本小、few-shot 质量及文档时效；4-bit/NF4 训练和单一主干也不支持通用成本排序。 | 拟标准候选 V2=`2+1+2=5`，`AGENT-TOOL-CALLING`，与 `TRAIN-LORA` 交接。受限负结果只支持这个工具/模型/预算合同优先考虑简单上下文基线；Books 已有 prompt/context 与 LoRA 条件分支，窄 `No Change — Existing Coverage` 经[非作者有限复核](V3_APR20_THREE_RAG_TOOL_INDEPENDENT.md)通过，不把作者“falsifies transfer”外推。 |
+| `SF-2026-ARXIV-2604-20199` [All Languages Matter](https://arxiv.org/html/2604.20199v1) | §2 固定 13 语言、BGE-M3 top-50→两类 reranker top-5 与生成器；按语言分组后挑**答案得分最高**的语言仅是离线估计上界，使用了下游答案信息，在线选择器不可直接获得。§3/Appendix C 的 LAURA 对比原 rerank 在 MKQA 的 character 3-gram recall 有局部提升，但只评 reranking stage，不能归因于 retriever 或 generator 改造；附录个别语言还退步。不同语言证据质量、文本可答性和 model language bias 未被完全消除；按证据语言切片增加标注/评价成本。 | 拟标准候选 V2=`2+1+2=5`，`AGENT-RAG`。Ch76 原有一般 relevance→sufficiency→utility 主线，未显式承载同一多语言候选池中**证据语言**偏向造成的阶段归责盲点。[非作者来源/owner 审阅](V3_APR20_THREE_RAG_TOOL_INDEPENDENT.md)指出该缺口后，已定点写入 Ch76 的跨语言候选覆盖→重排留存→答案支持切片；[非作者写后复核](V3_APR20_20199_CH76_WRITE_AFTER_INDEPENDENT.md)通过，但尚不能提前写成日报 Complete。 |
+
+三个 `arXiv:...v1` 的 abs 页日期与官方公开批次仍须合并核；提交时间或论文正文标注的会议日期都不是本日报窗口证明。上述 V2 分数和 Books 处置是待独立复核的工作判断，不进入正式冻结分母。

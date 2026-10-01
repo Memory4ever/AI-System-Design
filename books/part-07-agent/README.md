@@ -31,7 +31,7 @@ Prompt condition
 - [Ch78～80](78-tool-calling.md) 从 Tool proposal 进入 Planning 与 evidence-backed Reflection。
 - [Ch81](81-workflow.md) 拥有持久状态机、retry、compensation 和 human checkpoint。
 - [Ch82](82-multi-agent.md) 拥有角色分解、communication tax、delegation 与 aggregation。
-- [Ch83](83-mcp.md) 拥有连接协议，不拥有业务授权或 Workflow。
+- [Ch83](83-mcp.md) 拥有 MCP 能力调用、A2A 远端任务与本地状态的接口映射，不拥有业务授权或 Workflow。
 - [Ch84](84-agent-platform.md) 统一 Agent definition、run、state、resource、policy 与 evidence。
 
 ## 退出契约

@@ -135,8 +135,9 @@ def main() -> None:
         ),
         "purpose": "historical arXiv announcement ownership recovery lead",
         "authority_boundary": (
-            "DOI created/registered is matched to the official arXiv announcement "
-            "schedule; it is not submission time or technical evidence."
+            "DOI created/registered is an identity/discovery lead only; it does not "
+            "establish first-public availability. Official arXiv public-release "
+            "evidence must be checked separately; this script does not perform that check."
         ),
         "files": results,
         "record_count": sum(item["records"] for item in results),

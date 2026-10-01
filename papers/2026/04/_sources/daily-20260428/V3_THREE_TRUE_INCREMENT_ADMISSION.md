@@ -1,0 +1,11 @@
+# 04/28 三条旧开放项的贡献准入定点对读（作者侧）
+
+本文件只判断下列三条是否仍值得进入候选必要证据工作，不评分、不冻结分母、不写 Books；首次公开依本日报公告批次组合另核。三条都已读官方 exact-v1 的必要方法/评价，并对照实际章节，故不是仅凭题名或主题保留。
+
+| 身份 | 具体可保留的增量 | 现文差异与仍需独立审查的边界 |
+| --- | --- | --- |
+| [2604.23051v1 ChronoScope](https://arxiv.org/html/2604.23051v1) | §3–5 将显式时间锚、后续无时间词的隐式继承、明确切换、跨实体传递分开；同一 Wikidata 时态事实给 gold-context、self-conditioned、questions-only 三种协议，能区分知识缺失、模型自答传播与对话 scope 漂移。 | Ch66「Longitudinal State」现有 canonical fact ledger/as-of-date、读写路径对照，Ch76 已有事实有效期 gate，Ch81 有跨阶段 referent binding，但没有把**对话中省略的时间条件是否被继承或覆盖**作为独立 Eval 对象。主 owner 倾向 Ch66，非新 memory 真值源。数据由模板和 Wikidata 自动生成，不能把 1.46M 链当 1.46M 独立自然会话；gold context 仍有低 Chain@1，数字应按具体配置/分母读，不能宣称内在时间推理因果机制。作者建议继续，待非作者 source→owner 和日期核。 |
+| [2604.23459v1 Architecture Matters](https://arxiv.org/html/2604.23459v1) | §4–5 在固定任务/rubric 下分别变角色、star/chain/mesh 通信与 private/shared memory，报告 planning refusal、execution refusal、harmful partial/full、benign success；同一拓扑在 browser、OS、code 的危险排序反转，能力提高也可与危险 full-task 完成上升共存。 | Ch72 已有跨 Agent influence graph、coalition risk、effect authority，却尚未明确**架构选择必须在同一机会集内同时验恶意分阶段结果和 benign success，且拓扑排序不能迁场景**。倾向 Ch72 的评价切片，非“多 Agent 天然更危险”定理。受测 BrowserART/OS-Harm/RedCode-Gen 的工具划分不完全同构；OS-Harm benign 为零，不能据此比较 safety–utility；3.8× 属特定 BrowserART 配置。作者建议继续，待非作者 source→owner 和日期核。 |
+| [2604.23333v1 RLCM](https://arxiv.org/html/2604.23333v1) | §3.1–3.3 在若干中间推理预算强制终止并各采 K 个完成估可解性；probe 仅自己接收 BCE 梯度，policy 以正确/不正确前缀集合的**相对 confidence margin** 与终局答案奖励共同更新。它区分直接 Brier 点估计和可排序的过程控制信号。 | Ch33 已有终局广播 credit、过程 reward/局部 span 分责，Ch66 有 calibrated selector/accepted 分母，却没有这一「训练 probe 更新 vs policy 接受 margin 奖励」的具体双角色接口。主 owner 倾向 Ch33、Ch66 handoff。作者同一 R1-distilled Qwen-7B/GRPO-LEAD 基座对照，但 MC K×预算增加训练开销；相对 margin 不自动保证绝对概率 calibration，probe 自身也不是过程正确性真值，conformal 风险仍需 held-out/exchangeability。作者建议继续，待非作者 source→owner 和日期核。 |
+
+三条 v1 Updated 均早于 04/28T01:00Z：`.23051` 00:12:12、`.23333` 00:33:29、`.23459` 00:42:05；此字段不是首次公开时间。直接对存档的官方 `ListIdentifiers(set=cs,from=until=04-27/28/29)` 原 XML 查身份，`.23051/.23459` 在 04/28 set 出现、04/27 和 04/29 未出现；`.23333` 三份 CS set 都未出现且历史 receipt 仅 DOI owner proxy，后者尤其须补同批官方身份/邻界或单篇可核公告依据，不能把“不在该 set”写成未公开。即使组合有界推断可用，也不得以 submitted、DOI 入库或 OAI 单字段独自定日。当前 70/41 作者题摘口径、88 工作上限与正式两项 Integrate 均不变。

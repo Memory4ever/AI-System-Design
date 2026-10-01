@@ -70,7 +70,7 @@ Part I 是元层坐标系；Part II～VII 沿 Model → Multimodal/World/Action 
 ```
 
 - [研究合同](./docs/RESEARCH_CONTRACT.md)：定义贡献筛选、三维评分、审阅深度、证据边界与 Books 判断。
-- [来源注册表](./docs/RESEARCH_SOURCES.md)：维护唯一 Source ID、官方入口、权威范围与扫描节奏。
+- [来源清单](./docs/RESEARCH_SOURCES.md)：维护 Source ID、官方入口、关注主题与扫描节奏。
 - [Report 合同](./docs/REPORT_CONTRACTS.md)：Daily、Weekly 与历史补跑共用的报告结构、时间窗口和完成条件。
 - [统一研究入口](./CODEX_RESEARCH_PROMPT.md)：Daily、Weekly、历史补跑与中断后继续共用。
 
@@ -81,7 +81,7 @@ Part I 是元层坐标系；Part II～VII 沿 Model → Multimodal/World/Action 
 - 路线图：7 Part / 84 章，并建立稳定知识节点 ID，见 [ROADMAP.md](./ROADMAP.md)
 - 书稿：章节内容统一放在 [books/](./books/)
 - 当前草稿：[第1章 为什么学习 AI System](./books/part-01-worldview/01-why-learn-ai-system.md)
-- 写作规则：模板是思考检查清单，不是最终目录结构，见 [docs/WRITING_GUIDE.md](./docs/WRITING_GUIDE.md)
+- 写作规则：围绕中心问题形成连续论证，见 [docs/WRITING_GUIDE.md](./docs/WRITING_GUIDE.md)
 - 研究结构与一致性校验：`python3 scripts/validate_research.py`。该结果是语义审阅的必要条件，不等于研究结论已经验收。
 
 ## 推荐阅读方式

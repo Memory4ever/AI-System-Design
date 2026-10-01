@@ -194,23 +194,9 @@ MQA H_kv=1   -> cache约为MHA的1/32
 
 这是逻辑元素数比较，不含 alignment、block allocation 和 metadata。减少 KV heads 可能影响模型质量与训练方式，属于架构 trade-off，不是 runtime 免费压缩。
 
-## Position 与 Cache 的一致性
+## 哪些状态可以省掉，必须由模型决定
 
-缓存的 K 通常已经应用对应位置的 RoPE 或其他位置机制。Decode 新 token 必须使用正确 position index，否则新 Query 与历史 Keys 的相对几何错误。位置编码不会阻止同一请求继续复用 cache：历史 token 在后续 Decode steps 中仍处于原位置，所以它的 K 不需要重算。
-
-跨请求的 Prefix reuse 则更严格：模型配置、token ids、position ids、adapter 和相关 Attention 语义都要兼容。文本看起来相同但 normalization、special tokens 或起始 position 不同，cache 都未必可复用；除非模型与 runtime 明确定义并验证了位置变换，不能把位于不同 offset 的 K 当作同一对象。Prefix Cache 是对这段已验证 KV state 的物理复用索引，不是另一种 Attention 语义，也不是“按文本相似度命中”的语义缓存。
-
-## Cache 没有解决什么
-
-第一，它不减少模型权重。Decode 每步仍要执行每层 projection、MLP、Norm，并读取大量 weights。
-
-第二，它不消除自回归依赖。下一 token 仍要等待上一步 token 被选择。
-
-第三，它不消除历史读取。每步 Query 仍要访问已有 K/V，长上下文会增加 memory bandwidth。
-
-第四，它不保证容量可管理。不同请求长度、生命周期和并发会造成动态分配、碎片和调度问题。
-
-KV Cache 把重复计算问题转化为显存与状态问题，而不是让推理免费。
+减少 `H_kv` 是沿 head 维共享，继续压缩还可以考虑 depth 维或 K/V 的表示方式。但这些分支都先改变模型允许复用的对象，再由 runtime 执行，不能从显存紧张直接推导出丢弃状态的许可。
 
 ### Depth-wise KV Sharing 是 Model Contract，不是 Runtime Eviction
 
@@ -229,6 +215,30 @@ trained routing/sharing policy
 checkpoint compatibility、prefix/cache identity、kernel dispatch 和 graph capture 复杂度；错误 mapping 会返回
 形状正确但语义错误的 state。通用已训练模型、需要 layer-local fidelity 或 backend 不支持该 layout 时，per-layer
 KV 仍然成立。Stochastic KV Routing 是训练期 adaptive sharing 的 Experimental 证据，不支持 post-hoc 套用于任意模型。
+
+### KV 的逻辑最小状态可以由训练结构重新定义
+
+GQA/MQA 仍缓存显式 K 与 V，只是改变 head sharing；更激进的结构让 content key 可由 grouped value 重构，从而缓存 V 与独立 positional key，而不再固定保存原始 `K+V`。这不是 runtime 对任意 checkpoint 的无损压缩，而是训练、Attention 参数化与 decode kernel 共同定义的新 state contract：重构函数、group layout、position representation 和模型 revision 必须同时匹配。<!-- source-family:SF-2026-ARXIV-2609-13285 -->
+
+收益是缩小理论缓存对象，代价是专用训练、额外重构计算和 kernel 复杂度。当前证据来自 350M 模型与 30B training tokens，且缺少端到端 decode kernel；无法证明质量和延迟同时成立时，GQA/MQA 的显式 KV 仍是可靠基线。
+
+## Position 与 Cache 的一致性
+
+采用 RoPE 的模型通常缓存已旋转的 K；采用其他位置机制时，应按其实际作用位置解释缓存，不是所有机制都把位置信息写入 K。Decode 新 token 必须使用正确 position index，否则新 Query 与历史 Keys 的相对几何错误。位置编码不会阻止同一请求继续复用 cache：历史 token 在后续 Decode steps 中仍处于原位置，所以它的 K 不需要重算。
+
+跨请求的 Prefix reuse 则更严格：模型配置、token ids、position ids、adapter 和相关 Attention 语义都要兼容。文本看起来相同但 normalization、special tokens 或起始 position 不同，cache 都未必可复用；除非模型与 runtime 明确定义并验证了位置变换，不能把位于不同 offset 的 K 当作同一对象。Prefix Cache 是对这段已验证 KV state 的物理复用索引，不是另一种 Attention 语义，也不是“按文本相似度命中”的语义缓存。
+
+## Cache 没有解决什么
+
+第一，它不减少模型权重。Decode 每步仍要执行每层 projection、MLP、Norm，并读取大量 weights。
+
+第二，它不消除自回归依赖。下一 token 仍要等待上一步 token 被选择。
+
+第三，它不消除历史读取。每步 Query 仍要访问已有 K/V，长上下文会增加 memory bandwidth。
+
+第四，它不保证容量可管理。不同请求长度、生命周期和并发会造成动态分配、碎片和调度问题。
+
+KV Cache 把重复计算问题转化为显存与状态问题，而不是让推理免费。
 
 ## 从模型状态到 Runtime 对象
 
@@ -253,7 +263,7 @@ Decoder-only autoregressive loop
 -> GPU memory manager and scheduler
 ```
 
-本章是 Part II 从模型机制通向 Part V 的关键桥梁。第20章继续处理每步 logits 的 token 选择；第45章从 runtime 生命周期重新审视 cache，第47章改变其物理 placement，第54～56章再把它纳入 HBM、PD 与调度约束。
+本章解决了生成循环中哪些历史计算可以复用，但保存状态还不能决定下一步输出什么。第20章因此接手 logits 到 token 的选择，再将选出的 token 送回本章的追加过程。本章也连接 Part V：第45章从 runtime 生命周期重新审视 cache，第47章改变其物理 placement，第54～56章再把它纳入 HBM、PD 与调度约束。
 
 从 State 横线看，本章定义 KV state 的模型来源；第 35 章转向训练状态的一致提交，第 42、45 章再把在线生成表示成 request-owned state machine。这里连接的是“状态语义怎样出现”，不是把 KV Cache 与 training checkpoint 视为同一种状态。
 

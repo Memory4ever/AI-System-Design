@@ -8,9 +8,9 @@
 
 ## 1. 结论
 
-本窗 arXiv Thursday 公告的宽身份数为 503；经逐项题摘语义筛选和独立漏项复核保留 16 个 Source Family。它们围绕 KV 量化、MoE optimizer state、VLA 闭环、评测、Agent skill、云边 speculation、split inference 与 world-model 训练等真实系统边界聚合。没有把通用视觉、机器人控制应用或单任务指标提升纳入候选。
+本窗 arXiv Thursday 公告的宽身份数为 503；经逐项题摘语义筛选和独立漏项复核，当前保留 15 个 Source Family。它们围绕 KV 量化、MoE optimizer state、VLA 闭环、评测、Agent skill、云边 speculation、split inference 与 world-model 训练等真实系统边界聚合。没有把通用视觉、机器人控制应用或单任务指标提升纳入候选。
 
-16 项 v1 HTML 均重新打开并检查撤回状态。NOVA-KV、层级 VLA memory、成本感知评测预算与 MemoryCPT 的长期机制已有 Books 覆盖，Deltoris 只保留报告，其余 11 项完成正文整合。
+15 项当前有效的 v1 HTML 均重新打开并检查撤回状态。NOVA-KV、成本感知评测预算与 MemoryCPT 的长期机制已有 Books 覆盖，Deltoris 只保留报告，其余 11 项完成正文整合。`2608.04765` 后续被 arXiv 标记撤回，已从本日候选、评分与采用链路清除；不以撤回材料支撑原有 Books 结论。
 
 ## 2. 来源覆盖
 
@@ -29,7 +29,7 @@
 | SRC-BAIDU-ERNIE | [技术博客](https://ernie.baidu.com/blog/zh/) 按日期检查，最近记录早于本窗 | 已检查 | 无 |
 | SRC-XIAOMI-MIMO | [MiMo](https://mimo.xiaomi.com/) 论文与博客按日期检查，本窗无条目 | 已检查 | 无 |
 | SRC-MINIMAX | [Research / Blog](https://www.minimax.io/blog) 相邻研究记录不落窗 | 已检查 | 无 |
-| SRC-ARXIV | Thursday 08:00 北京时间公告；503 个宽身份作发现索引，逐项题摘语义筛选和独立漏项复核后保留 16 项并重开 v1 HTML | 已检查 | 无 |
+| SRC-ARXIV | Thursday 08:00 北京时间公告；503 个宽身份作发现索引，逐项题摘语义筛选和独立漏项复核后当前保留 15 项；1 项后续撤回已清除正面记录 | 已检查 | 无 |
 
 本窗没有额外按需来源触发。
 
@@ -43,7 +43,6 @@
 | [Deltoris](https://arxiv.org/html/2608.04428v1) | 2026-08-06T08:00:00+08:00 | 将 VLA 连续输入相似性、bit sparsity、speculation 与专用 accelerator 联合设计；2 + 2 + 2 = 6 | 标准完成 | 仅报告：硬件模拟与特定 diffusion VLA 结果不足以改变通用章节结论 |
 | [Inference Backend Side-effect](https://arxiv.org/html/2608.04714v1) | 2026-08-06T08:00:00+08:00 | 全交叉实验显示同一模型的 benchmark 结果受 backend、版本和 generation config 影响，纠正“分数只属于权重”的假设；3 + 3 + 3 = 9 | 深入完成 | 整合：PLATFORM-EVALUATION-SYSTEM [Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
 | [LoginTrap](https://arxiv.org/html/2608.04741v1) | 2026-08-06T08:00:00+08:00 | 把 web agent 的 login 从普通页面动作识别为独立认证边界，展示任务无关间接注入可诱导凭据泄露；3 + 3 + 3 = 9 | 深入完成 | 整合：PLATFORM-SECURITY [Ch72](../../../../books/part-06-ai-infrastructure/72-security.md) |
-| [Explicit Language Memory for VLA](https://arxiv.org/html/2608.04765v1) | 2026-08-06T08:00:00+08:00 | 用 high-level language memory 与 low-level controller 分层解决 long-horizon 非 Markov 状态和纠错；2 + 2 + 3 = 7 | 深入完成 | 已有覆盖：MULTIMODAL-EMBODIED-VLA [Ch26](../../../../books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md) |
 | [Closed-Loop Task-Vector Negation Audit](https://arxiv.org/html/2608.04692v1) | 2026-08-06T08:00:00+08:00 | 证明 VLA skill suppression 与未目标控制能力的 collateral damage 必须在闭环矩阵中共同评估；3 + 2 + 3 = 8 | 深入完成 | 整合：PLATFORM-EVALUATION-SYSTEM [Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
 | [Canary Tools](https://arxiv.org/html/2608.04719v1) | 2026-08-06T08:00:00+08:00 | 以六类可控诱饵把“选错工具”拆为可诊断的 reasoning failure；3 + 2 + 3 = 8 | 深入完成 | 整合：PLATFORM-EVALUATION-SYSTEM [Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
 | [Skill-Use](https://arxiv.org/html/2608.04828v1) | 2026-08-06T08:00:00+08:00 | 将 skill 能力拆成 Trigger、Compliance 与 Boundary，并以真实文件/沙箱 trajectory 评分；3 + 3 + 3 = 9 | 深入完成 | 整合：PLATFORM-EVALUATION-SYSTEM [Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md) |
@@ -79,10 +78,6 @@
 ### [LoginTrap](https://arxiv.org/html/2608.04741v1)
 
 §2.4 威胁模型允许攻击者控制页面上下文和诱导的登录流但不知道任务/agent internals，§3 fuzzing 生成 page-specific injection；实验的 86% 仅限所测 agent/defense。拟在 Ch72 web-agent trust boundary 中加入：authentication 是 effect-capability escalation，网页文本不能自行声明 login prerequisite；凭据填充需由可信 UI/identity broker 和用户授权，而非模型依据页面内容提交。
-
-### [Explicit Language Memory for VLA](https://arxiv.org/html/2608.04765v1)
-
-§3 用 high-level VLM 递归更新 temporal language memory/subtask，low-level VLA 只执行连续控制；simulation 与 sim-to-real 支持分层可行，不证明文本 memory 为环境真值。Ch26 已有相同 owner 分工、fresh observation 与 controller correction，新增论文名不会增加机制。
 
 ### [Closed-Loop Task-Vector Negation Audit](https://arxiv.org/html/2608.04692v1)
 
@@ -124,11 +119,11 @@ split inference 在本地—云—本地边界反复传 activation；RAC 以 exa
 
 无
 
-本窗没有可执行未决或外部材料请求。16 项候选均完成证据判断与 Books 决定。
+本窗没有可执行未决或外部材料请求。15 项当前有效候选均完成证据判断与 Books 决定；后续撤回的 `2608.04765` 已从正面候选链路清除。
 
 ## 6. 复核
 
 复核者：独立复核智能体（2026-09-07）
 结论：通过
 
-复核纠正 7 项 false negative。以 503 个 official-announcement identity 为分母逐题摘重筛；16 项均复核 exact-v1、withdrawal、评分、证据边界与 owner。4 项已有覆盖真实，1 项仅报告边界合理，11 项长期机制均位于 canonical owner 的正文区。
+复核纠正 7 项 false negative。以 503 个 official-announcement identity 为分母逐题摘重筛；当前 15 项有效候选均复核 exact-v1、withdrawal、评分、证据边界与 owner。3 项已有覆盖真实，1 项仅报告边界合理，11 项长期机制均位于 canonical owner 的正文区；`2608.04765` 后续撤回的清理已完成。

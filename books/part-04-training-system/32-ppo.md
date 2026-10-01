@@ -98,6 +98,8 @@ A_t^GAE
 
 `lambda` 在低方差、有偏估计与高方差、低偏估计之间折中。LLM RLHF 常有稀疏 terminal reward，并加入每 token KL shaping；具体 return construction 必须与实现一致。
 
+GAE 把每个 token 当作同样长的一步，在中间状态信息量近似均匀时最简单；长推理中大量低不确定性 token 也会消耗折扣跨度，使末端奖励难回传到早期分叉。一个实验性分支以冻结旧策略的下一 token 熵作为局部“信息时间”代理，让折扣与 trace decay 按累计代理量而非裸 token 数推进，再按同一代理量调节 clipping；token state/action 没有消失，改变的是 credit horizon 与允许更新幅度。熵高不等于语义重要、真实因果贡献或正确答案，且代理随策略迭代需重算；这换取较少无效衰减，也增加全词表熵计算、归一化和更新稳定性负担。无法验证代理与任务关键转折相关、或固定时间 PPO 已稳定时，应保留普通 GAE 与固定 clip。现有分析依赖论文的信息密度/策略散度假设，实证只覆盖所测 Qwen3 数学 RLVR，不能外推任意长链、工具环境或在线对齐。<!-- semantic-body-binding:SF-2026-ARXIV-2609-24380 -->
+
 Value model 也需要训练：
 
 ```text
@@ -139,6 +141,10 @@ answer 或 rubric 这类 reward-defining information，而 policy 在 rollout �
 policy 能力；length-adaptive weighting 仍依赖 outcome reward 和 horizon contract。训练系统至少应按 policy / critic
 分别观测 loss、explained variance、value range violation、advantage RMS、response-length slice、update-to-weight
 ratio 与 held-out reward，而不能只看训练 reward 上升。
+
+即便 value range 与 target 构造正确，密集地在每个 token state 回归同一条 rollout 的 Monte Carlo return，也可能产生另一种失败：真实 continuation value 沿推理过程明显变化，critic 却因相邻状态高度相关和隐式方差惩罚而预测成近乎平坦的曲线。把 critic loss 只施加在少量、彼此分离的 state 上，可以减少冗余梯度并恢复局部 value contrast；代价是 anchor 选择、监督稀疏度和未观测区间的偏差。作者只在 FrozenLake、Qwen3-4B/8B 与数学推理设置中验证该分支，不能推出稀疏监督普遍优于 dense critic。平台应同时报告 state-distance、target variation、prediction variation 与 actor outcome；value flattening 不存在或 anchor 不可靠时，原 dense loss 仍是合理基线。
+
+<!-- source-family:arxiv:2609.18708v1 -->
 
 一项 2026 年的受控研究从 1.5B sanity test 扩展到 40.3K 数学数据和两个 30B-A3B MoE，并逐项 ablate 上述
 控制面；作者结果支持 single-rollout critic 在该 math-RL contract 中匹配或超过 group-based baseline。它没有

@@ -99,6 +99,14 @@ untrusted proposer builds candidate off-commit
 
 这种 activation contract 不取代数据库、object manifest 或 consensus log，只规定它们必须原子绑定哪些 agent-state 语义。有限状态空间验证可以证明抽象 protocol 在已编码 transitions 下没有违反 invariant，却不覆盖 WAL crash、network partition、storage bug、真实签名持久化、外部 side-effect atomicity 或高并发延迟。因此低并发、single writer、无持久副作用的短任务仍可使用更简单的 version/CAS；multi-writer、跨恢复和高权限 workflow 才需要完整的 branch head、writer fencing、receipt 与 lifecycle contract。
 
+### LLM 分析可以借用 Lattice 的单调状态纪律
+
+开放式程序分析需要查文档、版本元数据和安全公告，传统静态分析无法覆盖全部语义；完全自由的 Agent 又会反复推翻结论且难以说明终止。一个折中是把每个 claim 的 assessment 放进有限高度 lattice，LLM 只生成 claim/evidence proposal，transfer function 只允许通过 join 单调提升，worklist 在状态变化时传播。这样 workflow owner 能说明在声明的有限图、有限 claim 与终止工具条件下为何停机，并保存每次 assessment 的证据。
+
+结构化状态只能暴露、不能自动纠正 judge 的系统性误判；evidence-only 更新若不触发重新处理，也不等于“再无证据可找”。框架还没有实现和实证，因此只能作为设计边界，不能宣称实际精度或可扩展性。可用 sound analyzer 的区域仍应由形式工具拥有，图规模或 claim domain 无法有界时则回退人工审查、预算终止与 Unknown。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12694 -->
+
 ### Task State Alignment 是每次 Dispatch 的前置条件
 
 只保存一个 planner stage，在短任务、单 executor 且 observation 不会异步变化时足够；长流程中 planner 的 active stage、runtime evidence、remembered context 与 delegated executor 可能各自仍合法，却不再支持同一个 next action。Workflow owner 应在 dispatch 前构造 alignment record，绑定 stage revision、evidence watermark、memory snapshot 与 executor capability；model 只能提出下一步，state machine 根据这组共同前提决定执行、重新规划或升级。
@@ -106,6 +114,10 @@ untrusted proposer builds candidate off-commit
 对齐检查减少 stale-plan execution，却增加 snapshot、cross-component reconciliation 与 false stall；任何输入遗漏都可能产生表面一致。简单 linear workflow 仍可用单 state pointer，外部状态变化或 delegation 出现后才升级完整 contract。`arXiv:2605.19314v1` 的 §3、§4 与 §7 只支持其 hierarchical task-state alignment 和受测 long-horizon embodied tasks，不证明开放工具环境中的 completeness、liveness 或通用成功率。
 
 <!-- source-family:SF-2026-ARXIV-2605-19314 -->
+
+连续目标不必一次全部送入主 Agent 的可执行上下文：把将来的 objective 保存在独立队列，当前状态只持有 active goal，能避免未来任务干扰当前完成判定。晋升下一目标至少应区分“模型宣称完成”、runtime 清除当前目标、当前 turn 结束和 dispatch 空闲；暂停、取消或阻塞都不是完成。Kimi Code 0.10.0 的限定 TUI 实现将 `upcoming-goals.json` 与 active goal 分开，并在上述完成/清除/turn-end 条件及 queued-message 为空后尝试晋升。队列因此保存待执行意图，不是工具授权，也不是普通 conversation memory。
+
+队列持久化仍不保证原子晋升：原实现使用进程内 mutation lock 和直接文件写入，创建 active goal 后才移除队列项、发送输入，移除失败可能留下已创建但尚未发出的目标。跨进程并发或崩溃恢复需要另核 active/queued/transcript 的一致性，不能把 JSON 存在当 exactly-once receipt。fork 丢弃 active 与 queued goals 展示了另一条边界：拷贝历史不自动继承未来执行意图；希望续接时须由新 branch 的 owner 重新受理（工程推断）。低风险单会话可保留轻量队列，高风险 effect 仍服从既有 pre-state authority、checkpoint 与 effect ledger 验收。<!-- source-family:SF-KIMI-CODE-0-10 -->
 
 ### 相对指代必须在 Stage 边界解析为版本化 Referent
 
@@ -185,6 +197,14 @@ procedure 时只是重排同一能力；直接同时生成 node 和 topology 又
 validation evidence 提议 domain-specific node blueprint，逐 node 诊断 bottleneck 并有限修改 instruction/calls，
 冻结版本化 library 后再搜索 topology。它新增小 validation set 过拟合、外部 search drift、logit-dependent
 proxy 与 node semantics 变更风险；成熟人工 operator 和固定 library 在高审计场景继续成立。
+
+### Evidence Seeking 与 Answer Authority 应拆成两个角色
+
+单一 Agent 同时搜索、判断证据充分性并输出答案，控制流最短；在长视频等高冗余环境中，outcome-only reward 和共享 Context 饱和会鼓励“答案碰巧正确但没有看到关键证据”。更稳健的 workflow 让 planner 负责索引、检索与检查动作，让 inspector 独立持有 sufficiency verdict 和终止权；只有 inspector 能把 evidence state 提升为可回答状态。planner 的 rationale 不是证明，inspector 也必须指向实际检查过的时间片或 locator。
+
+分权增加调用、延迟和 inspector 单点误判，且正确但未接触证据的答案仍需判为未验证。短内容、低风险或确定性 locator 已知时，耦合流程更经济；inspector 不可靠时应扩大检查、换 verifier 或转人工。exact-v1 的四个长视频 benchmark 只支持该机制在披露设置中的 groundedness 改善，不证明 inspector 是事实 oracle 或能泛化到任意 modality。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12571 -->
 
 ### Offline World 是可验证的数据工厂，不是 Live Workflow 的替身
 
@@ -281,7 +301,27 @@ Workflow 因而要把外部状态 branch 提升为一等对象：search controll
 
 <!-- source-family:SF-2026-ARXIV-2604-17180 -->
 
+前述 creation/switch 账本还应与活跃查询容量分开验收：创建许多分支后只读一个活跃分支，未必随总分支数明显降速；多个活跃分支同时读写才会争用固定 compute/storage pool。改为每分支独立 compute 可以扩容量，也同时扩资源与费用，不能把性能变化全部归因分支算法。point/range query、mutation、活跃集合和 quota 因而属于 whole-loop 搜索预算，而不是只记一次 fork 的延迟。<!-- source-family:SF-2026-ARXIV-2604-17180 -->
+
+原文有限数据库/存储采样、timeout 与完成步骤不一致会限制比较，创建便宜不证明大量候选能同时高吞吐地评价。搜索稀疏、需要大量短寿命静态分支时，共享池与 COW 仍合理；活跃分支密集则应限制并发、扩大池或为必要分支配置独立资源，同时把 prune/回收、费用与 evaluator revision 保留在同一预算里。这里只细化创建与执行容量的分账，不重新宣称已存在的 branch identity/隔离机制是新设计，也不把树深当作普遍慢因。<!-- source-family:SF-2026-ARXIV-2604-17180 -->
+
+工具很慢时，候选还可以在隔离的外部状态分支中提前做真实计算。但应先区分 operand readiness：稳定文件版本可提前读取并在提交 frontier 重验，依赖尚未加载到 service 的版本则须等待 producer，不能用文件已写代替进程已加载。草拟 action 只拥有 proposal；真实执行留下 read/absence、parent lineage、loaded version、观测与 effect 记录。轮到主轨迹该 action 时，再分别核 action 相同、依赖当前、wrapper 观测可信与 effect 可晋升/重放；预测观测错误不必使当前真实结果失效，却须丢弃消费错误预测的后继。
+
+这些检查只在声明的 capture 范围成立。本地 process-tree trace 不涵盖所有 daemon、remote service、network 或随机时间输入；未捕获依赖、不可逆外部 effect 或无法证明 non-mutating 的 service 调用应停在 barrier 并串行执行。[TomasuLLM 的必要机制与反证](https://arxiv.org/html/2609.38201v1)支持该受限 wrapper 分支，不认证全部 effect。它用额外 drafter、分支准备、验证与回收换单会话等待，短工具可能不划算；吞吐优先时额外 GPU 也可服务另一普通 session。预算、capture 或状态身份不可靠时保留串行 tool loop 和真实 checkpoint，不让局部无 false-accept 升级为普遍安全。<!-- source-family:SF-2026-ARXIV-2609-38201 -->
+
+### Live Fork 还要声明后续 Append 与 Promotion 的读视图
+
+固定 snapshot 分支切断后续 parent 更新，适合 evaluator 需要稳定输入的搜索；持续数据流上的分支则可能要继承 parent 的未来 append，同时保持 child 私有 append 不回流 parent。两者是不同读视图合同，不能由 copy-on-write 或“可fork”一词自动决定。对于可 promotion 的 live log branch，还需把选中分支如何接管 parent 的顺序显式化：promotable 分支使 earliest-fork 边界后的 parent read/index 受屏障约束，parent append 仍可继续；选定后执行 catch-up，再接管并销毁其余分支。因而“不回流私有写”不等于 parent 零干扰。
+
+这个分支用读可见性与后台追赶换持续流上的推测执行，代价是读屏障、index 扣留、分支存储与 catch-up 延迟；promotable 声明不是通用数据库零干扰保证。受测 CloudLab、MinIO/metadata replication 与有限 log records 只支撑该日志路径，不证明任意 schema transaction 或生产 Agent 行为。需要固定评价输入、不能接受 parent 读停顿或无法完成追赶时，应回退 static/non-promotable fork 或完整 snapshot，并继续把 evaluator revision 与 promotion commit 分开验收。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-14590 -->
+
 ### Cold-start Prior 与 Run-derived Lesson 必须分成两层 Memory
+
+私有 library 的单 API 文档与跨 API task experience 是不同状态：前者拥有接口定义，后者可保存经过执行验证的组合 guideline；参数边界经验再以单 API guideline 记录。Reflector 的 Discard/Delete/Add 与权重更新是在选择和修订经验，不等于 FIFO 淘汰；同一 task reward 不能直接归因给每个 API。<!-- source-family:SF-2026-ARXIV-2604-24222 -->
+
+经验生成、反思、索引和权重维护增加调用与漂移风险，应绑定 library/document revision、任务及 effect receipt。Memory 只提出下一次使用的 prior，不覆盖权威 doc 或独立执行验收；库更新、来源不清或经验无法复现时，回退当前接口定义、局部测试与空经验基线。
 
 开放式 search 在昂贵训练、代码修改或科学实验中需要先验来减少无效候选；但把 literature heuristic、人工
 经验和历史 run lesson 混在同一 prompt，会让系统无法判断失败来自 prior 还是新证据。更清晰的状态机是：
@@ -305,6 +345,10 @@ ASI-Evolve 支持这种双层 memory 与 lineage-aware search 在作者部分任
 ### 在搜索候选之前，先把问题编译成可执行 contract
 
 自然语言 intent 编译成 workflow 时，输出不应只是步骤列表，而是一组 typed artifacts、data/control dependencies、version/approval constraints 与 failure transitions。编译器可以提出结构，runtime 和人类 owner 仍决定是否提交；歧义无法消除时保留动态 planning。更强 IR 提高复用和静态检查，却以 schema、迁移和误编译风险为代价。<!-- semantic-body-binding:SF-2026-ARXIV-2608-21341 -->
+
+当需求包含“某事件之后，在一段时间内没有发生另一事件”，typed IR 还必须表达**否定的观察边界**。缺少事件并不立即证明事件不会发生；负条件应绑定有限 `within` 窗口，只有到窗口结束时才允许 accept。一个受限实现先由 LLM 提取带实体和时间的事件，再把 pattern 编译成按实体推进的确定 NFA；LLM拥有抽取 proposal，automaton 持有已编码的匹配与时间状态，两者不共用事实裁决权。<!-- source-family:SF-2026-ARXIV-2604-03855 -->
+
+显式边界让流程更可执行，却引入抽取漏项、时间归一化、pattern误编译与窗口等待成本。作者静态临床 notes 实验只支持这组事件提取与匹配分工，没有验证通用实时流的 watermark、晚到事件或 exactly-once 保证。不能确定事件完整性或时间次序时，match只能保留为诊断，不应发布“未发生”的确定结论；有限静态任务和容易人工审计的需求仍可用更简单规则。第76章拥有证据抽取/检索，本章拥有从受信事件到有界 workflow transition 的执行合同。
 
 Evaluator-driven search 隐含一个容易被忽略的前提：系统已经知道在搜索什么、哪些变量可以
 改变、什么约束绝不能违反，以及怎样判定一个候选更好。若这些内容只存在于自然语言 prompt
@@ -562,7 +606,19 @@ unlimited rewinds、无 wall-clock 上限，并主要恢复 workspace，不能�
 具备 exactly-once recovery。长期结论是：**恢复必须对齐模型所见状态与 Runtime 的 authoritative state，Memory
 只保存失败证据，不能替代环境事务。**
 
+联合恢复还要求先定义哪些外部操作可撤销，而不是动作成功后再让模型猜测 undo。服务没有原生 checkpoint 时，adapter 可在同一事务中记录 pre-image、执行 mutation 并记录受影响键，把支持的操作转换为可补偿请求；无法转换的操作须在执行前拒绝。联合 statepoint 在 tool-call 边界等待在途调用结束、阻止新调用，冻结本地进程后捕获 process/filesystem 与 remote log position，全部捕获成功才标为 committed，并视作有效恢复点。失败经历与状态说明作为 evidence 保留；恢复后由 harness 追加当前环境说明，不要求抹掉保留的失败经历。
+
+可补偿也不等于可分叉：只能逆序 undo 的远端服务若仍被多个 child 共用，分支会互相修改状态；仅 local fork 时应禁止 child 沿原 proxy 变更远端，真正远端探索需要 service-side branching。[Planarian v1 §4–7](https://arxiv.org/html/2609.35366v1)的联合切片依赖外部 tenant 逻辑隔离，SQL rewrite、undo log、冻结锁与进程 checkpoint 均有成本，受限回放不能证明开放服务或并发协作者无干扰。不可补偿、隔离条件不成立或恢复任一半失败时，保留 approval barrier、reconciliation、完整副本或人工处理，而不是发布 ready 或宣称世界 undo。<!-- source-family:SF-2026-ARXIV-2609-35366 -->
+
+联合恢复还须说明恢复的 environment 究竟包含什么。对固定 context，所需的是允许的后续 action 看到等价观察，不是整个 host 逐 bit 相同，也不是只让文件目录看起来相同。Terminal session 因此可把 filesystem 版本、persistent shell/PTY、descendant process memory 与本地 service 一起 checkpoint；process image 必须在相容的 root/mount/terminal 视图中恢复。Waypoint 的受限分支在 quiesce 后封存 filesystem delta，再重建 mount 并恢复 process，不能把 OverlayFS 与 CRIU 各自成功当成组合恢复已就绪。
+
+Logical branch point 不必每次立即物理化：可保存 checkpoint，或从最近 physical ancestor 重放短 command suffix，以 snapshot/storage 换 restore 工作。但后者仍依赖可重现命令，外部时间、remote API 与不可逆 effect 不因 virtual node 名称而可回滚。[StateFork 的本地 session 实验](https://arxiv.org/html/2609.38648v1)支持该成本分工，restore 比仅 process checkpoint 更贵，大 resident memory 也可能失去优势；single-run 受控 terminal 结果不授生产 tail 或分布式恢复证明。它只容纳同 task 普通分支，恶意代码仍需更强 sandbox；无法冻结边界或确保 replay 等价时，应物理 checkpoint、proxy/reconcile 或停止提交，保留原 context/environment 联合验收而非追求最便宜 snapshot。<!-- source-family:SF-2026-ARXIV-2609-38648 -->
+
 如果修订只影响部分分支，可以复用依赖未变的结果，但不能仅在修订发生时检查一次：仍在执行的 attempt 可能随后读入新状态，最终 commit 必须用完整 read certificate 重新核对其启动后发生的 revision journal。已知依赖允许缩小重算范围，未知依赖则必须扩大失效与重算；这用追踪和提交检查成本换取了比整条 suffix 重跑更细的复用边界。实验性 Runtime 中 revision 与 commit 共用进程内锁，只能支持该受控域的原子校验，不等于跨进程一致性、crash recovery 或对不可逆外部副作用的回滚保证。
+
+执行中接到修订时，回滚 frontier 可以由最早不兼容的知识/假设 `K` 或外部 action `X` 决定：先撤销受控的 epistemic state，再对已经发生的 world effect 作可验证 compensation，最后延续兼容前缀。Earliest-Conflict 的代价结论依赖 compatibility separability 与代价非递减等假设，可能有 ties，不能称唯一一般最优；它不提供世界 undo。<!-- source-family:SF-2026-ARXIV-2604-23283 -->
+
+Frontier/兼容性检测、event log 与补偿增加计算和恢复成本；作者模拟工具试验中较少 wasted acts 仍可伴更高 token cost，不证明真实 API 原子性。依赖未知、补偿不可验或不可逆效果已提交时，应扩大重算范围、reconcile 或请求人工处理，不能把 context rollback 等同外部撤销。
 
 ### Trial Evidence 不能直接提交为 Workflow Revision
 
@@ -581,6 +637,10 @@ unlimited rewinds、无 wall-clock 上限，并主要恢复 workspace，不能�
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-10366 -->
 
 ## Durable Execution 与 Replay
+
+Workflow engine 常通过 event history 重建状态。Replay 要求 orchestration decision 尽量 deterministic；模型 call、当前时间、随机数和 tool result 应记录为 activities/events，而不是重放时重新调用。
+
+否则恢复会产生不同 plan 或重复 action。模型输出本身是 artifact，必须绑定 model/prompt/context/tool versions。
 
 ### Distributed Event Log 是 Partial Order，不是单一时间线
 
@@ -653,10 +713,6 @@ provisional program stream
 它用语言特定状态、额外 compiler 调用和 checkpoint 管理换更早反馈；compiler 仍只证明语法、类型或其显式 contract，不拥有功能正确性。跨文件依赖复杂、语言不支持增量检查或调用成本高时，后置 compile-and-repair 仍更合适。
 
 <!-- source-family:SF-2026-ARXIV-2605-15238 -->
-
-Workflow engine 常通过 event history 重建状态。Replay 要求 orchestration decision 尽量 deterministic；模型 call、当前时间、随机数和 tool result 应记录为 activities/events，而不是重放时重新调用。
-
-否则恢复会产生不同 plan 或重复 action。模型输出本身是 artifact，必须绑定 model/prompt/context/tool versions。
 
 ## Workflow 可见性也会改变 Serving 优化空间
 
@@ -738,6 +794,12 @@ failure:
 
 每个补偿步骤仍需 authorization 和 audit。
 
+### Tool Observation Success 不等于 World Effect Commit
+
+工具返回成功只说明调用通道或响应完成，外部世界中的写入、支付、部署或通知可能仍未提交、重复或部分生效。Durable workflow 应为 effect history 保存幂等 identity、transaction status、reconciliation evidence 与 rollback/compensation，把 observation state 和 effect state 分开推进。<!-- source-family:SF-2026-ARXIV-2609-15397 -->
+
+这要求更多协议元数据和对账成本；黑盒工具缺少 effect semantics 时，系统不能猜测成功，应 fail closed、请求人工确认或用可验证查询恢复。形式模型与 MCP 工具调查说明接口缺口，不证明所有工具都能自动补全事务语义。
+
 ## Human-in-the-Loop
 
 Approval 是 workflow state，不是聊天中的一句“可以”。应绑定：
@@ -814,6 +876,16 @@ Workflow 可能等待用户、webhook、job completion 或 resource availability
 - lease/heartbeat for workers。
 
 模型不需要持续占用 GPU 等待；runtime 在新 event 到来时重新组装 Context。
+
+### Continuous-time Agent 需要可中断、可恢复的 Workflow State
+
+传统 Agent loop 假设一次 observe-think-act 顺序完成；流式语音、环境事件或长工具执行会在推理期间到达，系统必须把当前 plan、pending action、observation watermark 与 cancellable boundary 保存为可中断状态，再以新证据决定 resume、replan 或 abort。<!-- source-family:SF-2026-ARXIV-2609-17416 -->
+
+低延迟 judge reward 可能奖励流畅反应却损害真实任务完成，因此优化信号还要绑定可验证 effect/provenance。Interrupt/resume 增加一致性、取消与重复 effect 风险；无法证明幂等和 reward provenance 时，应串行化关键动作、延后 commit 或交给人工确认。
+
+语音还需要把**已生成、已发送与客户端已渲染的音频**分成不同状态。提前推测用户会说什么，可以在私有分支生成 PCM；只有最终 ASR 与词法修订仍支持该分支时，才把候选晋升到公开播放路径。生成批次、取消屏障和重定位后的 sample position 必须一起识别音频，拒绝旧批次或旧位置的迟到结果。客户端按已渲染区间回报 ACK 后，runtime 才把对应前缀投影进 durable audible history；压低音量或暂停尚可逆，已渲染前缀却不能靠取消生成撤回。这比只保存 pending action 多了一条消费侧 commit 边界，而不是把服务端发出音频等同于用户已听到。<!-- source-family:SF-2026-ARXIV-2609-20995 -->
+
+该 ACK 仅证明浏览器渲染，不证明用户理解或任务 effect；turn-taking head 的分数也尚未校准为成功概率。工具桥接还要在等待工具前关闭当前 TTS，避免新结果与旧 speculative speech 越过同一边界。区间 ACK、buffer、词法失效与重基准增加状态维护成本。[Voice-Light 的受限证据](https://arxiv.org/html/2609.20995v1)把历史 checkpoint step 3,500 的 locked V1 评价与部署 checkpoint step 750 的 validation-only 结果分开，V2 尚未通过发布 gate；三次 session、一个操作员的 36 turn 热态结果及服务端 PCM 延迟不是 heard latency 或群体 SLO，晋升与非晋升回合难度也有混杂。保守工程回退是关掉 speculation、从稳定 transcript 生成，或退回较严格的轮转，而不是把局部延迟差归因为普遍可靠的提前响应。
 
 ## Testing 与 Evaluation
 
@@ -982,6 +1054,10 @@ Planner 只提出要采用的 skill 和相关子图，Workflow owner 必须将�
 
 <!-- source-family:SF-2026-ARXIV-2607-25853 -->
 
+图还可以约束 Skill 的优化空间，而不只是展开执行步骤。对固定模型与 harness，可把共享的 global guidance、可复用 node instructions 和带 applicability condition 的路径分别保存：guidance crossover 保留一方 graph，graph crossover 保留一方 guidance；mutation 则分别修订 guidance 或 nodes/paths。失败 trace 只用于提出修改，固定 validation set 选择 population，独立 test 保留到最后。这样的 graph 仍是交给模型阅读的自然语言 artifact，不是拥有动作提交权的 runtime；其 schema validator 只检查引用/声明结构，不能证明 instruction 正确或 effect 获准。
+
+判断结构收益时，应同时控制优化器与消费表示。GraphSkillEvo 的对照保留 guidance 与 node instructions、只去 workflow 组织，所测五任务均回退；另一组保持 population 与每代新候选数，分别去 graph、mutation 或 crossover。它支持局部结构/搜索分工，不证明任意图优于文本，格式/token 长度也未因此完全排除。三次优化与两个模型的结果仍有 LiveMath 反退；较低总优化 tokens 不等于各任务都更便宜，ALFWorld 等任务反而更高。反复 validation、生成/校验、执行与 schema 维护都有成本，算法的校验失败重生成没有固定重试上限；工程上还需限定预算并保留旧文本/人工维护 workflow，而不把合法 graph 当生产可靠性保证。 [必要机制与反证](https://arxiv.org/html/2609.21749v1)。<!-- source-family:SF-2026-ARXIV-2609-21749 -->
+
 ### 并行写入先声明 intent，运行中扩张 scope 必须重新 admission
 
 只在最终 merge 时发现冲突，会让多个 coding Agent 已经基于互不兼容的假设执行很久。更早的控制面可在写前提交 versioned ChangeIntent：base revision、typed resources、dependencies、committed/contingent operations；admission 后以 lease、writer fencing 和 worktree provenance 限制实际写入。若运行中首次触发 contingent mutation，scope promotion 必须重新 admission。
@@ -1089,12 +1165,30 @@ Observed trace 与 induced workflow 也必须保持两个身份：前者是某�
 
 代码与文档工作流还需要把 `view → edit → review → submit` 绑定到同一个 workspace revision。只记录自然语言任务，恢复后可能在新分支、已变化依赖或不同文件快照上继续，导致 reviewer 验证的内容不是最终提交的 artifact。每个阶段应携带 repository/worktree identity、base revision、patch digest、toolchain 与 review result；任一输入变化都使旧 review 失效并触发增量重验。它增加快照与冲突处理成本，但让“看过”和“提交过”成为可关联证据。<!-- semantic-body-binding:SF-2026-ARXIV-2608-18050 -->
 
+同一 revision 内仍有两种不同的失败成本：探索时完整文件反复进入主 Agent context 会污染推理，而已决定修改内容之后，edit format 错误又会使正确意图无法落到文件。一个条件分支把 Viewer 的相关片段读取与 Editor 的格式化修改分开：主 Agent 消费 Viewer 提供的片段并提出修改，Editor 只处理编辑表达，executor 才应用 patch，随后独立 review。工程上还应让片段携带文件/revision/span出处，让主 Agent 的提案绑定明确位置和预期改动；这些是可靠执行要求，不声称论文已实现完整 provenance 协议。<!-- source-family:SF-2026-ARXIV-2604-26102 -->
+
+分离减少两类干扰，却增加额外调用、片段漏检、过期读取和跨角色信息损失，不能仅由格式成功认定修改语义正确。作者受限 coding-agent 对照中，Editor-alone 反有约10.1%成本增加，角色拆分并非必然降本；完整 Viewer+Editor 结果也只覆盖其模型、题库和预算。短文件或编辑格式稳定时主 Agent 直接读写仍合理；片段不足、revision已变或patch验证失败时，回退完整读取、重新定位和原有view/edit/review gate。
+
 持久化状态并不自动保证中断后行为正确：prefix 是否连续、已发生 effect 是否重放、fork 是否确定、checkpoint 是否有效、resume value 是否只能消费一次，以及 crash recovery 是否确定，都是不同性质。Workflow runtime 应公开这些属性和 fork intent，把 effect ledger 与普通 state snapshot 分开；若只能提供 at-least-once，就必须让 tool adapter 用 idempotency/postcondition 消解，而不能对外宣称 exactly-once。严格合同以更多状态、并发控制和故障测试换取可预测恢复；无副作用的纯计算节点可以使用更轻的重放语义。`arXiv:2608.03836v1` 的 TLA+ 模型只在声明状态界限内成立，对五个 pinned framework 的 fault matrix 也不代表未来版本。<!-- source-family:SF-2026-ARXIV-2608-03836 -->
+
+只为解释主任务进度而开的旁路问答，不必成为可执行、可恢复的 Workflow child：可以复制主 Context 已闭合的历史投影，去掉尚无完整 Tool response 的尾部 exchange，让后续问答维护独立的临时记录。为了复用 prompt cache 保留相同 Tool definitions，也不应授予相同执行权限；权限 policy 要在 Runtime 中拒绝旁路 Tool call，而不能只依赖“不要调用工具”的提示。Kimi Code 0.9.0 的限定实现使用内存 record、不给 child 登记持久 metadata，并在创建时复制投影和加入 deny-all policy，说明了 conversation branch 与 durable execution branch 的不同选择。<!-- source-family:SF-KIMI-CODE-0-9 -->
+
+临时投影可能很快过期，也不包含后来发生的工具结果或外部 effect，退出后不能据它恢复任务；需要真正行动时，应回到主 authoritative turn 重新核当前状态与授权，这是工程交接要求。持久 child 的另一种选择是先恢复主 Agent、首次访问子 Agent 时才重放其记录，并区分尚在恢复的 promise 与 ready 实例；parent-chain cycle 要显式检查，记录重放失败则在对应 catch 清除 pending entry。这减少启动时必须重放的分支，但不是联合环境恢复、全部分支 ready 或 exactly-once 的证明。高风险 effect 仍回到原 checkpoint/effect ledger 合同，短且无行动的问答才适合轻量分支。
+
+恢复一个已记录的目标，还要区分“目标存在”与“仍获准继续执行”。把goal create/update/clear记录作为状态来源，再重放成agent-local投影，比让metadata里的最新快照兼任事实与运行权限更容易审计；fork记录应明确清除未来目标，而不是默许继承。Kimi Code 0.12的限定实现把这些记录接入replay，并在重放后清除旧wall-clock anchor，将残留active目标降为paused、要求显式resume；complete残留则清除。这里的记录重建不证明磁盘事务、完整环境恢复或effect exactly-once。<!-- source-family:SF-KIMI-CODE-0-12 -->
+
+错误暂停也不能与任务语义的blocked混为一谈：连接、认证、限流或runtime失败可以保留目标并暂停，让用户重新确认环境；模型显式宣告blocked、预算边界和提示hook拦截仍走各自状态路径。完成或阻塞后至多补一次面向用户的outcome消息，并受剩余step预算限制，只解决状态变化不可见的问题，不让生成摘要成为成功验收。这样增加journal、状态归一化和重放测试成本；记录缺失、授权已变或副作用未知时，应保留paused，回到当前目标、capability与effect ledger的验收，而不是恢复即执行。<!-- source-family:SF-KIMI-CODE-0-12 -->
 
 ### Logical Plan 与 Physical Schedule 必须分别验收
 
 一个 multi-tool plan 在依赖关系上正确，仍可能因为并发资源峰值而失败；反过来，保守串行虽然安全，却可能违反延迟目标。Workflow runtime 应先验证 DAG 与参数，再用显式 CPU、GPU、网络或外部配额做物理调度，并分别记录 planning error 与 scheduling overflow。把两者合成端到端成功率，会让系统无法知道应该修模型还是修调度器。
 <!-- source-family: arxiv:2608.24509v1; semantic-body-binding: tool-workflow-logical-physical-scheduling -->
+
+### GUI 与高层 Tool 的选择属于 Physical Schedule
+
+原子 GUI action 通用但步骤长，高层 tool call 快却可能与当前界面或权限状态不一致。Agent 可以提出两条 path，workflow runtime 根据 current UI state、tool schema、side effect 和 approval 选择并提交；这不是仅靠模型“学会何时用工具”。高层调用缩短路径，却会放大合成轨迹偏差、工具过用、环境漂移和 reward shortcut。状态不一致时，应回退原子 GUI、重新 observation、dry-run 和显式审批，并保留最大步数与 compensation。exact-v1 只支持 OSWorld-MCP/Windows transfer 的所测模型，不证明真实桌面权限安全或跨 OS 普遍收益。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-12481 -->
 
 ### Handoff 必须保留约束的 Action-binding Strength
 
@@ -1136,29 +1230,15 @@ grace window 与缺失 outcome 的合成终态，却能区分“一个 child 完
 
 Workflow 把概率模型嵌入可恢复、可审计的状态机，使灵活 decision 与确定业务约束共存。执行者可以提出下一步或完成，但只有携带 versioned evidence 的独立 admission path 能提交终态。下一章研究多个 Agent 之间的职责和通信。
 
-### Evidence Seeking 与 Answer Authority 应拆成两个角色
-
-单一 Agent 同时搜索、判断证据充分性并输出答案，控制流最短；在长视频等高冗余环境中，outcome-only reward 和共享 Context 饱和会鼓励“答案碰巧正确但没有看到关键证据”。更稳健的 workflow 让 planner 负责索引、检索与检查动作，让 inspector 独立持有 sufficiency verdict 和终止权；只有 inspector 能把 evidence state 提升为可回答状态。planner 的 rationale 不是证明，inspector 也必须指向实际检查过的时间片或 locator。
-
-分权增加调用、延迟和 inspector 单点误判，且正确但未接触证据的答案仍需判为未验证。短内容、低风险或确定性 locator 已知时，耦合流程更经济；inspector 不可靠时应扩大检查、换 verifier 或转人工。exact-v1 的四个长视频 benchmark 只支持该机制在披露设置中的 groundedness 改善，不证明 inspector 是事实 oracle 或能泛化到任意 modality。
-
-<!-- semantic-body-binding:SF-2026-ARXIV-2605-12571 -->
-
-### LLM 分析可以借用 Lattice 的单调状态纪律
-
-开放式程序分析需要查文档、版本元数据和安全公告，传统静态分析无法覆盖全部语义；完全自由的 Agent 又会反复推翻结论且难以说明终止。一个折中是把每个 claim 的 assessment 放进有限高度 lattice，LLM 只生成 claim/evidence proposal，transfer function 只允许通过 join 单调提升，worklist 在状态变化时传播。这样 workflow owner 能说明在声明的有限图、有限 claim 与终止工具条件下为何停机，并保存每次 assessment 的证据。
-
-结构化状态只能暴露、不能自动纠正 judge 的系统性误判；evidence-only 更新若不触发重新处理，也不等于“再无证据可找”。框架还没有实现和实证，因此只能作为设计边界，不能宣称实际精度或可扩展性。可用 sound analyzer 的区域仍应由形式工具拥有，图规模或 claim domain 无法有界时则回退人工审查、预算终止与 Unknown。
-
-<!-- semantic-body-binding:SF-2026-ARXIV-2605-12694 -->
-
-### GUI 与高层 Tool 的选择属于 Physical Schedule
-
-原子 GUI action 通用但步骤长，高层 tool call 快却可能与当前界面或权限状态不一致。Agent 可以提出两条 path，workflow runtime 根据 current UI state、tool schema、side effect 和 approval 选择并提交；这不是仅靠模型“学会何时用工具”。高层调用缩短路径，却会放大合成轨迹偏差、工具过用、环境漂移和 reward shortcut。状态不一致时，应回退原子 GUI、重新 observation、dry-run 和显式审批，并保留最大步数与 compensation。exact-v1 只支持 OSWorld-MCP/Windows transfer 的所测模型，不证明真实桌面权限安全或跨 OS 普遍收益。
-
-<!-- semantic-body-binding:SF-2026-ARXIV-2605-12481 -->
-
 ## Review notes
+
+- `SF-2026-ARXIV-2604-26102` — [SWE-Edit exact-v1](https://arxiv.org/html/2604.26102v1) §3.1/§4.2与Table1；Daily 2026-04-30。apr29_close必要source→actual-owner窄采用通过；拆分探索读取污染与edit-format失败，出处/typed proposal为工程推断，非原文完整实现。Editor-alone成本负例、额外调用和漏检/过期边界保留；未复现实验，root已实际读取正文及前后衔接，非作者写后通过。
+
+- `SF-2026-ARXIV-2604-17180`：[exact-v1](https://arxiv.org/html/2604.17180v1)，Daily 2026-04-21；本次只 refine §5.3–5.5 的 creation 与 active query capacity 分账，已有 branch identity/COW 正文不重计新写。shared/independent compute 的资源费用、point/range/mutation/quota/timeout 与存储采样限制保留，不采用性能排行榜。apr02 必要 source→当前 owner 独立通过；本轮实际窄增量及相邻衔接写后非作者复核通过（root），未复现实验。
+
+- `SF-2026-ARXIV-2604-14590`：采用 exact-v1 §4.1/5.4–5.7/6.4/6.8；复用具名 apr01 必要源/owner 收据及 root 当前反向采用核。只增 live/static、promotable 读屏障与 catch-up 分支；未复现，root已实际顺读正文及两侧交接，写后PASS。
+
+- `SF-2026-ARXIV-2604-03855`（VectraFlow；Experimental）：[exact-v1](https://arxiv.org/html/2604.03855v1) 方法、256 clinical notes 评价和局限支持有界否定、typed timestamped extraction与per-entity NFA分权；领域案例不等于通用streaming runtime，未证明watermark/lateevent/ exactly-once或生产SLO，未复现实验。
 
 - **BranchBench（arXiv:2604.17180v1；Status: Experimental）**：支持 agentic workload 中 `branch → mutate → evaluate → prune` 的数据库状态合同，以及 copy-on-write 所在层次带来的资源取舍。论文评估的是所披露五类 workflow 与系统配置，不证明某种 branching layer、生产隔离、长期恢复或跨环境收益普遍最优。https://arxiv.org/abs/2604.17180v1
 

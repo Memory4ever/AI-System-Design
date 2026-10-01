@@ -176,6 +176,12 @@ HTTP authorization 解决 client 代表 resource owner 访问 server 的协议�
 
 <!-- source-family:SF-2026-ARXIV-2605-24248 -->
 
+固定 schema 与静态 adapter 易审计；只有多方确实需要运行时演化词汇时，解释规则自身才成为新的 admission 对象。接收者应持有独立 dialect registry，以 name/content identity 分派和拒绝冲突；安装时检查 core 不可重定义、template dependency 无环与声明资源界限，每次展开仍执行 depth、size、fuel 和 timeout，耗尽即拒绝。安装合法与这次请求可完成是两道门，生成的业务请求随后仍走原 principal/参数/authorization/effect gate，dialect 声明不能给自己授权。
+
+受限规则换来可拒绝的解释过程，却付出表达能力上限、安装/版本/命名冲突和 registry churn 成本。Parser termination 不证明跨实现 semantic agreement、tool backend 正确或调用无副作用，Unicode/编码与 key revocation 仍需独立治理。现有 Lean/Rust 与 M4 微测、fully-connected gossip 是作者有限证据，本章未复跑，并非 MCP 新规范或生产 Agent 安全保证；需递归、聚合或跨消息语义时交应用层，无法核验 dialect 身份/界限时回退静态 adapter 或拒绝未知规则。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-14512 -->
+
 Server admission 解决“谁可以进入能力目录”，跨 Agent delegation 还要解决“权限怎样沿调用链收窄并可被事后
 验证”。单一 bearer token 在单 hop、同一信任域里简单有效；经过 MCP、A2A 或代理转发后，转交完整 token 会让
 下游获得原 principal 的全部权限，也无法证明中间节点实际委托了什么。更强的链路把短期 session identity 与
@@ -226,7 +232,27 @@ MCP 可以承载 tool/resource connection，却不定义：
 - task success；
 - memory retention。
 
-这些仍由第 77～82 章的 runtime/workflow/platform 管理。协议互操作不等于行为互操作。
+这些分别由第 77～82 章的信息、工具与执行机制，以及[第 84 章的平台控制](84-agent-platform.md)负责。协议互操作不等于行为互操作。
+
+### 从调用能力到委派远端任务
+
+当对端只是读取文档或执行一个明确操作时，tool contract 已足够；若对端拥有自己的规划、工具和长程执行状态，调用方不应假装能通过一个函数返回值控制其内部 workflow。Agent-to-agent 协议因此不是 MCP 的下一代替代品，而是另一层边界：MCP 连接可调用能力，A2A 则交换独立 Agent 的消息、任务状态与产物；远端 Agent 内部仍可使用 MCP。
+
+本节以核验时的 [A2A 1.0 规范](https://a2a-protocol.org/latest/specification/)为接口案例，不把 SDK 或远端服务的版本视为已同步升级。Agent Card 声明接口、protocol version、能力与认证要求，声明本身不构成能力质量或业务授权证明。简单交互可以只返回 `Message`，需要跟踪的工作才形成 `Task`；`contextId` 关联交互上下文，task ID 标识具体工作，`Artifact` 承载产物而不是状态消息。等待补充输入或认证是可继续的中断状态，不应当作失败；完成、失败、取消或拒绝等终态也不能混成一个“HTTP 成功”。[任务生命周期说明](https://a2a-protocol.org/latest/topics/life-of-a-task/)保留了这些区别。
+
+协议对象进入本地持久执行时，还需要显式映射。下面是本书的 runtime 接口要求，不是 A2A 已替应用实现的保证：
+
+| 远端可见对象或事件 | 本地应保存的关联 | 不能据此推断 |
+| --- | --- | --- |
+| Agent Card 与所选接口 | 对端身份、接口/协议版本、授权范围 | 可发现即可信，或可继承调用方全部权限 |
+| Message 与 Task | 本地 run/node/attempt 到对端 task/context 的映射 | 同一个 context 就是同一个任务或共享内存权限 |
+| Task 状态更新 | 可复核的 observed remote state 与本地等待状态 | 对端完成即本地目标验收通过 |
+| Artifact 或产物分块 | 对端 + task + artifact identity、完整性与验证结果 | 一段文本或最后一个分块已经证明业务成功 |
+| 断连、超时或取消请求 | 未决 outcome、后续查询与 effect reconciliation | 网络失败代表未执行，取消代表已回滚 |
+
+Streaming 和 push notification 必须先核对对端声明的 capability，不能默认存在；不支持时可在预算内查询任务状态。A2A 的 Send Message 幂等性是可选保证，单有 `messageId` 不足以证明重发不会重复工作。已知 task ID 时，应先恢复观察和对账；首次提交结果不明、又没有对端明确的去重契约时，不能盲目重发带副作用的委派。产物读取、通知去重和状态恢复增加存储与协调成本，短小无状态调用继续保留原 tool 路径。
+
+因此，本章只拥有连接与对象映射；是否委派、交付什么证据归 [Ch82 Multi-Agent](82-multi-agent.md#message-不是-state)，重试、补偿、批准与最终提交归 [Ch81 Workflow](81-workflow.md#resume-的语义必须比有-checkpoint更具体)。远端 task 的终态是输入证据，不是可以越过本地 policy 与验收的命令。
 
 ## Tool Catalog 扩大后，Discovery 与 Execution 必须分离
 
@@ -253,6 +279,10 @@ Catalog/index owner 负责 schema version、refresh 与 deletion ordering；auth
 更完整的描述能提高可发现性，却消耗 context、暴露能力信息，也可能被关键词堆砌或 prompt injection 操纵；lint 通过只说明已知缺陷未出现，不证明工具正确或安全。目录很小或描述质量不足时，可以回退 allowlisted full schema 与人工选择；任何 description 更新都应使 discovery evidence 失效并重测，而不能沿用旧命中率。
 
 <!-- SF-2026-ARXIV-2602-18914 -->
+
+工具publisher提供schema与能力说明，在目录较小且受信时可直接供选择；多server目录中则可把真正用于检索的描述作为operator另行维护的artifact。Operator将server/tool身份、自己审定的summary、schema hash和生成版本签入card，index只从该版本文本派生embedding；签名认证“谁批准了这份文本”，不认证工具实现安全或描述为真。Publisher文字仍可能通过生成器hint影响新描述，向量与card又是不同对象，不能把不复制原copy、签名有效或可重建index当作无污染/正确排名证明。
+
+[受限federated discovery机制](https://arxiv.org/html/2609.30293v1)先用server centroid选域，再在选中域中选tool；后一层再精细也补不回第一层漏掉的server。少量top-k只降低披露给Agent的context，并不使全检索计算变O(k)。局部更新为更丰富的LLM描述可能使未更新域的召回反退，所以description/schema/embedding/candidate域须在同catalog queryset上共同重测，而非仅看新card各自文本不同。离线cluster/margin和签名验证都有成本，heuristic风险标签不是安全准入；单operator/stdio小样本不证明跨组织PKI或业务SLO。域选择、生成描述或派生身份失配时展开更宽候选、回退allowlisted full schema/人工选择，effect-time授权仍独立执行。<!-- source-family:SF-2026-ARXIV-2609-30293 -->
 
 ### 从单工具扫描到组合级 Admission
 
@@ -345,6 +375,7 @@ MCP 把工具和资源发现标准化后，新的压力从“能否连接”转�
 5. MCP authorization 为什么不等于业务授权？
 6. Legacy sampling 或同类 extension 为什么扩大信任边界？
 7. MCP 为什么不能替代 Workflow？
+8. 远端 Task 完成、产物接收和本地 Workflow 提交为什么是三个不同状态？
 
 ### Gateway 必须显式区分用户与服务身份
 
@@ -368,6 +399,8 @@ MCP 提供可演进的连接协议，让 AI host 以统一方式发现和调用�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2604-14512`：采用 exact-v1 §III-B–D/IV-A–G/V–VI/VII-D–E；复用 ORIGINAL_GAP §14512 有效非作者必要源审及 root 当前 owner 反向采用核。仅增解释规则安装/registry 与每次展开执法，保留原业务授权；未复现，root已实际顺读正文及两侧交接，写后PASS。
+
 - `SF-2026-ARXIV-2602-18914`（Status: Experimental）：exact-v1 的 §3、§3.1～3.4 从文献与公开 server metadata 构造 description-smell taxonomy，§4 描述观察研究，§5.1～5.2 测试 component contribution 与 compliant descriptions，§7.2～7.3 明确限制与 validity threats；结果不证明 taxonomy 完备、任意模型/client 的因果收益或 description 可替代授权。https://arxiv.org/html/2602.18914v1
 
 本章区分仍广泛部署的 `2025-11-25` session lifecycle 与 `2026-07-28` 最新稳定
@@ -385,6 +418,7 @@ request contract。协议字段只写稳定抽象；SDK 默认行为与 fleet ad
 - MCP 2026-07-28 changelog: https://modelcontextprotocol.io/specification/2026-07-28/changelog
 - MCP TypeScript SDK migration guide:
   https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/migration/support-2026-07-28.md
+- A2A specification 1.0（2026-09-29 核验）：https://a2a-protocol.org/latest/specification/ ，重点为 §3.3.1 幂等性、§3.4 task/context identity、§3.6 版本、§4 对象模型与 Appendix B 的 MCP 边界；官方任务说明：https://a2a-protocol.org/latest/topics/life-of-a-task/ 。本地 run/attempt 映射与 effect reconciliation 是本章设计推导，不声明协议提供 exactly-once 或业务验收保证。
 
 ### 2026-06-26 source-specific Review notes
 

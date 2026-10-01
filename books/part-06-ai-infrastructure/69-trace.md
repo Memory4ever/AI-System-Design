@@ -127,7 +127,7 @@ Instrumentation overhead 应被度量：serialization、context propagation、co
 
 这些 signal 可以由不同模型与 deterministic heuristic 分权产生，最终 gate 只组合有 provenance 的证据。分权降低单一 observer 控制全部判断的风险，却增加调用、阈值校准和相关失败；维度也不是安全真值。观察者意见不一致、输入超出校准域或高副作用 action 到来时，应回退最小权限、隔离执行和人工升级。
 
-该结构为后续 root-cause graph 提供可追溯 observation，而不是直接宣称因果。作者 519 样本协议支持其 attack/honest separation 与 separation-of-duties 结果，不证明开放生产环境的安全率。
+该结构为后续 root-cause graph 提供可追溯 observation，而不是直接宣称因果。作者 519 样本只属于 heuristic、intent analyzer 与多维评分组合的 attack/honest 实验；separation-of-duties 的结果来自另一次小样本运行，两个阈值仅有 20 和 7 个样本，不能合并成同一规模的分权安全证据。这些结果不证明开放生产环境的安全率，也不能证明模型调用彼此不存在共同盲点。
 
 <!-- source-family:SF-2026-ARXIV-2604-03968 -->
 
@@ -191,6 +191,16 @@ versioned prompt / system policy
 Root-cause graph 缩小调查范围后，还不能把诊断直接提升为修改生产行为的权威。多轮 Agent 的下游症状可能由上游 tool error、环境漂移或模型判断共同造成，因此应把四类状态分开版本化：trace evidence 记录实际发生的 span 与 artifact；diagnoser 只提交带依据的 causal hypothesis；repair controller 根据 side-effect class、权限和回滚条件决定是否允许 patch/rerun；rerun result 再成为新的 evidence。
 
 一次 rerun 成功会提高该修复路径的实用置信度，却可能来自随机采样或环境恢复，不能反向证明原 attribution 必然正确。这个分层获得可审计的 recovery loop，也新增 trace 隐私、schema coupling、诊断误归因和 repair authority 风险。短、确定、规则清晰的 workflow 仍适合人工或固定规则诊断；高副作用动作必须要求人工批准、独立 regression evidence 或 abstain。
+
+因此，归因实验不能把独立重试当作对原 trace 的检验。应保存候选错误点之前的执行 prefix，只在其附近施加 diagnosis-specific intervention，再验证新的 outcome。Faithfulness gate 检查第一步重生成是否遵守修复计划：soft 模式仅记录判断，hard 模式拒绝偏离并有界重试。即使任务恢复，若靠无关改动绕开失败，也不能据此支持原诊断。
+
+通过这种受控重放，outcome 从错到对只说明该 intervention 足以恢复结果，不证明它是唯一、最小的原因或最早因果起点。它增加重执行、判断器和环境恢复成本；oracle answer 不可得时，proxy verifier 的证据更弱。不可逆副作用、环境缺失或多处共同错误，应保留多个假设、人工审计或停止，而非强行产出单一归因。`arXiv:2606.09071v1` 的 §3–4、Appendix R 支持这一受限机制，不提供生产因果保证。
+
+<!-- source-family:SF-2026-ARXIV-2606-09071 -->
+
+随机 policy 还留下另一层归因问题：即使不修复任何内容，只重新采样一个 action，也会重滚全部下游决策。因而单次“重跑成功”没有稳定比较基线。可以固定 factual prefix，以同一 policy 的重采样作为 null intervention，再分别改变 action、observation、context 或 policy，执行有界的多次 continuation，比较 outcome 分布及其不确定性；provider 在 temperature=0 时仍可能变化，应记录 replay action-match，而非声明精确重放。诊断层拥有比较与假设，不取得外部 effect 的重执行权限。
+
+这一比较估计的是随机续跑中的总效应，不是当前步骤的直接效应：早期无关步骤也可能因重新采样后面的关键决定而显得有效。选择最后一个仍具有可辨效应的重决策点，或用有预算的 coalition/Shapley 估计拆分交互，是不同归因分支，不能宣称已找到普遍唯一原因。[Causal Agent Replay 的受控 SCM 验证](https://arxiv.org/html/2606.08275v1)只覆盖 planted cause 与 mocked tools；有限样本区间、judge 噪声、多个步骤及额外 rollout 成本都会限制判断，matched continuation randomness 仍未被其实现解决。真实不可逆动作、环境无法重建或预算不足时，应保留多个原因与 unknown，回退人工调查；确定性的短流程仍先用状态机断言和固定重放。<!-- source-family:SF-2026-ARXIV-2606-08275 -->
 
 当系统尚未拥有可靠 dependency graph 时，还可以先从 raw trace 中检索相似成功/失败记录，由 judge 生成受限
 标签，再学习“当前执行偏离成功轨迹分布的哪里”。这形成另一条诊断演进：
@@ -319,7 +329,7 @@ Taxonomy 会压平边界行为，自动分类器也可能错标；现有大规�
 
 - `SF-2026-ARXIV-2604-23853`（Status: Experimental）：exact-v1 支持 child trace、逐步成本与 rule type 组成 TraceCard，并在作者 30+30 task contract 中评估 preserve/prune/repair；不证明启发式规则具有跨模型、跨 benchmark 的稳定因果有效性。https://arxiv.org/abs/2604.23853v1
 
-- **TraceGuard（arXiv:2604.03968v1；Status: Experimental）**：exact-v1 支持多维 observer evidence 与 separation-of-duties 在 519 样本设置中的结果；不证明 observer 独立、攻击覆盖完备或生产安全率。https://arxiv.org/abs/2604.03968v1
+- **TraceGuard（arXiv:2604.03968v1；Status: Experimental）**：exact-v1 Table 2 的 519 样本属于组合 detector；Table 5 的 separation-of-duties 来自 earlier run，两阈值样本量分别为 20/7，不能混作同一规模证据；不证明 observer 独立、攻击覆盖完备或生产安全率。https://arxiv.org/abs/2604.03968v1
 
 - `SF-2026-ARXIV-2606-22698` — primary `arXiv:2606.22698v1`；Method=`arXiv:2606.22698v1 §3 Approach`；Evaluation=`arXiv:2606.22698v1 §4 Experiments; §4.3 Evaluation`；Non-proof=`arXiv:2606.22698v1 §7 Limitations`；Artifact=`Not Disclosed — exact-v1 manuscript does not name a separate artifact used for this review`。
 

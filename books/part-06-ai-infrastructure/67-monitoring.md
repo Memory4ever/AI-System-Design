@@ -60,6 +60,10 @@ GPU busy 适合回答设备是否在执行，却无法区分有用训练、recom
 
 只观察最底层会产生错觉：GPU busy 可能在 recompute、部分 gang 等待或无效请求上消耗。
 
+当瓶颈已进入融合 GPU kernel 内部，计数器或端到端耗时又不足以定位 pipeline wait 时，可以升级到细粒度 trace。但 **trace 不能改变自己声称在观测的对象**：若在源码或 IR 插入探针后重新编译，寄存器分配和指令调度可能变化，低采样开销也不能证明被测二进制仍与生产执行相同。一个更保真的条件分支在已编译的指令流中插入探针，借寄存器活跃性寻找死区，并显式解决数据/结构 hazard；这样保留更多原指令，却仍会引入探针执行开销、架构专用 hazard 表和部署维护成本。
+
+诊断因此至少同时记录原/被测 binary identity、基本块与指令保留率、探针自身等待、原 kernel 与带探针 kernel 的耗时，以及真实请求级性能。若无法证明足够的观测保真度，应退回 counters、定点 microbenchmark 和最终未插桩 kernel 的端到端复测，不能把 trace 的等待分解直接升级成调度或发布事实。[二进制级探针研究](https://arxiv.org/html/2609.28769v1)在 FA-3/FA-4 等六个受测 LLM kernel、H100/B300/MI300X 及指定 NVIDIA/AMD 工具对照中支持“插桩时机改变被测对象”这一反例；它不证明所有 GPU 架构都有可复用寄存器，也不证明作者的 Agent 优化迭代数会在其他 workload 中重现。<!-- source-family:SF-2026-ARXIV-2609-28769 -->
+
 Resource utilization 还不能表达“有多少时间在等资源”。CPU、memory 与 I/O 的 Pressure Stall Information
 把 runnable work 因 contention 无法推进的时间暴露为 pressure evidence，使平台能区分 idle、busy-but-progressing
 与 busy-and-stalled。Unsupported platform 必须省略该 signal，不能报告零；`missing` 与 `no pressure` 是不同状态。
@@ -326,6 +330,10 @@ Collective bandwidth 与网络异常同期出现只提供相关性，仍需结�
 topology 和 application goodput 才能定位 root cause。NCCL Inspector 的 Prometheus mode 是这条机制的官方案例，
 其“低开销”主张不能脱离 profiler-on/off、模型、拓扑、并发和 tail SLO contract 外推。
 
+找到慢 rank 还不是找到根因。同步训练中，一个 GPU/NCCL 晚到可能起于 CPU 调度、NIC softirq、文件系统锁或数据摄取；只把异常归到最后显露等待的 collective，会把症状当原因。可从同一通信组的健康与异常 rank 建立时间对齐的差分，依次比较 GPU kernel、NCCL、CPU 与 OS 事件；各层只有在栈帧可正确 unwind、符号能按 binary Build-ID 对齐时才可用于归因。常驻轻量采样支持捕捉间歇问题，定点深采样和中心化符号解析补足证据，却增加内核/驱动兼容性、采样遗漏、存储与分析成本；跨层证据不足时仍应维持“待定位”，而不是由监控器自动修复作业。`arXiv:2603.29235v1` 的低开销与诊断时长只在作者披露的生产部署和单独 overhead 测试中成立，不是任意训练集群的保证。
+
+<!-- source-family:SF-2026-ARXIV-2603-29235 -->
+
 ### 无法插桩时，网络流只能充当旁路传感器
 
 显式 framework instrumentation 能直接携带 job、rank、phase 与 operation identity，因果边界最清楚；但托管框架、封闭镜像或遗留训练任务可能无法修改代码。此时交换机与 host 已有的 flow sequence 可以作为退化观测面：用时间、大小、方向和通信周期提出 job、parallelism 与 phase 的候选解释，再由 workload registry、拓扑和少量显式证据交叉确认。
@@ -579,6 +587,12 @@ degeneracy 或 base-rate inversion 会产生看似有保证的错误工作点。
 确定性规则和人工 override，并保留原始输入与裁决 lineage 供复验。
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-24737:end -->
 <!-- source-family:SF-2026-ARXIV-2605-24737 -->
+
+### 长轨迹 Profiling 需要稳定的 Semantic Operation Stack
+
+逐 span trace 能重放单次运行，却难以跨 prompt、工具参数和重试方式聚合“规划、检索、验证、写入”等同类操作。Semantic profiler 可以把低层 events 映射为带版本的 operation stack，再按 operation、资源和失败点聚合；映射器只拥有归类 proposal，原始 trace、effect log 与 correctness evidence 仍是最终事实。<!-- source-family:SF-2026-ARXIV-2609-20301 -->
+
+语义聚合改善跨 run diagnosis，却会因 taxonomy 漂移、嵌套操作和错误归类隐藏细节。作者评测只支持披露 agents、任务和 profiler；coverage 低、分类不确定或高风险 incident 时，应回到原始 spans/logs 和工具 side effects，不以聚合标签替代因果调查。
 
 ## Review notes
 

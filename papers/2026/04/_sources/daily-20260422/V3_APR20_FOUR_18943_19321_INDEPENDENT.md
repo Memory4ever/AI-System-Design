@@ -1,0 +1,12 @@
+# 04/22 四项有界非作者审阅：18943 / 19300 / 19201 / 19321
+
+复核者：apr20_resume（非 04/22 报告作者）。范围仅为下述 exact-v1 的决定性方法、评价与直接反证，以及 ROADMAP 所定实际 owner 和相邻正文；未读全部附件、未复现实验、未写 Books 或 04/22 正式报告。本记录不是 04/22 来源、日期、候选分母或整日 Gate。
+
+| 家族 | 有界复核与反证 | 实际 owner 对读和结论 |
+| --- | --- | --- |
+| [2604.18943v1](https://arxiv.org/html/2604.18943v1) Personalized Benchmarking | §3.2–3.4、§4.1–4.2、§5.1/5.4：13,383 用户仅 115 人满足至少 25 次 battle，均值 59；相关只在各人实际评价过的模型集合上计算。Elo 与 BT 的个体—总体相关差异是真实的受限测量信号，但不同模型覆盖/比较图与样本选择仍混入差异；BT 均值 `p=.165` 不是与随机排序等价的证明。Topic/style 回归预测既有估计 rating，不是在线分流效用。 | Ch66「Judge Ranking」约 217–230 已实际要求保留 pair/slice identity、区间与子群抵消，并把 release population 决策留给独立 owner。`2+1+2=5` 标准审阅、**No Change — 具体 Existing PASS**，限聚合排名不能替代子群/个人偏好切片及估计不确定性；不称个性化算法、线上收益或“多数人必被误导”已证明/已实现。 |
+| [2604.19300v1](https://arxiv.org/html/2604.19300v1) HalluAudio | §3.1–3.3、§4.2–4.3、Appendix D/E：5,720 QA 中 2,662 对比、621 invalid/adversarial，不能把所有错答同义为无根据肯定。Eq.4 印刷公式为整体 binary accuracy，正文称 conditional，须隔离这个指标口径；Eq.5 FRR 分母为有正确答案的 valid prompts；大小写/标点/关键词和数值解析是 measurement layer。Table 9 不同音频域受测模型集合不同，不能合成同分母总排名。 | Ch66 约 308–314 已明确 prompt/parser、原始输出与 normalization；约 466–468 已拆 blanket refusal/应拒控制/内容级结果，其他配对切片原则亦在现文。`2+1+2=5` 标准审阅、**No Change — 具体 Existing PASS**，只限 grounded answer、有效问题误拒、无证据肯定与解析失败不可互换；不称整套音频 benchmark 或模型排序已被书稿覆盖。 |
+| [2604.19201v1](https://arxiv.org/html/2604.19201v1) Cascaded Code Editing | §3.1–3.3、§4.3–4.4、§5.1–5.3/Table 4：强模型 sketch、弱模型 apply 原文件，后段仍需长上下文/跨文件/未改区域保持，不是无损机械替换。Aider Pass@2 含反馈第二试；DS-V3 direct `56.0` 高于 14B cascade `54.2`，DS-R1 `67.6→75.1`；DS-V3 总 token `357.1K→522.7K`，不同服务池 `16×H20/SGLang` 与 `1×H20/vLLM` 及计价不能导出通用成本律。 | Ch56 约 250–268、456–460 承载模型交接/质量/成本门，Ch78 约 537–545 承载内容和 effect 证据，但**未**逐字承载 CLC/GCLC 编辑训练配方。`2+1+2=5` 标准、**Weekly/Daily Only PASS**：受限阶段训练及排序反转可报告；不把整套算法泛称 Existing，也不只凭局部 Pass@2/价格另写成熟 cascade 原则。 |
+| [2604.19321v1](https://arxiv.org/html/2604.19321v1) RDP LoRA | §3.2/3.6–3.7、§4.1–4.3/Table 2：hidden trajectory 的多分辨率 RDP pivot、逆根投票和 velocity 权重是离线 layer-selection proxy；“training-free”只指 selector 不做参数训练，不免前向/样本/阈值及后续 LoRA。Qwen3-8B MMLU-Math 同协议下 13 层 selected `81.67`、random `75.56`、full `79.32`，但 geometry-weighted `78.20`/reduced `79.23` 低于 selected 均匀分配；一项任务/单次主表不识别几何因果或跨模型最优层。 | Ch30 约 157–173、243–257 已实写 target modules/placement 依任务、base、预算，proxy sensor 须有行为/成本门；未覆盖此特定 RDP 实现。`2+1+2=5` 标准、**Weekly/Daily Only PASS**：保 selection 与 allocation 的反向证据，不因新算法名、少层数或“training-free”自动新增长期分支。 |
+
+四项均通过上述**窄处置**，不扩大为全论文或全日报 PASS。原 04/22 `V3_EVIDENCE_REVIEW.md` 的直接负证据与未复现状态继续保留；若正式报告使用更强的因果、跨域排名、统一成本或普遍层重要性宣称，须重开相应命题。

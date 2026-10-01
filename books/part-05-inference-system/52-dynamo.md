@@ -148,6 +148,22 @@ NIXL 为 GPU、CPU 和 storage memory domains 之间的数据移动提供 transf
 
 用第 36 章的通信分层来看，NIXL 更接近面向 AI state 的 point-to-point data-movement runtime，而不是训练 collective 的下一代版本。AllReduce 先定义 stable group 的共同结果；KV transfer 则必须额外携带 request/state identity、layout、source/destination ownership 与 completion。NIXL 可以承载 data path，但不拥有这些服务语义，也不替代 MPI、NCCL 或 UCC 各自的 collective 边界。
 
+### 从跨 Rank 同步到独立推进：移动请求还是移动权重
+
+MoE 的 Expert Parallel 把 token 送往持有专家的 rank；在负载接近、专家权重难以移动时，统一的 all-to-all 边界便于协调。但请求长度、KV 命中和 expert 热度一旦偏斜，每层的慢 rank 就会拖住同组请求。另一条条件分支是复制较小的 attention weights，把各层 expert weights 分布在 peer GPU，让每个 rank 保留自己的请求进度，并在执行下一层前拉取所需权重。执行流从“同步移动 token”变成“异步预取权重、在本地消费”；权重驻留仍由第 54 章的 memory owner 管理，本章只讨论跨 rank 的执行与完成边界。
+
+预取可以与本层 MoE 和下一层 attention 重叠，却不能省略依赖：下一层 MoE 必须等对应权重到达。它去掉的是集体栅栏，不是通信和等待；peer 出口、HBM/L2、copy engine 与功耗竞争还会让被重叠的计算变慢。只有 peer 带宽足够、层间计算窗口能覆盖搬运，且独立推进的收益超过权重流量时才值得选用。小窗口、弱互联、权重搬运显著或需要简单故障域时，原有 Expert Parallel 仍合理。`arXiv:2604.01621v1` 在作者的 DeepSeek-R1、GB200 NVL72、NVFP4/FP8 KV、8K 输入/1K 输出和 20–100 TPS/user 对照中报告收益；它不证明 Decode、跨节点或生产 tail SLO 同样受益。
+
+<!-- source-family:SF-2026-ARXIV-2604-01621 -->
+
+### Adapter也可以成为独立的远程执行路径
+
+共享base与adapter同驻engine，省掉每层远程调用，在adapter工作集小或互联弱时合理；MoE的expert-specific adapter增大后，它们却与KV争用HBM，并随base replicas重复放大。另一条分支保留base与请求KV在engine，将adapter权重和低秩计算交给共享LoRA server：传出activation、并行计算base与adapter，再等远程低秩结果相加后推进下一依赖算子。它分离的是base/adapter，不是Prefill/Decode；scheduler的预取hint也不等于权重已经ready。
+
+独立池可以扩大adapter working set，却从同卡加法变成逐层通信、参数加载与结果同步。GPU发起通信、layer-wise loading和compute overlap只是隐藏部分成本；朴素拆分在作者消融中反而增加尾延迟。server容量饱和会重新排队，占用专用GPU还减少base实例数。Cache概率模型可辅助资源计划，但立即可接纳比例不等于一般TTFT保证，还需实际冷加载、计算和网络预算。
+
+[InfiniLoRA](https://arxiv.org/html/2604.07173v1)支持这一受限执行分支；其TTFT明确排除Prefill，不能当用户端到端首token延迟。固定Hopper/InfiniBand、MoE与模拟多租户请求的结果也不证明任意popularity、故障或隔离性质。Adapter少、rank低、网络尾部显著或独立池不能可靠恢复时，同驻或静态merge仍合理；第51章继续拥有本地adapter readiness，本章拥有跨worker依赖与结果回流。<!-- source-family:SF-2026-ARXIV-2604-07173 -->
+
 ## KV-aware Routing
 
 可以用概念目标解释决策维度：
@@ -317,6 +333,10 @@ observe queue / latency / KV / throughput
 
 系统需要 request id、state generation、worker readiness、draining、transfer timeout 和 retry boundary。生成过程通常不能像幂等 GET 一样任意重放；重试可能得到不同 sampling 结果，已返回 token 也无法收回。
 
+进程失败与设备上已提交模型分配的寿命也可以分开。一个受限恢复分支由独立 GPU memory 服务保留只读权重及 reader lease，让尚未接流量的 shadow engine 预建自己的 context、communicator 和 graph；engine 崩溃而设备与 memory 服务仍健康时，提升 shadow、建立新的请求 KV，再按请求策略 replay。它保留的是模型驻留，不是旧 engine 的请求进度；未提交 allocation 不能发布，GPU reset 或模型状态损坏仍需 cold fallback。
+
+寿命分离用额外 private execution state、HBM 和故障判别复杂性换更少模型重载；事后归类为 device-preserving 的故障日志不是实时完整性证明。[Dynamo 受限恢复实验](https://arxiv.org/html/2609.25451v1)主要注入进程 SIGKILL，不能推出所有故障的可用性或外部 effect 的 exactly-once。其 Table 3 中 snapshot-only 的 DSV4-Pro 比 warm restart 更慢，所有 snapshot 项也慢于 shadow；但 shadow 从 failure injection 起计，其他路径从 container start 起计，不可混作完整恢复时钟或普遍因果倍率。lease、设备完整性或恢复预算不成立时，整组重启、健康副本和显式请求终止/重试仍是合理路径。<!-- source-family:SF-2026-ARXIV-2609-25451 -->
+
 ### Wide-EP 的部分 Rank 恢复是一项联合 Runtime Contract
 
 普通 worker failure 可以把请求迁走并重算；宽 Expert Parallel MoE 中，一个 rank 丢失还会同时改变 live membership、
@@ -346,6 +366,14 @@ revision 的冗余状态恢复 coverage；最后重建 collective、buffer 与 C
 
 <!-- source-family:SF-2026-ARXIV-2607-10389 -->
 <!-- source-family:SF-2026-ARXIV-2607-13093 -->
+
+### Live PP 重配置先验收临时状态，再提交新布局
+
+固定 pipeline 划分在负载稳定时省掉权重和 KV 的搬运，也最容易限定故障面；Prefill/Decode 比例或设备可用性改变后，目标划分可能更合适，却不能立即释放旧层，因为当前请求还在使用旧配置。在线原地重配置必须先按每个 GPU 上“当前层集合∪目标层集合”的双驻留权重计算临时 KV 容量；若在用 blocks 已超过最小可行容量，就拒绝此次重配置，而不是靠后台迁移掩盖容量不足。CPU 预驻留目标权重和必要磁盘回退也属于资源预算，不是零成本的弹性。<!-- source-family:SF-2026-ARXIV-2604-12171 -->
+
+支持缩扩的布局可以用 block-address 间接表解除逐层连续大 buffer 的限制，只整理空 slot 的指针，并把多层 KV 叠放在同一物理分配单元以减少碎片；层叠粒度越大，迁移和释放的粒度也越粗。推理继续执行时，dirty physical-slot bitmap 标记新增写入，迁移器增量补齐目标状态；scheduled/applied token counter 只能描述追赶进度，不能单独证明 slot lineage 或请求状态完整。切换前仍要在同步点补齐尾部写入，再原子提交目标 PP 配置并删除旧层。推理通信和迁移通信分属两个 NCCL group 时，还要按 GPU 互斥及 ACK/try-lock/reject 握手避免交叉等待；增加一个通信组并不自动消除 deadlock。
+
+[作者的受限在线重配置实验](https://arxiv.org/pdf/2604.12171v1)支持这一临时容量—布局—增量写—最终提交的执行链，不决定何时重配置或哪个 target 最优。A10080GB/L40S48GB 跨节点、Llama3-70B/Qwen3-30B与有限长短输入/输出模式中，target 由 profiling 选择，Qwen 的 TTFT 又可比静态 balanced 配置更差；precision、生产 SLO 和任意故障恢复未建立。因此应把临时显存、后台带宽竞争、cutover pause 和状态一致性分别验收。负载短暂波动、迁移赶不上写入、无双驻留空间或需要简单恢复时，固定 PP、drain 后重启或请求级重算仍合理；第53章可声明目标拓扑，却不能替代这条 runtime admission 与 commit 链。
 
 ## 本章在知识树中的位置
 
@@ -390,6 +418,10 @@ Dynamo 将多个 inference engines 组织为分布式 runtime：request path 负
 下一章进入 Kubernetes 声明式控制面，观察 LLMInferenceService 怎样把 Gateway、intelligent routing、worker topology 和生命周期表达为可协调资源。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-12171`（Experimental）：[官方 PDF exact-v1](https://arxiv.org/pdf/2604.12171v1) §4/Algorithm1、§5–6、§7.2–7.3。当前∪目标层集临时预算、live blocks admission、block-address/layerstack、dirty-slot增量patch、final sync+atomic commit、两NCCL互斥握手；counter非slot lineage证明，无任意故障恢复。A10080GB+L40S48GB跨节点IB、Llama3-70B/Qwen3-30B、512/16与128/512及200请求的pattern-shift、profiling选择目标；Qwen TTFT可退化，precision/production SLO未披露。HTML headline与PDF-v1不同，本项仅以PDF为采用证据。6分实际缺口深入，必要源/owner非作者复核通过（root），实际正文及相邻交接写后非作者复核通过（root）；未复现实验。
+
+- [InfiniLoRA 2604.07173v1](https://arxiv.org/html/2604.07173v1)，Experimental；§2.2–2.3/footnote1、§3–5、§6.1–6.4。采用独立adapter计算、关键路径与容量代价，不采用IAR与P95TTFT的一般等价或生产保证。相同总GPU预算但base实例数不同；Zipf1.2/Poisson到达/BurstGPT长度、五MoE、Hopper96GB/400Gbps IB、P95 decode-first-token .25s/平均TPOT .1s，精度未披露。原v1多幅图保留作者draft caption，未独立运行artifact。
 
 - **TENT（arXiv:2604.00368v1；Status: Experimental）**：exact-v1 将 transfer intent 与 slice/path execution 分开，并报告其受测 SGLang HiCache 设置中的吞吐、P90 TTFT 与透明绕障结果。证据不覆盖未披露拓扑、多租户、生产 SLO 或长期控制面故障；旧的静态/单路径传输仍是明确 fallback。https://arxiv.org/abs/2604.00368v1
 

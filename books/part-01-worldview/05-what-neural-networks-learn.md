@@ -76,6 +76,25 @@ Representation learning 的关键收益，是让系统不必完全依赖手工�
 
 第三是 **compositional usefulness**。中间特征应能被后续层组合，支持更复杂的判断。单个特征未必对应完整概念，它的价值可能只体现在与上下文中的其他特征共同计算时。
 
+当新任务需要重新组合已学操作时，组合性还涉及“学习什么、测试时搜索什么”的分工：一条受限路径在训练期学可复用 primitive 的离散 codebook 与共享递归 executor，面对新的输入输出例子时冻结 executor，只优化 program latent 来选择执行序列。它与不显式学习程序序列的端到端模型、或外部符号程序加确定性验证并存；神经解释器的可微搜索换来额外训练与每题多起点/梯度搜索成本，也不证明 latent 是唯一的人类可读程序。受测证据仅是作者构造的有限 program-synthesis 语言与 Shift/Composition 类任务：能否表达目标程序、搜索预算和最终行为正确性仍要分别验收，不能外推到任意长度或通用 LLM 编程。<!-- source-family:SF-2026-ARXIV-2604-18907 -->
+
+任务表示在测试时可被优化，不表示模型已经归纳并执行了新规则。若backbone与task embedding同时变化，embedding可能迁出训练坐标而backbone仍靠自身改动解题；一个可诊断的替代分支先固定backbone只适配embedding，让任务定位发生在共同接口，再冻结该embedding更新backbone。这样能分别检查表示中可读的规则与后续执行适配，代价是两阶段搜索和额外测试训练，不把近邻检索当唯一规则身份。
+
+规则标签或可控generator允许分别测probe与最终任务；重复train任务的检索仍含记忆，概念标签也未必定义完整算法。受限网格实验中，漂亮的embedding几何可支持已训练范围插值，却不能自动叠加未学操作或外推新位移，逐pair成功也不保证整任务所有pairs通过。因而应保留冻结接口、严格任务结果和训练覆盖检查；预算或规则未知时沿用joint适配/直接执行验证，不由线性可读或二维图授予OOD泛化。 [必要机制与反证](https://arxiv.org/html/2609.21181v1)。<!-- source-family:SF-2026-ARXIV-2609-21181 -->
+
+组合性还要区分可表达的计算与有限训练轨迹中可学的长度泛化。某个架构可模拟计算机，不表示固定有限alphabet、标准位置形式的C-RASP[Pos]计算语言与特定理想learner下，短CoT样本足以恢复任意更长执行；负结果必须绑定这些条件，不能由少量合成任务否定所有Transformer的可学性。
+
+改变trace表示也会改变学习问题：显式signpost或只记录value changes可以提供不同的正条件，却新增标记规则、状态更新和轨迹构造成本。理想可增长alphabet的证明不是现实tokenizer无限新增token，受限合成实验只检验约两倍长度，S5约1.7倍，训练random offset又已暴露测试位置/标识；这些对照不是无界可靠性。部署长度超出已验范围时，应保留长度上限、独立执行/结果验证或明确状态机器，而不以表达能力代替学习证据。 [原文必要机制与限制](https://arxiv.org/html/2604.25800v1)。
+<!-- source-family:SF-2026-ARXIV-2604-25800 -->
+
+可表达正确规则仍不足以保证训练会选择它，输入可见性本身也在限定学习问题。同一份递归执行轨迹可以让模型读完整trace，或每步只读当前子任务frame、返回时仅交回结果；若真实目标确实只由该frame决定，后一种观测约束就排除了对外部trace线索的依赖。受限MDL反例中，比正确局部规则更短的完整trace shortcut可以拟合训练，却在熟悉子任务换了外层context时答错；单纯扩大覆盖、保留可表达性，不会自动消除这种选择偏好。
+
+该保证只覆盖训练已见的局部context所形成的等价集合，不覆盖全新子问题，更不等于现实optimizer执行MDL或递归普遍胜过CoT。若局部frame已丢掉定义答案的必要信息，隔离本身会失败；若parent payload仍能反解隐藏shortcut，分帧也未切断它。受测合成任务的多frame训练、position窗口和训练步数并非全compute匹配，长frame仍会退步；需要跨任务的信息时仍保留完整context，但应另测周边context干预、实际结果和必要信息边界，并计入stack/runtime与轨迹构造成本。 [必要机制与反证](https://arxiv.org/pdf/2609.20831v1)。<!-- source-family:SF-2026-ARXIV-2609-20831 -->
+
+有限轨迹还要区分答案正确与遵循指定算法。把终端 decoder 提前用于中间表示，可以检验答案何时可读，却不证明模型已经执行终止，也不能仅凭早解认定它采用了另一种算法；须连同参考中间状态和训练 hint 误差，核验所声称的执行路径。受控排序案例中，终态信息很早可读而参考轨迹尚未完成，说明终态成功不能单独为算法 faithfulness 背书。
+
+一条更受约束的学习分支将 scalar 交换与离散控制分开，每步把控制投回有限状态再继续，但局部合法转换仍依赖全局 inner-loop 终止信息的形成和监督。显式比较器、预设 chain/code 与虚拟全局节点都是先验，不是模型自行发现的通用算法；去掉全局监督，作者同架构连训练长度也失败。有限长度的 autoregressive test 因而不等于无界可靠执行，teacher-forced 训练也须单独记录。需要可认证步骤或未验长度时，保留确定解释器与独立轨迹/结果检查。[必要方法与消融](https://arxiv.org/html/2609.31114v1) <!-- source-family:SF-2026-ARXIV-2609-31114 -->
+
 这些标准都不是绝对属性。训练目标定义了什么差异重要，架构定义了哪些组合容易表达，数据决定模型实际见到哪些变化。
 
 ## 数据分布决定模型能学到哪种世界
@@ -117,6 +136,10 @@ Inductive bias 不是坏事。没有任何偏好，模型无法从有限经验�
 
 当匹配时，模型能用有限样本捕捉可复用规律；不匹配时，模型可能依赖 shortcut。例如训练图像中背景与标签高度相关，模型可能学习背景而不是对象。它在同分布测试集上表现良好，换背景后却失败。
 
+即使训练目标显式鼓励类间表示分离，也未必固定这些方向在部署环境中的标签意义。受限的coding-rate反例里，稳定特征与环境相关特征都能映射到两条正交方向；当环境相关性反转，编码目标和表示的边缘分布可以不变，固定source classifier却把原先常正确的对应关系读反。要求一个coding operator在多个训练环境都最优，也只约束几何变换的inner目标，不能单独保证encoder的预测关系稳定；目标几何、固定读出和跨环境质量仍需分别验收。
+
+这条反证必须保留精度与支持边界：在正噪声、完整source支持的有限模型中，失败encoder只是任意接近全局最优，精确最优配合不受限的source-optimal classifier反而可保持零目标误差；精确最优也全错的例子改变了支持域。同支持域还允许罕见输入变成主流，不能冒充小shift保证。构造证明的是coding近最优不足，不证明真实优化器一定选该解；额外class-conditional稳定假设、语义保持干预或跨环境验证都有成本，未验证时仍回退切片、反事实和真实OOD行为测试。 [必要机制与边界](https://arxiv.org/html/2609.21001v1) <!-- source-family:SF-2026-ARXIV-2609-21001 -->
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-21692:start -->
 这个判断还可以获得一个更具体、但适用范围更窄的几何解释：若任务的数据空间近似为规则的紧致流形，模型已经充分优化，并且某类变换确实保持任务语义，那么数据流形与训练后模型预测空间之间的 representation gap 会受到任务 intrinsic dimension 支配。此时，equivariance 不只是架构偏好；它相当于把一个观测样本扩展为一组语义等价样本，从而降低需要由有限数据覆盖的有效维度。这解释了为什么与任务对称性匹配的表示可能改善样本效率，也把“归纳偏置有效”进一步落实为“它减少了哪些自由度”。
 
@@ -124,6 +147,10 @@ Inductive bias 不是坏事。没有任何偏好，模型无法从有限经验�
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-21692:end -->
 
 因此，“模型学到了正确特征”不能只靠总体 accuracy 证明。需要构造切片、反事实、扰动和跨分布评估，检查模型究竟利用了什么相关性。
+
+表示诊断还要区分“固定一种表示后训练读出”与“用同一批样本选择表示再训练读出”。对一种受限Brownian kernel head，固定表示的activation mass给出经验复杂度的尺度；即使表示从该样本学来，这个条件化的经验恒等式仍成立。问题出在把它直接升级为整个选择过程的泛化界：候选表示的supremum必须保留，候选threshold traces可以增加选择自由度。一个等mass有限构造中，每个固定候选的复杂度随样本数下降，整族复杂度却不下降；因此压低同一mass不等于消除了选择成本。
+
+这条边界属于Brownian terminal geometry及披露的ReLU、head norm和trace-envelope条件，不是任意Transformer的风险公式；最坏经验容量也不是minimax预测误差。若表示与head使用同一数据选型，必须记录候选族与选型数据，另做selection-aware分析或独立held-out验证；选择成本的测量与额外数据有代价。受限实验只展示固定mass下的union gap，冻结特征上的小幅head收益不能代替端到端学习证明；约束未核时保留普通训练、数据切分和任务验收，不把一个低复杂度诊断自动当成泛化证书。 [必要机制与边界](https://arxiv.org/html/2609.21422v1) <!-- source-family:SF-2026-ARXIV-2609-21422 -->
 
 ## 记忆与泛化不是简单对立
 
@@ -170,6 +197,10 @@ class 与局部曲率一起记录；它不构成对任意 Transformer loss lands
 
 共享概念方向还不足以表达关系：同样包含“老师”和“摄影师”，谁跟随谁仍取决于施事与受事的绑定。分布式表示可以同时编码 filler 与 role，例如用各项张量积之和表达绑定；在角色向量独立等条件下可以解绑定，但这只是一种解释模型，不意味着网络实际执行了张量积程序。冻结表示的拟合、角色干预与局部替换可以检验这种结构是否可用，代价是人工角色方案与近似误差；表征可组合也不保证模型在新任务上行为可组合泛化。
 
+多句话中同一实体还可能承担不同关系，因此仅记录“哪个实体”不足以确定属性该绑定到哪里。一种受限的机制假说把地址拆为 entity 与 relation 两个索引：在受控文本中，先用属性 token 的 activation 拟合索引，再沿拟合的子空间替换或扰动，检验输出是否跟随指定绑定变化。这比只凭语义相似或角色标签多了一步局部使用证据；但拟合出的 cell 不证明网络拥有物理表格、唯一符号地址或开放任务上的稳定读写协议。<!-- source-family:SF-2026-ARXIV-2604-19052 -->
+
+同一关系结构跨语境也未必沿用同一读出坐标。作者在有限合成域中观察到原投影跨 context 退化，而根据相同索引的 activation 差拟合 translation 后，部分读出得以恢复；这种校准需要配对数据，也受上下文和干预范围约束。因此，可迁移几何、局部行为作用与任务泛化须分别验收；坐标失配或 patch 连带影响其他功能时，应回退行为测试和原模型，不能把 probe 升级为通用编辑器。
+
 尤其要区分三种结论：
 
 ```text
@@ -209,6 +240,22 @@ Jacobian-adjusted lens 一类方法提供了一个具体例子：它不直接把
 表示中的“可读”必须拆成三层：信息存在、独立 reader 能解码、模型行为实际使用该信息。让 verbalizer 与 reconstructor 共同训练并以 reconstruction 评分，可能形成只在二者之间有效的 private code；高 reconstruction 因而不能证明具体自然语言 claim grounded。
 
 更强的 contract 是用外部 ground-truth target 约束 decodability，并由与训练 reader 独立的 fresh probe 审计。它减少训练 reader 与表示共同作弊的循环性，却仍受 probe drift、目标遗漏和 correlation≠causation 限制；因果使用仍必须回到 intervention 与 downstream behavior。
+
+“Probe 读对、模型答错”还要分清 output scores 与最终选择。Candidate logits 可能完整保留标签信息，argmax 却选错；例如标签为0/1、某个 logit 随标签变化但始终低于另一常量，外部 reader 能读出标签而 argmax 恒定。检验最终表示到 logits 是否丢信息，应在同一 held-out trial、匹配 decoder 能力与校准下比较 state decoder 和 score decoder，不把 probe 对比错误答案的差距直接命名为 readout information loss。
+
+即使 probe-guided steering 修复部分错误，也不证明原路径用了该方向，或修复率的变化只来自表示改善。需同时记录损害原正确答案、oracle/probe/wrong-target配对结果，以及目标质量和干预敏感性；旧 probe 与新 checkpoint 不兼容也不能自动叫信息消失。受限 binding 对照未在晚 checkpoint 检出 state 相对 logits 的优势，computed-state 对照又受表面信息和错误样本数限制，因此不外推为 Agent 漏动作的因果解释。协议失配或样本不足时，保留普通输出与行为验收，不把解释性 probe 当自动修复授权。[必要反证与评价](https://arxiv.org/html/2609.31401v1) <!-- source-family:SF-2026-ARXIV-2609-31401 -->
+
+行为长期停滞时，还需要定位学习链中哪一段受阻，而不是把低准确率直接解释成“表示尚未形成”。在可拆分的 encoder–decoder 中，可以把成熟 encoder 接到新 decoder，反向移植 decoder 作对照，再冻结 encoder、重置或回退 decoder 后继续训练：前者检验既有表示是否足以支持新的读出，后者检验原读出路径是否成为瓶颈。受控算术任务上的这些干预能支持“结构已出现、行为尚未取用”的局部诊断，但不证明任意模型的停滞都来自 decoder，也不把获得成熟 encoder 的前期训练算作零成本。
+
+这条诊断增加模块移植、训练轨迹和多 seed 对照的成本，模块接口、编码方式与样本覆盖也会改变结果；表征退化时，冻结成熟模块并不能补救，某任务形成的结构也可能无法迁移到另一任务。旧的端到端训练与 probe 因而仍是基线：先用读出和干预区分形成、访问与使用失败，再决定补数据、修表示或训练访问路径，不能只凭一个加速比例替换整个训练方案。<!-- source-family:SF-2026-ARXIV-2604-13082 -->
+
+后训练改变行为后，“哪些参数改动足以恢复所测内部状态”与“哪条 activation 路径传递了变化”是两个不同问题。在架构相同、输入固定、比较 anchor 匹配的两个 checkpoint 之间，可将候选参数单元从后训练模型移植回基础模型，先检验它是否恢复所测 anchor 状态，再独立核对相应行为；activation relay 则检查差异怎样沿运行中的计算传递。内部恢复不等于端到端行为已恢复。Attention 的 Q/O 单元与同一 MLP neuron 的 gate/up/down 参数对应不同干预粒度，梯度可用于缩小候选，却不能替代实际参数替换、输出分布和行为任务的分别验收。
+
+参数替换得到的是相对于这对 checkpoint、输入与干预粒度的充分性证据，不是唯一知识源头或所有行为的通用定位；现有检验只在六个代表任务上支持稳定性。模块间冗余、交互及改变输入后的失效仍需单独检查，局部恢复也可能损害其他任务。它因此补充而不替代 activation patching、黑盒行为评测与更细干预；将 source-level 参数差异与运行期中继分账，才能避免把“在某层看到信号”误写成“知识唯一存储于该层”。<!-- source-family:SF-2026-ARXIV-2604-13694 -->
+
+行为不能取用已学事实时，也不一定只能继续补知识。训练期 augmentation 把预期的逆关系或组合答案提前写进样本，在查询结构稳定时直接有效；另一分支训练模型在推理时召回、组合和自验参数知识，将额外计算放在访问路径上。受控实验先用 SFT 写入事实，再以答案条件化的 teacher traces 启动 thinking，并用 correctness feedback 训练：所测 Gemini 2.5 Flash 在只经历事实学习、未经历该 thinking/RL 训练的新知识上仍能改善部分潜在推导。这是访问策略迁移的证据，不是任意未见知识都会自动泛化。<!-- source-family:SF-2026-ARXIV-2604-01430 -->
+
+尤其不能把“生成候选后按正向关系自验”写成“学会直接求逆”。纯逆关系没有可组合中间路径，成功仍依赖先提出正确实体及可靠自验；单次成功率低于把完整事实放入上下文的 ICL 对照，多次尝试的 pass@N 也不等于部署时能识别正确答案。Thinking 增加训练和生成成本，自验还可能重复参数中的错误；稳定关系可继续用显式 augmentation，事实可检索时保留外部证据路径，而不能用更长推理代替事实核验。
 
 ### 解释模型也有自己的 Faithfulness Budget
 
@@ -253,6 +300,10 @@ loss 还增加 compute、loss weighting 与 optimization coupling。V-JEPA 2.1 �
 在静态特征模型中，人们容易把“表示”理解成每个输入固定对应一个向量。现代序列模型中的 token representation 通常依赖上下文。同一个词出现在不同句子中，经过多层信息交互后会形成不同状态。
 
 这意味着模型能力不仅存在于参数中，也存在于参数对当前 context 执行的计算里。参数定义一种转换规则，activation 表示该规则在当前输入上的运行状态。对 LLM 而言，prompt、检索结果、历史对话和工具 observation 都可能改变后续表示。
+
+Context 至少可以提供两类不同信息：它可以是“当前属于哪项已学任务”的身份线索，让模型取回参数中学过的规律；也可以是当前过程的样本，让模型从这段输入估计规律。例如在有限 Markov 链的受控模型中，一条路径把相邻状态对编码、汇聚成 task vector，再结合当前状态预测；另一条路径从当前序列估计转移统计。前者的记忆是对生成过程的取回，不等于逐条背诵序列，后者也不意味着所有 in-context learning 都执行同一种统计程序。表示的作用因此要连同数据生成过程与查询分布检验，而不能只问“有没有上下文”。<!-- source-family:SF-2026-ARXIV-2604-12151 -->
+
+这两类计算还可能在训练中竞争：某条统计路径先学会泛化，随后更低训练损失的任务取回路径占优，未见任务表现反而下降。但 task vector 并非天生只会记忆；在足够表示维度和 decoder 容量下，同一编码—汇聚—解码结构也能保留统计并泛化。区分训练动力学竞争与容量压缩，才能判断应增加数据多样性、改变表示预算，还是仅延长训练。受限浅层模型中的 patch 干预支持所测路径的作用，不证明完整唯一 circuit，也不能把其 Markov、任务数和容量阈值作为现代 LLM 的普遍规律。部署仍需已知任务与新任务的独立切片；路径解释不替代行为验收。
 
 本章不展开 Transformer 的具体结构。第 6 章会说明 content-dependent routing 为何使这种上下文化计算更可扩展，Part II 再解释 token、embedding 和 Self Attention 的内部机制。
 
@@ -385,6 +436,15 @@ Sparse autoencoder 把 activation 分解为稀疏 feature，短自然语言标�
 线性可解码和 steering 效果仍不等于单一方向拥有完整因果控制，跨模型与跨数据配方也未证明。系统上应把 pretraining data provenance、checkpoint lineage 与 post-training intervention 分开审计；方向不能稳定复现时，回退行为级 evaluation，不据 representation probe 推断模型“拥有某种人格”。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2604-19052`：[exact-v1](https://arxiv.org/html/2604.19052v1) §3.1–3.3/Eqs2–6/Figures2–9，Daily 2026-04-22。采用 entity×relation 索引及跨 context 有限 translation 的受限机制分支；属性 token 拟合、PLS/patch 和受控合成域只支持局部可读与行为作用，不证明物理表格、唯一符号地址或开放 LLM 泛化。root 必要来源→当前 Ch5 owner 写前、实际正文及相邻论证写后非作者复核均通过；未复现实验，不代替整日报 Gate。
+
+- `SF-2026-ARXIV-2604-18907`（Experimental）：[Gradient-Based Program Synthesis with Neurally Interpreted Languages exact-v1](https://arxiv.org/html/2604.18907v1) §3.1–3.4/§4.1–4.5；采用训练期 primitive/codebook 与共享循环 executor、测试时冻结执行器并优化 program latent 的职责分支，不采唯一符号真值、无界长度或通用 LLM 编程能力。受控 Shift/Composition、DeepCoder/LPN 比较与多起点/梯度搜索成本限制外推；root 必要 source→Ch5 采用及实际正文写后独立复核通过，复核时纠正“连续身份”与端到端对照措辞，未复现实验。
+
+- `SF-2026-ARXIV-2604-13082`：[exact-v1](https://arxiv.org/html/2604.13082v1)，Daily 2026-04-16；必要证据 §4.1/§5.2 的 encoder/decoder 移植、冻结与 rewind，§5.3–5.5/§6 的编码、表征失败和任务迁移边界。仅采用模块诊断区分表示形成与读出失败，不采用 2.75× 为总训练成本收益或普遍 decoder 瓶颈。root 有限 source→owner 与本次实际写后独立复核通过，未复现实验。
+- `SF-2026-ARXIV-2604-13694`：[exact-v1](https://arxiv.org/html/2604.13694v1)，Daily 2026-04-16；必要证据 III-A–D、IV 与 V Scope，采用 matched-checkpoint anchor 恢复与 activation 中继分责，再用输出 KL/IFEval 单独核行为；保留 same architecture/fixed input/matched anchor、Q/O 与同一 MLP neuron gate/up/down 粒度、梯度筛选与实际替换验收及六代表任务范围。不是唯一知识来源或全模型通则。root 有限 source→owner 与修正后的实际正文/相邻论证写后独立复核通过，未复现实验。
+
+- `SF-2026-ARXIV-2604-12151`（Experimental）：[exact-v1](https://arxiv.org/html/2604.12151v1) Roman III、IV.1–IV.7、V。有限 stationary Markov 链与两层模型；统计归纳/任务取回、训练竞争/表示容量两层区分，task vector 可在足够容量下泛化。patch 非完整唯一 circuit，不外推开放 LLM 阈值。6分实际缺口深入；必要来源/owner 独立复核通过（apr02），实际正文及相邻交接写后非作者复核通过（root、apr02），未复现实验。
 
 - 2026-09-01 角色绑定的受限解释：<https://arxiv.org/html/2608.29034v1> §2–3/7 与 <https://arxiv.org/html/2608.29530v1> §3/6–9。人工 role、受控任务与有限替换不证明表示唯一；生成 token 等原 forward 仍保留，DISCOVER 的组合 holdout 不等于 target 预训练未见。正文不采神经/符号的哲学定论。
 

@@ -186,6 +186,12 @@ CP  distribute long-context sequence and attention work
 
 MoE 的 EP 与 TP/sequence layout 还会约束 token dispatch 前后的 tensor ownership。具体兼容规则具有版本性，实施时以当前 Megatron Core parallelism guide 为准。
 
+### 空模态 Rank 的 Dummy Path 也必须满足并行布局
+
+多模态 batch 在某个 rank 没有图像时，跳过视觉 encoder 看似节省计算，却可能使它不再参加其他 rank 正在执行的 FSDP collective。Dummy forward 因而不仅要“走过同一模块”，还要满足实批次相同的 local activation/metadata layout：若视觉 patch 已按 SP 切片，位置编码也须按同一规则对应；反之，全局 dummy activation 与局部 position tensor 不能直接相加。空输入、padding、patch merge 和 position slicing 应一起进入并行回归矩阵，而不是分别验证 collective 可启动和正常图像可训练。
+
+这用额外 dummy compute 与形状验证维持 collective liveness，但不证明任意稀疏模态分支都正确。VeOmni 的[具体修复](https://github.com/ByteDance-Seed/VeOmni/pull/697/files)先将 dummy pixel input 按真实 collator 的 SP 规则切片，保留全局 grid metadata 供 position path 生成匹配的局部份；这是实现边界，不是我们已复现所有模型、GPU/NPU 或 SP 配置。无 SP、无稀疏模态时原路径仍合理；布局无法对应时应拒绝该配置，回退已验证的非切片路径。<!-- source-family:SF-VEOMNI-697 -->
+
 ## Distributed Optimizer 与 FSDP-style State Sharding
 
 Megatron 的 model parallelism 与 DP state sharding 可以组合：

@@ -18,6 +18,8 @@ REGISTRY = {
 SOURCE = "| SRC-A | https://example.org/research 截至窗口末页 | 已检查 | 无 |"
 CANDIDATE = "| [材料](https://example.org/paper) | 2026-08-24T12:00:00+08:00 | 调度机制；3+2+2=7 | 深入完成 | 仅报告：未改变长期命题 |"
 BODY = "### [材料](https://example.org/paper)\n\n新的调度方法把资源约束移到准入阶段；证据限于作者的固定工作负载。"
+RESERVATION = "终态保留项：必要正文不可得，不支持正面证据、Books 或无遗漏断言；定点重开条件：作者公开正文。"
+AUDIT_SUMMARY = "已核对窗口、来源范围、候选证据及 Books 处置，未发现未解决的可执行工作。"
 
 
 def report(candidate="", body="", weekly=False, state="完成", gap="无"):
@@ -61,6 +63,8 @@ def report(candidate="", body="", weekly=False, state="完成", gap="无"):
 
 复核者：独立审阅者甲
 结论：通过
+
+{AUDIT_SUMMARY}
 """
 
 
@@ -110,9 +114,9 @@ class ReportV3Tests(unittest.TestCase):
             self.rejects(report(CANDIDATE.replace("2026-08-24T12:00:00+08:00", interval), BODY), "窗口")
 
     def test_unresolved_date_is_a_gap_not_a_fake_timestamp(self):
-        text = report(state="有缺口", gap="[材料](https://example.org/paper) 仅披露日期，需公开时刻或可证实的时间范围；不伪造候选落窗。")
+        text = report(state="进行中", gap="[材料](https://example.org/paper) 仅披露日期，需公开时刻或可证实的时间范围；不伪造候选落窗。")
         self.assertEqual(self.errors(text), [])
-        self.rejects(text.replace("**状态：** 有缺口", "**状态：** 完成"), "完成")
+        self.rejects(text.replace("**状态：** 进行中", "**状态：** 完成"), "完成")
 
     def test_unlisted_primary_and_optional_discovery_need_no_registry_expansion(self):
         extra = "\n| 表外：[新机构](https://example.org/lab) | https://example.org/lab/research 相关事件检查完 | 已检查 | 无 |"
@@ -145,8 +149,9 @@ class ReportV3Tests(unittest.TestCase):
         self.rejects(report().replace("| 已检查 |", "| 未触发 |"), "未触发")
         self.assertEqual(self.errors(report().replace(SOURCE, SOURCE + "\n| SRC-C | https://example.org/events 未发生事件 | 未触发 | 无 |")), [])
 
-    def test_source_requires_reference_and_known_identity(self):
-        self.rejects(report().replace("https://example.org/research", "已扫描"), "依据")
+    def test_source_requires_nonempty_basis_and_known_identity(self):
+        self.rejects(report().replace("https://example.org/research 截至窗口末页", "无"), "依据")
+        self.assertEqual(self.errors(report().replace("https://example.org/research", "注册入口 Research 列表")), [])
         self.rejects(report().replace("| SRC-A |", "| SRC-UNKNOWN |"), "未知来源")
 
     def test_bad_scores_and_review_depth_conflict(self):
@@ -155,7 +160,15 @@ class ReportV3Tests(unittest.TestCase):
         self.rejects(report(CANDIDATE.replace("深入完成", "标准完成"), BODY), "7")
 
     def test_revision_does_not_require_rescoring(self):
-        self.assertEqual(self.errors(report(CANDIDATE.replace("3+2+2=7", "revision，不重复评分"), BODY)), [])
+        self.assertEqual(self.errors(report(CANDIDATE.replace("3+2+2=7", "重要修订，不重复评分"), BODY)), [])
+
+    def test_only_important_revisions_may_omit_scores(self):
+        for score in ("revision，不重复评分", "已处理，不重复评分", "不重复评分"):
+            self.rejects(report(CANDIDATE.replace("3+2+2=7", score), BODY), "重要修订")
+
+    def test_important_revisions_cannot_carry_numeric_scores(self):
+        for score in ("重要修订；3+2+2=7", "重要修订，不重复评分；3+2+2=7"):
+            self.rejects(report(CANDIDATE.replace("3+2+2=7", score), BODY), "不重复评分")
 
     def test_reviewed_candidates_require_matching_evidence_section(self):
         self.rejects(report(CANDIDATE), "正文")
@@ -176,21 +189,27 @@ class ReportV3Tests(unittest.TestCase):
         self.assertEqual(self.errors(text.replace("**Books：** 纳入本次", "**Books：** 本次仅报告")), [])
 
     def test_gaps_are_not_ordinary_pending_work(self):
-        blocked = report(state="有缺口", gap="来源没有可用历史入口。")
+        blocked = report(state="进行中", gap="来源没有可用历史入口。")
         blocked = blocked.replace("| 已检查 | 无 |", "| 受阻 | 无历史入口 |")
         self.assertEqual(self.errors(blocked), [])
-        self.rejects(blocked.replace("| 受阻 |", "| 未完成 |"), "进行中")
-        self.rejects(report(state="有缺口"), "缺口")
-        self.rejects(blocked.replace("**状态：** 有缺口", "**状态：** 完成"), "完成")
+        complete = blocked.replace("**状态：** 进行中", "**状态：** 完成")
+        self.rejects(complete, "终态保留项")
+        complete = complete.replace("来源没有可用历史入口。", RESERVATION)
+        self.assertEqual(self.errors(complete), [])
+        self.rejects(complete.replace("| 受阻 |", "| 未完成 |"), "可执行工作")
+        self.rejects(report(state="有缺口"), "状态")
 
     def test_candidate_pending_can_only_remain_in_progress(self):
         candidate = CANDIDATE.replace("3+2+2=7", "2+2+2=6").replace("深入完成", "待审阅")
-        self.rejects(report(candidate, state="有缺口", gap="待审阅"), "进行中")
+        self.rejects(report(candidate, gap=RESERVATION), "可执行工作")
         self.assertEqual(self.errors(report(candidate, state="进行中")), [])
 
     def test_completed_requires_review_identity_and_pass(self):
         self.rejects(report().replace("独立审阅者甲", ""), "复核者")
         self.rejects(report().replace("结论：通过", "结论：待复核"), "复核")
+
+    def test_completed_review_needs_more_than_identity_and_pass(self):
+        self.rejects(report().replace(AUDIT_SUMMARY, ""), "复核范围")
 
     def test_duplicate_material_and_malformed_tables_are_rejected(self):
         self.rejects(report(CANDIDATE + "\n" + CANDIDATE, BODY), "重复")
@@ -242,6 +261,15 @@ class ReportV3Tests(unittest.TestCase):
             self.rejects(report(candidate.replace("深入完成", review), BODY), "深入完成")
         self.assertEqual(self.errors(report(candidate, BODY)), [])
 
+    def test_blocked_or_disputed_revision_needs_evidence_explanation(self):
+        candidate = CANDIDATE.replace("3+2+2=7", "重要修订，不重复评分")
+        candidate = candidate.replace("仅报告：未改变长期命题", "暂缓：必要证据未决")
+        for review in ("受阻", "争议"):
+            row = candidate.replace("深入完成", review)
+            self.rejects(report(row, gap=RESERVATION), "正文")
+            self.assertEqual(self.errors(report(row, BODY, gap=RESERVATION)), [])
+        self.assertEqual(self.errors(report(candidate.replace("深入完成", "待审阅"), state="进行中", gap="尚待审阅。")), [])
+
     def test_unfinished_review_cannot_support_existing_coverage(self):
         candidate = CANDIDATE.replace("仅报告：未改变长期命题", "已有覆盖：NODE-A [章节](../Books/a.md)")
         for review in ("受阻", "争议", "待审阅"):
@@ -253,18 +281,19 @@ class ReportV3Tests(unittest.TestCase):
             text = report(candidate, BODY).replace("**Books：** 纳入本次", "**Books：** 本次仅报告")
             self.rejects(text, "本次仅报告")
 
-    def test_gap_state_requires_finished_review_and_failed_review_explanation(self):
-        text = report(state="有缺口", gap="来源没有历史入口。")
+    def test_terminal_reservations_still_require_passed_independent_review(self):
+        text = report(gap=RESERVATION)
         self.rejects(text.replace("独立审阅者甲", ""), "复核者")
         self.rejects(text.replace("结论：通过", "结论：待复核"), "复核")
-        self.rejects(text.replace("结论：通过", "结论：未通过"), "说明")
-        self.assertEqual(self.errors(text.replace("结论：通过", "结论：未通过\n说明：官方没有开放这一历史时间段，其他审阅已结束。")), [])
+        self.rejects(text.replace("结论：通过", "结论：未通过"), "复核")
+        self.rejects(text.replace("结论：通过", "结论：未通过\n说明：官方没有开放这一历史时间段，其他审阅已结束。"), "复核")
+        self.assertEqual(self.errors(text), [])
 
     def test_blocked_or_deferred_items_must_appear_in_gap_section(self):
-        self.rejects(report(state="有缺口").replace("| 已检查 | 无 |", "| 受阻 | 无历史入口 |"), "§5")
+        self.rejects(report(state="进行中").replace("| 已检查 | 无 |", "| 受阻 | 无历史入口 |"), "§5")
         for review in ("受阻", "争议"):
-            self.rejects(report(CANDIDATE.replace("深入完成", review), state="有缺口"), "§5")
-        self.rejects(report(CANDIDATE.replace("仅报告：未改变长期命题", "暂缓：缺少必要材料"), BODY, state="有缺口"), "§5")
+            self.rejects(report(CANDIDATE.replace("深入完成", review), state="进行中"), "§5")
+        self.rejects(report(CANDIDATE.replace("仅报告：未改变长期命题", "暂缓：缺少必要材料"), BODY, state="进行中"), "§5")
 
     def test_backstop_access_limit_does_not_block_complete_report(self):
         extra = "\n| SRC-D | https://example.org/search 查询入口 | 检索受限 | 无历史检索入口 |"

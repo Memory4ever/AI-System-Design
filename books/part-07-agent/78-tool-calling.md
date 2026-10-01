@@ -52,6 +52,10 @@ owner and audit policy
 
 Description 帮助模型选择工具，Schema 帮助构造参数；二者都不能替代服务端业务校验。Tool name 或描述可能来自第三方 server，应视为不可信 metadata，不能据此自动提升权限。
 
+源码中存在某项功能，也不等于这个工具的实际入口支持它。Dispatcher可能不传递某个可选参数，下游分支因此始终不可达；直接把整个仓库摘要成description，会给模型一个不能兑现的能力承诺。对于实现可取得的工具，可以从注册/dispatch入口沿真实参数传播构造有界代码slice，只以具体调用路径可达的行为生成能力说明，再针对声明合成任务、执行并检查日志，移除无法验证或失败的声明。这里改变的是metadata的证据来源，不是将选择工具等同于授权执行。<!-- source-family:SF-2026-ARXIV-2604-07536 -->
+
+这条路径增加代码分析、任务执行与description修订成本；LLM辅助剪枝可能漏掉可达行为，执行样例和LLM judge也不是完整程序语义证明，未展开的库或远端依赖仍在验证范围之外。受限MCP工具实验支持description与实际入口对齐可以减少误选，但没有证明注入被彻底消除或服务端始终诚实。实现、依赖或调用入口变化后需重新核验声明；实现不可得时保留人工维护、版本化的窄合同和外部outcome检查，敏感调用继续接受权限与effect-time校验。
+
 ## 模型输出只是 Proposal
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-24941:start -->
@@ -77,6 +81,28 @@ raw model output
 
 Schema 可以拒绝缺字段、错误类型或非法 enum；semantic validation 还要检查金额、目标资源、环境、时间窗口和当前状态。Authorization 必须使用真实 principal，不接受模型生成的 `tenant_id` 或 scope。
 
+在固定、可枚举的 routing/schema 中，还可以把序列化负担从模型移给确定性软件：模型只生成紧凑代码，本地 decoder 再重建完整 JSON。它减少重复字段与分隔符，却不自动保留决策语义；代码含义对某个 backend 不稳定时，重建出合法 JSON 仍会路由到错误分支。因此应分别验收格式、route correctness、状态保留与完整记录可用时的延迟，而不只比较 token 数或首 token 时间；partial record 不能授权执行。<!-- source-family:SF-2026-ARXIV-2604-01235 -->
+
+受控跨 backend 配置实验观察到，压缩与本地重建可以降低生成成本，同时损伤路由正确率，不能选出跨 backend 的统一最优模式。该实验没有完整拆开压缩表示、重建与所有预算因素，格内稳定性区间也不是线上用户总体置信区间；其格式/路由/状态联合事件下界更不是下游任务成功率。固定 schema、紧凑代码和 backend 已成对验证时可用这一分支；接口变化、含义歧义或高风险操作时应回退直接 typed output，并保留业务、权限和 effect-time 校验。
+
+调用记录完整，还不等于整批提案已经可以执行。流式生成可以把 tool calls 暂存，等待 provider 的 finish 才允许这一批进入执行路径；EOF/error 没有 finish 时整批不执行，progress 只表示生成进度，不表示副作用发生。一条受限实现给 batch 设置16个调用上限，第17个到达时取消 provider 与所有尚未执行的调用，而不是先执行前16个再截断。这个门槛拥有 proposal admission，不替代每个调用的 schema、权限和 effect-time 校验；其防洪与失败级联可以 opt out，不能写成无条件安全合同。
+
+准入之后还有执行排序：[MiMo-Code 的 step-local gate](https://github.com/XiaomiMiMo/MiMo-Code/pull/2456)及[后续批次修正](https://github.com/XiaomiMiMo/MiMo-Code/pull/2463)按单 agent/step 保持 FIFO，只让 read/grep/glob 相互重叠，edit/write/MCP 形成 barrier；non-read 失败、非法名称或参数校验失败会取消 queued/late 调用，普通 read 执行失败则豁免级联。它不覆盖跨 agent 或 guest 内部执行，已完成 effect 也不会回滚，`retrySafe=false` 回执只能提醒不能盲重试，不使执行成为事务。缓冲与 barrier 增加首执行等待和并发限制；遇到部分 effect，应保存真实回执并按幂等、补偿或人工恢复处理，独立、低风险的只读流程仍可使用更简单的排序。这里核验的是公开代码路径，作者测试声明不是本地复现。<!-- source-family:SF-2026-GITHUB-MIMO-CODE-TOOL-FLOW -->
+
+### 随机策略需要真正的 Sampler State
+
+让模型在文字中随机选一个合法动作，在探索只需要粗略多样性时很方便；但业务要求按指定概率分配动作时，token decoding 的随机性不等于语义动作的目标分布。不同动作可以共享前缀，答案位置和标签也会影响概率；加入历史后，边际频率看似均匀仍可能存在相邻样本排斥或周期性。因而模型提出“左移20%、右移80%”与执行器确实按此采样，必须分别验证。<!-- source-family:SF-2026-ARXIV-2604-06543 -->
+
+一种可审计的分工是模型只提出合法动作集合、概率参数和用途，可信sampler负责分布校验与真正采样，并拥有algorithm/version、entropy或seed、stream/counter与重放状态。Seed用于复现时，不应把每次调用重置为同一个seed；需要独立stream时，也不能把模型生成数字或粗粒度时钟当成可靠entropy。Sampler返回的动作仍要经过业务、权限和effect-time检查，随机选择不增加授权。跨调用状态与并发stream管理增加持久化、同步和重放成本；低风险、无需精确分布的文本探索仍可直接用模型多样性，而高风险随机决策或仿真应使用受控采样工具。
+
+[受限采样实验](https://arxiv.org/html/2604.06543v1)支持这条分工的动机：所测模型直接生成uniform/Gaussian样本有偏，history和批生成也不保证独立；模型模拟PRNG或转换外部随机输入可以改善某些设置，但有计算成本与复杂转换失败。作者没有验证通用生产sampler，sandbox固定seed也只是可能成因。拟合检验未拒绝目标分布，不是证明每次动作已符合它；部署仍需分别检验边际、时序依赖和并发stream。Sampler state属于执行器，长期用户/知识Memory仍由上一章管理。
+
+### Tool Name 的选择时点与合法性是两件事
+
+在末尾的 JSON 字段上强制工具名属于合法集合，可以消除集合外名称，却不能保证选对工具或生成正确参数。另一分支在 reasoning 开头先提议候选工具名与关键参数，再在短预算内生成调用，让后续推理围绕一个明确选择展开；这只是模型的 provisional routing，不是执行或授权 commit。受限 function-calling 对照表明，先选择与后置约束会形成不同参数生成路径；插入一个已选 prefix 也可能改变继续生成的分布，不能把“名字合法”当成整次调用正确。<!-- source-family:SF-2026-ARXIV-2604-02155 -->
+
+提示模板不等于 grammar constraint，所测 200 题里最终未出现集合外名称也不是形式保证，reasoning trace 仍出现过非法名；更细 sweep 的 free-form 短预算还可能优于该模板。先选后想会减少无边界探索，也可能锁定错误工具，因此应分别比较错选合法工具、非法名、参数错误和实际 outcome，按 backend/task 校准预算。小目录、直接输出已可靠时无需增加阶段；目录不明或高风险动作仍由显式 schema、权限与业务 Gate 决定是否执行。
+
 ### 编译器反馈可以前移，但仍是受限 Authority
 
 先完整生成程序，再调用 compiler/test 并修复，是最通用的黑盒路径；当 grammar 可处理时，constrained decoding 也能提前排除语法错误。但后置诊断会浪费已经生成的 token，并把错误起点埋在长输出中；另一方面，任意 prefix 通常还不是可编译单元，不能直接交给编译器。
@@ -84,6 +110,10 @@ Schema 可以拒绝缺字段、错误类型或非法 enum；semantic validation 
 折中控制流是把中间输出视为 provisional proposal：由 sealor 把 partial output 补成临时可编译单元，compiler 只拥有 syntax/type diagnostics，harness 根据诊断与预算决定 bounded rollback 或 rewrite，模型再继续生成。这样可把权威反馈前移，却不把 compiler 提升为任务正确性裁判，也不要求白盒访问模型内部状态。
 
 代价是频繁 compiler call、语言特定的 sealing 规则、rollback state 与重放成本；涉及 future definition 的长依赖还会让临时补全失真。后置 compile/repair 仍是跨语言、低频生成的合理基线，而 compile success 不能替代 functional、security 或 outcome verification。
+
+反馈前移还可以依赖模型学习的**执行模拟器**，但它与真实 compiler/runtime 的权威不同。让模型预测程序执行结果、诊断可能错误，再有界修订程序，可以把部分反馈压入单个模型调用；模拟结果只是一条可错的 observation，不能因为看起来像执行 trace，就当成程序真的运行过。训练出的自执行能力与提示里加入“请模拟执行”的 scaffold 也须分开，模板本身可能反而降低质量。<!-- source-family:SF-2026-ARXIV-2604-03253 -->
+
+该分支节省外部调用，却新增模拟器与代码生成的相关错误，原本正确的程序也可能被错误反馈改坏。受测单文件竞赛代码中的真实执行 oracle 更强，不能外推到多文件仓库、环境依赖或安全性质。无法可靠执行时可用模拟器提出测试与修订候选，仍由真实测试或独立 verifier 决定采用；已有可用 compiler/runtime、成本低或副作用高时，后置真实执行继续是更可信的旧路径。
 
 ## Tool Discovery 与选择
 
@@ -170,6 +200,10 @@ current uncertainty + candidate tool contract
 ```
 
 selector 只决定是否提出调用，schema validation、authorization 与 effect commit 仍由 executor 拥有。utility model 错误会系统性少查关键证据或频繁调用廉价但无用的工具；高风险事实、强制合规检查和不可逆动作不能被“预计收益低”跳过。只读、低延迟且高度可靠的工具可用简单规则直接调用，低流量或不可校准场景则保留固定 policy。
+
+当 Tool 返回视觉证据时，最终答案正确还不足以说明这次调用值得付费：模型可能在调用前已经能回答，也可能调用了 crop 却没有使用返回的像素。因此，“该不该看”与“看见的内容是否改变判断”是两项不同的归因问题。可在**同一个实际调用前状态**上比较三条受控续写：直接回答、执行原调用并返回真实 crop、执行同一调用但替换成从原图抽取的同尺寸随机 crop。两项差值都以目标答案分数计算：真实分支相对直接回答的增益衡量决策价值，相对随机图块的增益衡量证据价值。在作者的受限训练合同里，还需调用符合可探测条件、最终轨迹正确，且两项增益均超过预先校准的死区，才给正向 credit；这仍是代理评分下的归因，而非工具有用性的通用证明。<!-- semantic-body-binding:SF-2026-ARXIV-2609-22910 -->
+
+这种反事实归因能把无效调用的训练激励与答案正确性分开，但要为每次被审计的调用支付额外评分成本，随机图块也可能碰巧包含目标。它依赖可替换且语义可比的返回物、固定前缀、稳定评分器和已知答案；当前 crop 实验不能直接扩展到搜索、写操作或多工具链，也不能把事后分数当成线上授权。低风险、短媒体任务仍可固定预处理；高风险工具仍按权限与副作用契约执行，而非凭预测收益自放行。训练侧若使用过程奖励，还需保持结果正确性与调用代价各自的尺度，详见 `TRAIN-GRPO` 的奖励设计边界。
 
 <!-- source-family:SF-TOOL-CALL-UTILITY-GATE -->
 
@@ -292,6 +326,11 @@ Network timeout 后，执行器可能不知道远端操作是否成功。直接�
 - manual reconciliation for ambiguous outcomes。
 
 Exactly-once 往往是端到端协议属性，不是调用 SDK 的一个开关。模型不应自己猜测“上次可能失败，再试一次”。
+
+这里还要区分两种表面相同的超时。若远端操作已经提交、只是确认丢失，按稳定 operation ID 查询权威状态可以避免重复执行；若第一次调用仍可能在查询之后才提交，读到“尚无结果”并不授权重发。没有已知的 in-flight 结束边界，单靠 read-back 无法证明 exactly-once；真正需要去重时，工具端必须在提交边界持久化 idempotency key 与结果，客户端把未知状态留作待协调，而不是用模型推断替代协议。读回方案对可查询且已结束的操作仍足够轻量，工具端去重则增加持久化、保留期和跨故障恢复成本。[受控故障注入研究](https://arxiv.org/html/2609.29095v1)在模拟服务中验证了这个边界；它没有证明任意真实工具实现已经提供端到端 exactly-once。
+
+版本前置条件也不能退化为“任何状态变化都拒绝”。全局 epoch guard 易于实现，能在环境变化时保守阻断，却把无关更新也当作危险竞争；只检查动作真正依赖的语义谓词，可以提高可用性，但谓词遗漏又会放过危险变化。因而 proposal 应携带读集或前提，提交端独立复核并拥有最终写权；无法完整表达安全前提时仍回退版本 guard 或人工确认。[受控反事实任务](https://arxiv.org/html/2609.29522v1)只支持这种精度—保守性取舍，不能代替生产环境中的并发与故障验证。
+<!-- source-family:SF-2026-ARXIV-2609-29095; source-family:SF-2026-ARXIV-2609-29522 -->
 
 <!-- source-family:SF-2026-ARXIV-2602-10986 -->
 ### Tool-value Cache：Cache Hit 必须证明 Environment State 等价
@@ -505,6 +544,10 @@ Preventive Gate 还应验证 action 是否仍指向用户批准的对象，而�
 
 position paper 或事故集合只能支持这种责任分离，不能证明某组 gate 足以覆盖所有工具。不可逆动作提高前置门槛，只读动作可以容许更轻量的后验验证；证据缺失时应返回未完成或请求人工，而不是让模型自证成功。
 
+对文件系统变更，后验 diff 若只在真实文件已被修改后出现，审阅已经太晚。可以在实际文件访问层先将 mutation 留在受控 staged view：内容进入 flat store，路径重命名/删除由 override tree 表达，append-only journal 记录操作和分支，用户另行决定 commit。Agent 的 snapshot/travel 只改变当前候选视图，失活分支仍保留审计；内容、路径解释与提交权各有明确责任，而不依赖模型先生成一份正确命令。<!-- source-family:SF-2026-ARXIV-2604-13536 -->
+
+[有限 Linux stacking 实现](https://arxiv.org/html/2604.13536v1)还在读取等不可逆访问之前按路径执行 permission。已经读出的秘密不能由回退擦除，网络/进程副作用也不因此成为可撤销的文件 mutation，journal 不能自证通用事务原子性。11 个小隐藏副作用任务区分 Agent 自纠正与用户可拒绝，后者不是模型已经修复，更不能估计生产事故率。staging 引入存储、挂载、分支重建和审阅成本；未覆盖的 effect 仍须前置授权，低风险且有独立 approval 的直接写可保留。Ch81 接手后续 workflow 分支与恢复，本章不让文件回退越权为整个 Agent 的安全完成。
+
 ### Tool Evidence 与 Formal Proof 必须在 Typed Claim 上汇合
 
 工具返回经验数值，proof assistant 证明形式命题；任一单独存在都不足以发布“已验证”的现实 claim。可靠路径先让 tool attestation 固定来源、输入与 observation，再把它提升为显式 formal statement，独立 kernel 只检查证明并成为 `Verified` 的唯一铸造者；语义映射失败、来源缺失或证明不闭合时统一 `Abstain`。Solver、模型和工具都可产生 proposal，不能自授 truth authority。
@@ -523,6 +566,10 @@ position paper 或事故集合只能支持这种责任分离，不能证明某�
 ### Computer-use Action 与完成判断应优先读取程序真实状态
 
 纯 pixel observation 通用，却会把隐藏控件、滚动、渲染延迟和视觉相似状态混在一起。若应用暴露 accessibility tree、DOM、process/file state 或 API receipt，Agent 应把它们作为 program-state observation 来选择 action，并让 finish gate 独立读取 effect state；截图保留为覆盖缺口和跨应用 fallback。
+
+但 program-state observation 也不是“压缩得越短越好”。Accessibility tree 省去大量页面细节，适合预算紧或无法稳定利用长输入的模型；HTML 连同布局线索保留了被压缩视图丢掉的元素关系，在模型能消化长上下文且有足够推理预算时，可能降低 action grounding 错误。选择表示时应以同一任务、同一 action API 比较成功率、无效元素引用、输入成本与尾延迟，再按模型和任务类型选择；不能由某个模型的上下文窗口上限推断它一定会用好更长页面。
+
+保留历史 observation 还能减少重复 action，但完整历史会持续挤占 Context。若用差分历史，必须绑定基准页面 revision、每步 action 与 diff 顺序，缺段或状态漂移时回退到完整快照。现有 WorkArena L1 的 330 题、最多 15 步实验只支持这种条件性表示取舍：作者将专有/开源模型作为能力代理，HTML 与 a11y 的 token 量级不同，历史差分实验又固定在 a11y；它既未给出生产 latency/SLO，也未证明 HTML 对所有 Web Agent 更好。<!-- source-family:SF-2026-ARXIV-2604-01535 -->
 
 程序状态可能不完整、权限受限或与画面不同步，因此不能静默取代视觉。每个 action 要绑定 observation revision，completion 需要 effect evidence；两路冲突时 defer/复查，而不是由模型叙述宣布成功。
 
@@ -575,6 +622,8 @@ Disclosure 回答“谁能看见哪些字段”，authorization 回答“谁能�
 Tool Calling 从生成函数名和参数演进到 proposal→validate/simulate→authorize→execute→observe→recover 的 effect protocol。Schema 只描述接口；状态前置条件、principal、预算、幂等性、外部 side effect 和结果 receipt共同决定一次调用能否提交。
 
 模拟器、constraint decoder 和 recovery path 可以减少错误执行，却会引入环境差异、latency 和新的可信组件。emulator 成功不证明真实工具安全，文本 refusal 也不证明没有 effect；验证失败或结果不可逆时必须拒绝、sandbox 或人工批准。简单只读工具仍可采用更薄的调用路径。
+
+在可重放的状态性工具任务里，预执行修正还可以采用“默认保留原动作”的不对称协议：只有当前 trace 指出具体失败类型、候选替代动作满足 schema/前提，且成对 verifier 在交换候选顺序后仍支持替换，才提交一次修订。可检查的收益不是 verifier 自信分，而是冻结原始 actor 轨迹到首次替换点，成对计数 rescue 与原本成功却被改坏的 harm。它减少无证据的自我修正，却增加额外模型调用与规则漏检；顺序反转也只是偏置检查，不是独立真值。作者有限工具任务中的改进不能外推副作用工具、开放环境或生产安全；没有可信 trace 或无法 exact replay 时应保留原动作、拒绝高风险 effect，或转人工。<!-- source-family:SF-2026-ARXIV-2609-26911 -->
 
 ## 自检问题
 
@@ -665,6 +714,10 @@ schema/version 与权限检查通过后，结果才能注入模型状态。它�
 
 <!-- source-family:SF-2026-ARXIV-2605-15077 -->
 
+代码解释器有一个更窄的 overlap 分支：生成流形成完整 AST 语句后，隔离的持久会话可先执行该语句，同时模型继续生成后续代码；早期错误可停止无用的续写。与预取只读结果不同，这会改变解释器内的变量状态，不能把每个前缀都视为可撤销的外部工具调用。执行器必须先限制文件、网络与外部副作用，把中间状态锁在本次 sandbox；只有最终程序和授权通过后，才允许把结果跨出隔离边界。语句切分、启动与动态批处理增加开销；生成快于执行、跨语句依赖复杂或隔离不可靠时，完整生成后再运行仍是安全且可能更快的路径。`arXiv:2604.00491v1` 的 Python 解释器实验只证明其受测代码任务和环境下的延迟/早停收益，未证明外部副作用可以提前提交。
+
+<!-- source-family:SF-2026-ARXIV-2604-00491 -->
+
 ### 异步交互可以隐藏等待，但 Speculative Effect 必须延迟提交
 
 串行 reason-and-act 在用户输入和工具返回完整后才继续，语义最清楚；实时交互中，模型推理和慢工具 I/O 会叠加成明显等待。另一条分支把 partial user input、tool completion、agent reasoning 与 interrupt 分成独立事件流：模型可以提出 provisional call，runtime 暂存可取消、只读调用的结果；完整输入到达后，只有通过参数一致性与 policy gate 的调用才能 commit。task manager 拥有取消和重启 scope，模型只拥有动作 proposal。
@@ -673,7 +726,24 @@ schema/version 与权限检查通过后，结果才能注入模型状态。它�
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-13360 -->
 
+### Tool Catalog 与 Tool Result 都必须有 Typed Admission
+
+把所有可用工具放进 prompt 很方便，却让 catalog 本身成为会改变推理和误调用概率的输入。更稳健的路径在 prompt 前按 task scope admission，只暴露当前必要工具；低风险、小 catalog 可以保留全量，scope classifier 漏判时则通过显式扩权和重试恢复，而不是让模型假装工具不存在。<!-- source-family:SF-2026-ARXIV-2609-14157 -->
+
+工具调用返回后还要分离 transport success、semantic usability 与 provenance。HTTP/SDK 成功但 payload 空缺、错误或不可验证时是 typed failure，必须阻断事实提交；prompt 声明只能作为旧工具链兼容 fallback，不能替代协议状态。<!-- source-family:SF-2026-ARXIV-2609-14758 -->
+
+两项机制分别缩小输入 action space 与防止失败结果被语言模型补写，代价是 catalog routing、schema 校验和额外重试。作者有限模型/域与强制调用实验不证明开放工具生态的完整覆盖。
+
 ## Review notes
+
+- `SF-2026-ARXIV-2604-13536`（Experimental）：[exact-v1](https://arxiv.org/html/2604.13536v1) §4.1–4.4/§5.2–5.3。实际FS effect层staging：flat contents/path overrides/journal与user commit、non-destructive travel分责，读取须pre-access permission。Linux stacking/Claude Code2.1.45/Sonnet4.6、11隐藏副作用小任务，用户可拒绝不称Agent已纠正；不推网络/进程回滚或事务原子性，成本与直接受控路径保留。root必要来源/实际owner采用通过，实际正文待写后非作者复核，未复现实验。
+- `SF-2026-ARXIV-2604-07536`，Experimental：[exact-v1](https://arxiv.org/html/2604.07536v1) §4.1–4.3/§5–6。入口slice、具体callsite的可选参数传播、LLM debloat与动态声明验证只作为description证据分支；不采静态soundness、semantics-preserving或“eliminate root”保证。52tools/12MCPservers/208合成任务经人工核目标tool和完成情况，生成与执行模型/任务选择均受限；adaptive identifier攻击15轮的选择率仍44.7%～67.4%，无单调上升不证明无攻击。原文假定显式注入防御有效、库函数不展开，动态验证占主要生成成本；runtime开销只测三种描述都成功的任务子集，不外推全部失败路径或生产SLO。相邻Ch77保有外部Memory的来源/权限，Ch79按实际observation推进Plan；本章仅承载入口能力与metadata对齐。未运行artifact/复现实验，待root独立写后复核。
+
+- `SF-2026-ARXIV-2604-06543`，Experimental：[exact-v1](https://arxiv.org/html/2604.06543v1) §§2–7/Table1–3。实际采用token law与semantic action law分离、历史/批采样的时序反例；可信sampler的algorithm/state/seed/stream身份是基于反例的工程分工，不称作者实现已验证。Sandbox固定seed为可能解释，不把Python无显式seed解释成无entropy；拟合p值非正确概率，复杂转换/PRNG模拟失败及调用成本保留。原文所测Qwen3/Gemini/OLMo、N=1024与decode设置不外推生产随机性；未复现，待root非作者写后核。
+
+- `SF-2026-ARXIV-2604-03253`（Experimental）：[exact-v1](https://arxiv.org/html/2604.03253v1) §6.2–6.4/Tables3–6 支持 learned self-execution 与实际oracle/scaffold区分；私测初对改错约5%、初错修对约10.4%，有限单文件竞赛范围，不证明repo correctness或安全，未复现实验。
+
+- `SF-2026-ARXIV-2604-01535`，Status: Experimental：[exact-v1 §3.1–3.4](https://arxiv.org/html/2604.01535v1) 在 WorkArena L1、同一 id-based action API 下比较 HTML/a11y、模型与 thinking budget；HTML 含 CSS layout 信息。历史 diff 仅在 a11y 设置测试，能力分组使用专有/开源模型代理；没有生产成本与 SLO 证据，不支持通用 HTML 优先策略。
 
 - `SF-2026-ARXIV-2609-04629`，SiLR，Status: Experimental：exact-v1 Threat Model、Method与Evaluation支持trusted shadow、executor shield及非终态安全进展分离；severity含α/ε容差，不是严格逐步不增。有限24个ANM、Qwen14B和固定budget测试不证明总体零风险；正文不把不可信LLM或非绑定monitor变为授权主体。https://arxiv.org/html/2609.04629v1
 

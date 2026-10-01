@@ -127,6 +127,12 @@ model logits
 
 所以 structured output 不是简单的响应校验。生成后再解析只能发现错误，constrained decoding 则在每一步改变合法 token set。
 
+### 语义前缀的安全剪枝不等于可完成性
+
+Syntax mask 在格式约束明确时最简单；加入类型与名称绑定后，prefix oracle 只应拒绝无法被后续输入修复的稳定语义矛盾。未完成前缀仍可能是 Live，却没有任何合法 completion，因此“没误剪一个可完成前缀”与“每个保留前缀都可完成”是两个合同。后者另需 grammar 的可生成性、类型需求覆盖与左到右约束流；字符级结论移到 token 序列，还须精确拼写和词表覆盖。Decoder 的 mask 不拥有程序行为正确性的认证权。
+
+维护增量约束与候选检查增加 CPU 状态、采样和验证成本；错误实现、未覆盖类型或有限 proposal search 仍可停在死路。[Semantic Prefix Oracles v1 §2–4/6](https://arxiv.org/html/2609.35425v1) 的有限 differential tests 不等于实现的机械证明，STLC/tool 的实验分支也没有统一可完成性保证。条件不成立时保留 syntax-only、生成后 compiler/verifier 或明确失败，不能因一组零 false-prune 就承诺任意 tokenizer 或程序都有效。<!-- source-family:SF-2026-ARXIV-2609-35425 -->
+
 ### 异步加载把 Adapter Readiness 变成调度前置条件
 
 同步加载 adapter 会阻塞 admission，却最容易保证“请求开始时权重已经可见”。为了隐藏 I/O，runtime 可以在
@@ -192,6 +198,31 @@ SGLang 不只是 runtime，还提供面向 structured language model programs �
 
 ## Trade-off
 
+### Framework 到 Engine 的配置适配不能静默丢弃参数
+
+直接把上层 recipe 的参数字典传给目标 engine，在双方版本完全一致、参数集合很小且由同一团队维护时最简单。
+但 framework 往往还包含自己的控制键，而 engine 的 live schema 会随版本变化；只用静态 allowlist 过滤，既可能把
+framework-only key 误传给 engine，也可能把 typo、version skew 或已经删除的选项静默丢弃。后者尤其危险：任务能
+正常启动，却没有执行用户以为已经启用的配置。
+
+适配层因此需要以目标版本实际暴露的 schema 做显式差集，并区分三类状态：framework 自有键由上层消费；已知
+engine 键完整转交；其余未知键形成可观察的兼容性失败。探索或低风险环境可以先告警，让 recipe 继续运行；当参数
+影响 correctness、security、并行布局或资源上限时，应 fail closed，在 engine 创建前拒绝启动：
+
+```text
+recipe keys + framework-owned keys + target-engine live schema
+→ classify every key and preserve its value
+→ warn for explicitly tolerated unknowns
+→ reject high-risk unknowns before engine admission
+```
+
+这条边界用更严格的升级检查换取“配置实际生效”的可证明性。过度严格会让目标 engine 新增参数后，上层 wrapper
+尚未更新就无法启动；过度宽松则把配置漂移变成 silent semantic change。合理 fallback 不是无声删除，而是固定经过
+验证的 engine 版本、显式移除或改写未知键，并把最终生效配置写入 run identity。这里采用的是 UniRL 对 SGLang
+`ServerArgs` 过滤路径的官方修复所揭示的长期合同，不把单个 wrapper 实现写成 SGLang 本身的稳定 API。
+
+<!-- source-family:SF-2026-UNIRL-SGLANG-SERVER-ARGS -->
+
 ### 一个 Release 可能同时改变三种不同 Ownership
 
 Runtime release 的功能表不能直接变成一条演进线。以 SGLang v0.5.10 为版本化案例：piecewise CUDA Graph
@@ -209,6 +240,12 @@ PD buffer: KV/head layout + contiguous staging + transfer completion
 redistribution 新增 epoch/freshness 与 in-flight request semantics；staging 降低碎片化却增加 copy/buffer lifetime。
 固定 graph、restart recovery 和直接 scatter/gather 在各自约束下仍合理。这里保留版本化责任边界，不把 release
 行为外推为所有 backend 的稳定 contract。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2609-37062:start -->
+固定图也不一定要求所有 token 执行相同深度。逐 token 跳过内部层可以减少算法计算，却会破坏规则 batch，并留下该层 KV 和 row metadata 的一致性问题。一条条件分支以 device-resident row tape 区分 RUN 与 Project-Only cohort，让 captured graph 把变化的路由当作输入；即使跳过 Attention/MLP，该层仍用自己的投影生成本层 KV。所有 route-dependent gather/scatter、page map 与 Attention metadata 都从当前 cohort 重建，不能复用上一层或上一轮的映射，否则请求可能静默读取另一请求的 KV。Prefix reuse 也必须区分执行 mode，而不只看相同 token 字符串。
+
+重组和路由有固定成本，所以先分别判断 Prefill/Decode 是否盈利；skip 比例低或权重带宽主导时，少 FLOPs 未必更快。Decode 的 dense→routed promotion 会改变生成中途的计算，需直接验收 served hybrid，不能只测始终路由。[vSkipper v1 §3–4](https://arxiv.org/html/2609.37062v1)以 matched-output-length 性能与自然停止分开，服务未出现可分辨的额外质量损失不等于 skipper checkpoint 本身无损，部分模型/负载也无 resolved 吞吐提升。阈值随硬件、模型与skip policy重新结算；盈利不足、模型不支持本层投影或 metadata 无法保持一致时，完整 dense path 仍是合理回退。
+<!-- semantic-body-binding:SF-2026-ARXIV-2609-37062:end -->
 
 Prefix reuse 的收益取决于 workload。如果请求之间几乎没有共享前缀，RadixAttention 的收益就有限。如果共享前缀很长，且请求模式稳定，收益会明显。
 
@@ -265,6 +302,8 @@ SGLang 展示了 runtime 可以利用比“独立请求”更丰富的结构：t
 下一章将视角从单个 Serving engine 提升到分布式 inference runtime：多个 engine pools、KV transfer、routing 与 autoscaling 怎样形成系统级 control loop。
 
 ## Review notes
+
+- UniRL SGLang 参数适配修复（Status: Version Fact）：[官方 commit](https://github.com/Tencent-Hunyuan/UniRL/commit/07ac948a5d70a1a08777920fd191390fc0556ac2) 将未知 `ServerArgs` 从静默丢弃改为默认告警，并提供严格模式拒绝启动；它支持 framework/engine 配置边界必须显式处理 live-schema 差集，不证明该 allowlist 覆盖其他 SGLang 版本或其他 engine。
 
 - SGLang v0.5.10（piecewise graph、elastic EP、PD staging 的版本化边界）:
   https://github.com/sgl-project/sglang/releases/tag/v0.5.10

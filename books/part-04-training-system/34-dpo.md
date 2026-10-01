@@ -231,6 +231,11 @@ preference pair + reference identity
 
 <!-- source-family:SF-GRADIENT-GATED-DPO -->
 
+前面的 gate 调节已有偏好对的更新幅度，不改变标签；扩散生成中若同一对图像在不同偏好维度上冲突，还可选择另一条受限监督分支：保留经明确 proxy 共识筛出的 clean anchors，将其余 pair 视作未标注，再按去噪时间段用当前 DPO margin 符号提议局部标签、以分时阈值控制准入。这里增加的是标签的时间身份与自举过程，不是用梯度大小重新证明人类偏好；原 pair、proxy 版本、checkpoint、时间段与阈值都要进入训练 lineage，clean anchor 不能被伪标签静默替代。
+
+margin 只是模型自身 confidence proxy，晚段信号可能更弱；用于阈值调整的 clean 样本不能同时冒充独立最终校准集。多维共识也可能抹掉真实偏好分歧，组间 variance 分解不证明训练必然收敛到次优或自举必然修复。[该分支](https://arxiv.org/html/2604.24952v1)需独立行为评价，并把 proxy 调用、筛选覆盖损失及迭代训练成本与对应质量分账；标注或阈值失准时，回退经审校的 vanilla DPO 或可信分时/process labels，不把有限视觉模型结果写成通用偏好恢复保证。
+<!-- source-family:SF-2026-ARXIV-2604-24952 -->
+
 ## DPO 移除了什么系统复杂度
 
 Fine-tuning loop 不再需要：
@@ -254,6 +259,10 @@ Fine-tuning loop 不再需要：
 第二，offline distribution。Dataset candidates 由旧 policy 产生，当前 policy 训练后可能进入 pairs 未覆盖的区域。
 
 第三，相对而非绝对质量。Chosen 只表示比 rejected 好，可能两者都差。
+
+这种相对质量还要拆成**生成器能力差**与**同一 pair 内的质量差**。用更强模型生成 chosen、更弱模型生成 rejected，可以扩大两侧差距，却同时改变来源、风格和推理分布；仅凭最终答案对错也不能描述 pair 的全部信号。一条受限的数据选择分支先冻结 generator identity、共同 prompts 和 verifier，再用独立 judge 比较 factuality、step coherence 等维度，选择差距明确的 pairs，同时保留正确/错误方向、随机同预算子集和域外 outcome 对照。
+
+这增加了 judge 调用和选择偏差，也可能把 judge 偏好的连贯风格误当成有效推理。[受控 reasoning 实验](https://arxiv.org/html/2604.08723v1)在同一组 3,500 prompts 上发现，四种正确/错误配对方向都能带来小幅数学收益，但正确对错误仍最好；不能据此取消正确性标注。较大 generator gap 与域外收益、step-coherence top-k 与数据效率的关系只在该 Nemotron-8B recipe 中成立，未证明单一维度的因果贡献或任何任务都优于随机样本。预算不足、judge 失配或迁移退步时，保留经 verifier 检查的 pair 与分层随机采样，而不是把“大差距”写成通用质量保证。<!-- source-family:SF-2026-ARXIV-2604-08723 -->
 
 第四，pair coverage。Single-turn preference 不自动覆盖多轮、tool use 或长期 task success。
 
@@ -310,6 +319,10 @@ DPO 只要求 chosen 相对 rejected 的 policy/reference margin 增大。某些
 这张表描述训练 loop，不代表方法质量排序。选择取决于能否可靠生成 reward、是否需要在线探索、可用 preference data 和系统预算。
 
 ## 工程数据流
+
+一组response共同进入preference objective时，直接保留整个group的前向图最清楚，却会同时驻留多条长序列activation；把所有正负pair展开再逐pair反传虽省驻留图，又会重复计算同一response。对只通过每条response的score `u_i(θ)` 耦合的可微group loss，可以先在同一参数点无梯度计算全部scores，得到 `c_i=∂L_group/∂u_i`，再固定系数，以 `Σ_i c_i u_i(θ)` 逐sample累积梯度。chain rule使其在该参数点保持一阶梯度，不保持原loss值或Hessian；response、reference、token reduction与参数点必须一致，全部梯度累积完才提交更新。forward随机性或score版本不同也会破坏这份等价，这是将公式落实成执行协议的额外条件，不是论文已验证所有runtime的保证。
+
+[受限GroupDPO实现](https://arxiv.org/html/2604.15602v1)用额外no-grad pass和小系数状态换较低activation驻留，group-level pair interactions仍可为二次规模，并非总计算与group大小无关。其单H10080GB、gradient-checkpointing测量的memory overhead排除了初始化后的参数/optimizer base及optimizer.step临时峰值，不能写成GPU总峰值恒定；step latency反而包含optimizer，额外pass也不能省略。取样/偏好truth仍由数据owner负责，正例NLL是另一项objective选择；系数陈旧、数值不一致、二阶optimizer或额外前向成本不合适时，保留直接group graph、较小group或匹配的pair基线，并共同验收chosen likelihood、KL和任务slices。<!-- source-family:SF-2026-ARXIV-2604-15602 -->
 
 ### DPO 的分布式身份不止是梯度归约
 
@@ -409,7 +422,15 @@ evaluator 不稳定时，应回退真实错位数据、固定 DPO 或分任务�
 保留轨迹减少遗忘，却增加 checkpoint 存储、权重不稳定和 preference noise 累积。作者实验不证明迭代次数越多越好；融合权重坍缩、目标冲突或 held-out 回归时，应回退固定 reference、停止 campaign 或重新修复偏好数据。arXiv:2605.23398v1
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-23398:end -->
 
+### Preference Pair 需要先验证事实关系
+
+若 rejected response 在事实层面正确、只因风格被偏好系统压低，DPO 会把错误信号写进 policy。训练前应验证 pair 的 factual relation，并在证据支持时反转、降权或丢弃；格式、长度与内容偏好必须分账。<!-- source-family:SF-2026-ARXIV-2609-16532 -->
+
+pair validation 增加 judge 和标注成本，judge noise 也可能制造新偏差。两个 benchmark、8B 以内模型与 LLM judge 不证明普遍收益；证据不闭合时回退 verified preference pairs、CPT/SFT 或保留不更新。
+
 ## Review notes
+
+- `SF-2026-ARXIV-2604-08723`，Experimental：[exact-v1](https://arxiv.org/html/2604.08723v1) §2–5、Appendix D。Nemotron-8B，OpenR1 数学 pairs；generator experiment 固定 s1-3B rejected，correctness experiment 同 3,500 prompts，16.5k 全集与 top-k 样本数不同。GPT-OSS-120B medium reasoning/temperature0.6/五次评分，DPO LR5e-8/beta0.2；AMC/AIME avg@16 与其余 pass@1 分开。generator 与 judge 信号相关不排除全部来源/风格混杂，未采用普遍 data-efficiency 或 training-speed 保证；hardware/precision/deployment SLO 未在采用证据披露。root 已独立核必要原文与实际正文，采用通过；本地实验未复现。
 
 - 2026-09-01 偏好来源的隐性信号：<https://arxiv.org/html/2608.31079v1> §3.2–3.4/5.1–5.3、Discussion 与评测附录。所测 teacher 反转、chosen-only SFT 和多 objective 支持受限行为迁移；behavior-rate log-ratio 是经验关系，不是由 DPO 公式推出的普遍因果定理。评测以全答对题目交集上的压力 prompt 为条件，不代表总体事实能力；反转也可能损害能力/格式。
 
@@ -442,3 +463,5 @@ Primary-source 校验入口：
 
   **已吸收的语义增量：** 拆开 preference-noise 与 update scale。
 <!-- daily-books-trace:SF-2026-DPO-SCALE-SEPARATION:end -->
+
+- `SF-2026-ARXIV-2604-15602` — Daily `2026-04-20`；primary [GroupDPO v1](https://arxiv.org/html/2604.15602v1)；7分必要深入。新增coupled-score系数计算与逐sample backward分离，同参数点/stopgradient保一阶不保loss值/Hessian；随机性一致是工程推断非复现。H10080GB/checkpoint测overhead排参数optimizer base与optimizer.step临时峰、latency含optimizer，group pair仍可二次；任务质量不全胜pair。root source→actualowner采用及真实正文/相邻写后通过。采用依据 `papers/2026/04/_sources/daily-20260420/V3_DELEGATE_GROUPDPO_OWNER_PROPOSALS.md`。

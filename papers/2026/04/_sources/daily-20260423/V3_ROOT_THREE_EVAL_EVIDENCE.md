@@ -1,0 +1,15 @@
+# 04/23 三项评价材料的有界证据核验
+
+作者：root；复核日期：2026-09-28。以下核验只决定当前工作队列中的贡献与证据边界，不等于确认首次公开落入 `2026-04-22 09:00～2026-04-23 09:00 +08`、冻结候选分母或通过日级 Gate。arXiv `Submitted` 是提交时间，不直接当作公开时间；三项均仍需官方公开列表/公告归属核对及非作者准入复核。
+
+本地已保存的官方 OAI 直取/版本元数据给三项 v1 的 `metadata update` 分别为 `2026-04-23 00:09:07Z`、`00:26:11Z`、`00:29:33Z`，DataCite 初建均为 `04/23 01:54～01:59Z`，当前 OAI datestamp 均为 `04/23`；这些与周三美东 20:00、北京时间周四 08:00 常规公告批次相容，**只能作有界批次推断**，不能把 metadata 更新、DOI 创建或提交字段改名为逐篇首公开日志。`2604.19966` 虽在 04/22 旧筛选账本中被前分母关闭，该账本的发现/处理日期也不是首次公开日期；若官方公告确认属本窗，须按真实事件在 04/23 独立判断，不沿用旧泛化排除理由。原始字段来自 `arxiv-owner-replay-20260903/20260423/arxiv-owner-receipt.json`。
+
+| Source Family | exact-v1 原始证据、可保留的窄命题与反证 | 当前准入 / Books 判断 |
+| --- | --- | --- |
+| `SF-2026-ARXIV-2604-19966` [DistortBench](https://arxiv.org/html/2604.19966v1) | §2.2–2.3 的 27 类×5 级合成畸变、无参考四选题及同类异级/异类同级干扰项，能把 distortion type 与 severity 分开诊断；§3.8 的五组 base/thinking 配对中四组 thinking 更低。主分数是 **answered-only**，未解析答案另报比例；thinking 可能耗尽 token 预算，故不能把差异全归因于“思考破坏感知”。人类参照仅三人/256图，新增两种 rotation 的级别未众包验证；合成单一畸变和可能训练污染不支持真实摄像头或所有 VLM 泛化。abs 页仅显示 v1 提交 `2026-04-21 20:20:59 UTC`，不能据此判本窗首公开。 | 暂保留**标准审阅**候选，拟 V2=`Design Delta 2 + System Reach 1 + Durability 2 = 5`；`PLATFORM-EVALUATION-SYSTEM` 主 owner、`MULTIMODAL-REPRESENTATION` 相邻。与 Ch66 已有“评价需绑定输入和 scorer”重叠，但 type/severity 与 answered-only 分母是更具体的诊断条件；是否需正文窄补充，待日期及独立 owner 判断。不是通用 CoT 负效应结论。 |
+| `SF-2026-ARXIV-2604-20157` [HumanScore](https://arxiv.org/html/2604.20157v1) | §3 将单人生成视频的姿态/人体模型估计转成 anatomy、kinematics、kinetics 六项代理；§4–5 测 13 个生成器，VBench 成像/美学与其 kinetic 轴相关仅约 0.35/0.33，支持“好看不等于动力学合理”的受限观察。§4.3/§6.2 承认 monocular pose/mesh 重建不适定，真实视频也非满分；同提示人偏好在模型级排序上相关，不能证明每段生成视频物理真实或可执行。abs 页仅显示 v1 提交 `2026-04-22 03:51:19 UTC`，不是首公开证明。 | 暂保留**标准审阅**候选，拟 V2=`2+1+2=5`；`MULTIMODAL-WORLD-MODELS` 与 `PLATFORM-EVALUATION-SYSTEM` 交接。Ch25 已有 `perceptual plausibility → state reconstruction → closed-loop outcome` 阶梯，Ch66 已分真实物理 observable；目前偏向 `No Change — Existing Coverage`，不为单个 benchmark 重写架构。仍须核确切日期及非作者准入/Books。 |
+| `SF-2026-ARXIV-2604-20202` [Hallucination Inspector](https://arxiv.org/html/2604.20202v1) | §2–3 用 Android SDK XML 中公开符号契约建 oracle，以 AST 判断不存在的 atomic symbol，并沿局部类型/调用链判断 scope-bound member；不编译完整项目。§4 的 51 组 API 迁移对上，Qwen2.5 与 Codestral 生成结果的检测 precision 为 1.00、recall 分别 .73/.90；漏报涉及参数类型、callback 和同名错误签名，不能把“未报警”判为代码正确。文中 baseline 描述一次称 GPT-5，实际 §4.2 写 gpt-5-mini，比较模型身份有内部不一致；不要采用模型优劣排序。abs 页仅显示 v1 提交 `2026-04-22 05:37:29 UTC`，不是首公开证明。 | 暂保留**标准审阅**候选，拟 V2=`2+1+2=5`；`PLATFORM-EVALUATION-SYSTEM` 主 owner，Agent 工具结果验证为交接。Ch66 已明确可形式化条件优先 deterministic verifier，新增的是 API oracle 的适用边界而非替代原原则；目前倾向 `No Change — Existing Coverage`，若独立复核指出具体章节缺口再定窄增量。 |
+
+这些分数是待非作者核验的工作评分，不进入正式日报；首次公开归属、来源窗口和当前撤回状态未全部收口时，不把三项计为本日最终 owner candidate。三项的官方 abs/v1 HTML 均已重开；没有用后续周报或后来修订版替代本次精确版本。
+
+**非作者复核回执（同日）：** `apr02` 实际重开三项来源并比对 Ch66/Ch25 后，三项均确认 5 分标准准入、具名 `No Change — Existing Coverage`；其反证与窄承载位置见 [独立复核](V3_APR02_THREE_EVAL_FINITE_INDEPENDENT.md)。这使三项的贡献与 Books 处置有条件收口，但审阅者明确没有签日期批次、来源覆盖或整日报 Gate；上文“待非作者核验”是撰写时快照，现以本段更新为准。正式纳入哪个 owner day 仍由首次公开核验决定。

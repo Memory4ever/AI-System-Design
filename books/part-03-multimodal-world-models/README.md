@@ -25,7 +25,7 @@ Raw multimodal signal
 ## 章节分工
 
 - [Ch23](23-multimodal-representation.md) 拥有 modality representation、fusion、alignment 与 provenance identity。
-- [Ch24](24-multimodal-generative-paradigms.md) 比较 AR、Diffusion、Masked/Block Diffusion 的 factorization、并行、cache 与 commit。
+- [Ch24](24-multimodal-generative-paradigms.md) 从 AR、Diffusion/Flow Matching、Masked/Block Diffusion 的路径与目标推到采样、并行、cache 与 commit。
 - [Ch25](25-multimodal-world-models.md) 区分视频生成、环境预测、causal control 与 persistent world state。
 - [Ch26](26-multimodal-embodied-vla.md) 连接 perception、VLA proposal、low-level controller、sim-to-real 与 physical safety。
 

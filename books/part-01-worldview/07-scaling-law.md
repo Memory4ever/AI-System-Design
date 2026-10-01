@@ -96,6 +96,10 @@ Hoffmann 等人的 Chinchilla 工作在 2022 年重新研究 compute-optimal all
 
 两者并不是一个正确、另一个毫无价值。差异说明 scaling exponent 和最优配置依赖实验覆盖、训练方法、数据与拟合假设。Chinchilla 修正了当时重要的工程判断，但它同样不是对所有架构、数据质量和后训练过程的永久常数。
 
+架构也可能改变 exponent，而不只是移动同一条曲线的常数项。Looped/recursive transformer 提供了一个受控分支：训练时增加 core 的重复次数，或随 compute 增长模型深度/参数，并比较 shared-weight 与 untied growth，可以让 compute-optimal loss exponent 在受测尺度上发生变化。这个结果否定的是“exponent 与架构无关”的默认假设，不证明递归结构在生产规模永远取得指数级优势；作者的 FineWeb/FineWeb-Edu、有限模型梯度和 CORE 外推仍可能受 recipe、数据重复与拟合区间影响。平台做 scaling 决策时因此要把 architecture-growth rule 纳入 experiment identity，并保留 vanilla family 作为同预算对照，不能把旧 exponent 直接带入新架构。
+
+<!-- source-family:arxiv:2609.19107v1 -->
+
 对平台工程师，更重要的不是背诵某个固定 token-per-parameter 比例，而是理解方法：
 
 ```text
@@ -172,6 +176,11 @@ production quality, latency, and cost
 后训练更不能简单并入 pretraining scaling。SFT、preference optimization、RL、tool feedback 和 inference-time compute 可能用较少额外 token 显著改变行为，但它们优化的目标和成本结构不同。基础模型 loss 低，为能力提供更好底座，不保证后训练后的可用性排序完全相同。
 
 同样，训练 compute-optimal 不等于生命周期成本最优。更大的模型即使训练 loss 更低，可能在长期 Serving 中产生更高 GPU、latency 和 energy 成本。若模型要被调用数十亿次，推理成本可能反过来支持“训练更多、部署更小”的选择。
+
+这种反馈不只来自请求总量，还来自每个请求怎样使用模型。如果部署允许重复采样并可靠识别正确候选，训练规划就需要联合选择参数量 `N`、训练 token `D` 与尝试次数 `k`，而不是先按单次生成确定模型，再事后增加采样。较小但训练更充分的模型可能用更便宜的多次尝试补偿单次能力；代价是更多生成、验证和候选选择。若样本高度相关、验证器不可靠或必须单次低延迟回答，这条补偿路径就不成立，原来的单次能力与训练预算规划仍有意义。
+
+[受限的联合拟合实验](https://arxiv.org/html/2604.01411v1#S3)以不到 1B 参数的 checkpoint 和八个任务检验这个分支，但 `pass@k` 衡量“至少一个候选正确”，不等于系统能选中它；其 `2Nk` 也只是每 token 推理 FLOPs 近似，不能省去输出长度、验证、内存和并发成本。工程上应把采样与选择合同一起固定，再测真实质量—成本前沿；大规模模型、不同任务与生产 SLO 必须重新验证，不能将拟合外推当作已完成的训练实验。
+<!-- source-family:SF-2026-ARXIV-2604-01411 -->
 
 ### 扩宽只有在学习方向跨样本对齐时才可能转化为泛化收益
 
