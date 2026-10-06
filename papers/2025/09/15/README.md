@@ -2,15 +2,15 @@
 
 **规范：** V3
 **窗口：** 2025-09-14T09:00:00+08:00 ～ 2025-09-15T09:00:00+08:00
-**状态：** 进行中
+**状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-06T14:27:41+08:00
+**检查时间：** 2026-10-06T21:27:59+08:00
 
 ## 1. 结论
 
-本日0个确认当窗正式候选，不表示0事件。arXiv有限发现96唯一当前版本，一页96标题、82完整题摘实际读完，69潜力/13关闭建议，另14仅范围明确标题关闭；Meta CyberSOCEval另1完整摘要，合计83唯一题摘家族。另1 GPT-5-Codex官方说明/当前七页卡片实际读取，其RSS与PDF版本日期有必要反侧。没有把上述材料算84篇全文或当日新论文。
+本日0个确认当窗正式候选，不表示0事件。arXiv有限发现96唯一当前版本，一页96标题、原82完整题摘由非作者实际独核；对两含糊标题22673/11131定点补完整摘要后明确关闭，最终84完整题摘=70具体潜力/14贡献或范围关闭，另12范围明确标题关闭。Meta CyberSOCEval另1完整摘要，合计85唯一题摘家族；GPT-5-Codex官方说明/当前七页卡片另1必要说明，RSS事件与PDF版本日期存在反侧。没有把上述材料算86篇全文或当日新论文。
 
-具体潜力包括eager operator变化下swap、query维度attention近似、PowerSGD收敛反例、optimizer moment的模型合并、typed memory操作、语义无关扰动的composite-null检验。攻击、隐私预算与局部负面证据保留，不用“没改变通用原则”缩池。公开日期/精确版本未落窗，不评分、不采用性能/安全保证。作者侧研究已ready交root；首批准入、必要采用及最终非作者DAY未授。Books无作者改动，条件化NoChange提案不等于已通过Books。
+具体潜力包括eager operator变化下swap、query维度attention近似、PowerSGD收敛反例、optimizer moment模型合并、typed memory、composite-null检验；11213从泛称组合排除中恢复自然图像编辑的语义/保真权重控制潜力，必要公式与局部CLIP反侧亦保留。攻击、隐私预算与局部负面证据不因“没改变通用原则”缩池。全部采用事件的日期/精确版本仍不支持完全落窗，不评分、不采用性能/安全保证；0正式候选证据审阅完成/0Books新增，条件化NoChange提案不等于正面Books通过。非作者FIRST/必要风险及DAY已完成，无普通待办，外部材料精确终态隔离。
 
 ## 2. 来源覆盖
 
@@ -24,14 +24,14 @@
 | SRC-META-AI | Blog?page3混排12条；真实publications results/page5主12条Nov18→Sep15，接results/page6主12条Sep8→Sep2→Jun13。CyberSOCEval原页完整摘要实际读取 | 受阻 | CyberSOCEval仅Sep15无timezone，可能相交但未确认完全落窗；不是因无贡献而排除，§5隔离 |
 | SRC-QWEN | 官方config原JSON十个2025-09对象实际读取，Next Sep10T20Z/ASR8T06:38Z→Sep21–24发布；均窗外 | 已检查 | 不复用其他日core以凑本日候选，不授历史删项覆盖 |
 | SRC-DEEPSEEK | 官网及官方API更新日志实际Sep29→22→Aug21跨窗，读取对应标题/变更范围 | 已检查 | 当前日志有限事件，不全扫GitHub普通修复 |
-| SRC-MOONSHOT | 官方Blog25标题/日期，Nov7→2024May29；Sep16→5→Aug22跨窗 | 已检查 | 仅官方可见目录，不授全仓库无事件 |
+| SRC-MOONSHOT | 官方Blog实际26标题/日期，Nov7→2024May29；Sep16→5→Aug22跨窗，原25计数已按本日原文纠正 | 已检查 | 仅官方可见目录，不授全仓库无事件 |
 | SRC-TENCENT-HUNYUAN | Research+正确publicList POST page1,size100,renderType0；total9逐条title/displayPublishTime实际Feb3→Sep21 2026 | 受阻 | 2025历史目录缺口，当前9不是历史0；恢复原发布后只重开目标邻段 |
 | SRC-ZAI | Research+?page2/3实际响应，派生正文同18条Aug26 2026→Dec7 2025且没有更多；官方release notes Sep30→Aug11跨窗 | 受阻 | Research2025-09未恢复，已执行分页不能误记未执行；不授零事件 |
-| SRC-BYTEDANCE-SEED | Research/type2 year2025 page0 count20 desc实际15/total49/has_more；置顶单列，非置顶Oct22→Aug20/13→July跨9月。type1同请求US/CN都total94/next20/has_more无sub_article_list | 受阻 | Blog有界停点已读；论文响应不完整，不记0，需实际条目/原发布 |
+| SRC-BYTEDANCE-SEED | Research/type2 year2025 page0 count20 desc实际15/total49/has_more；置顶单列，非置顶Oct22→Aug20/13→July跨9月。type1 US/CN page0 total94缺数组；独立沿20→40→60→80实际执行，20仅June SwiftSpec、40/60缺数组，80 has_more=false/next空。[有限恢复](../_sources/daily-20250915/INDEPENDENT_FINITE_RECOVERY.json) | 受阻 | 已至真实有限停止但历史条目不完整，total94不是0论文；需官方目标历史数组/原发布 |
 | SRC-BAIDU-ERNIE | 官方中文Blog1→2/2实际16标题，May9 2026→Sep12PLAS→Aug14→June30 2025跨窗 | 已检查 | 不重读窗外PLAS必要core；目录日期有限，不授全历史覆盖 |
 | SRC-XIAOMI-MIMO | 官方8Paper/15Blog实际读取；fresh home chunk的More为已有array slice/状态切换；Paper Sep19→June4→May12 | 受阻 | Blog无日期；current Paper边界不授Blog历史0，需具体原发布区间 |
 | SRC-MINIMAX | EN12条止Oct27，?page2派生正文相同；CN13止Jan15才跨9月；Agent index仅2026-05-13当前文章 | 已检查 | EN不能独自授跨窗；当前Agent入口不授历史不适用或0事件 |
-| SRC-ARXIV | 12分类×八组主线术语，submittedDate Sep13T18Z→Sep14T18Z，start0/max200/total96，一页96标题、82完整摘要。catchup目标日400；正确month邻段skip800/show200原HTTP400、web Cache miss | 受阻 | 提交/current published/月份ID不授首公开；69潜力精确公告/版本区间隔离，不授全分类召回 |
+| SRC-ARXIV | 12分类×八组主线术语，submittedDate Sep13T18Z→Sep14T18Z，start0/max200/total96，一页96标题、最终84完整摘要。catchup400实际仅90日限制；show200原为非法值，不是正确外部终态，现同skip800改合法250得200、250/2214、15549→19344，仅本日19325/19326/19329月身份匹配、无日公告heading；未扩250为题摘队列。[恢复记录](../_sources/daily-20250915/INDEPENDENT_FINITE_RECOVERY.json) | 受阻 | 可修停点已处理，仍无完全落窗首公开/重要修订区间；70潜力隔离，不授全分类召回 |
 
 只扫描Daily组和实际触发的原发布/必要卡片，无Weekly、其他月或全站附件队列。
 
@@ -40,7 +40,7 @@
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
 
-0正式当窗家族，未评分。69 arXiv潜力、Meta与OpenAI两家族均因必要日期/版本不确定留于§5，不提前写确定候选。与Books主题相似或访问成本不构成排除依据。
+0正式当窗家族，未评分。70 arXiv潜力、Meta与OpenAI两家族因必要日期/版本不确定留于§5，不提前写确定候选。与Books主题相似、局部实验或访问成本不构成排除依据。
 
 ## 4. 证据与知识整合
 
@@ -56,18 +56,20 @@ RSS00Z不抹除PDF16:58:52Z创建/17:00:07Z修改反侧，后两项也不是首�
 
 root校准触发的九个精确v1必要安全/设计反侧已实读，连同Codex和Meta共11必要core家族；精确位置、实际读取角色、成立条件和未证明内容见[NECESSARY_CORE](../_sources/daily-20250915/NECESSARY_CORE.md)。11128v1为ENJ而非新版ERIS；11254反例的任意初始化/零向量QR有证明争议，均明确隔离，不因datehold免读，也不把局部core计为当窗采用或82篇全文。
 
-其余82题摘逐项贡献与明确关闭理由见[SCREEN](../_sources/daily-20250915/SCREEN.md)。11191随机adversarial sampling的训练成本机制、11284三维GMM的directmap PoC、11337弱攻击/大batch的理论边界均保留，非因小模型/局部实验或理论而排除。11076 swap与11250 GUI攻击虽摘要都叫Chameleon，身份与命题不同，未合并。后续v2–v5不默认为重要修订，更不替代v1归属。
+原82题摘与最新局部修正见[SCREEN](../_sources/daily-20250915/SCREEN.md)和[独立验收](../_sources/daily-20250915/INDEPENDENT_DAY_REVIEW.md)。11191随机adversarial sampling训练成本、11284三维GMM directmap PoC、11337弱攻击/大batch理论边界保留，非因小实验或理论排除。11213精确v1 I/III-B原文明确perceptual/triplet权重随训练sigmoid切换并用discriminator维持保真，足以恢复自然图编辑的局部控制潜力；TableI部分CLIP反降、预算/样本未披露、Eq6/11推导符号争议不授普遍收益或正确证明。[定点原件](../_sources/daily-20250915/INDEPENDENT_SLIDERS_CORE.json)。22673仅Cox/浅survival tree临床流程、11131既有NCA综述/未来类比，完整摘要后关闭，不建立全宽标题队列。11076 swap与11250 GUI攻击的Chameleon不合并；v2–v5不默认重要修订或替代v1。0Books实际修改，日期隔离项不授已有覆盖；作者条件化owner提案留作材料恢复后的对读起点。
 
 ## 5. 缺口与下一步
 
-尚可执行：root首批准入/日期/必要采用校准与非作者DAY，见[HANDOFF](../_sources/daily-20250915/HANDOFF.md)。作者研究ready不是独立验收。
+尚可执行工作：无。非作者FIRST、必要支持/反侧和DAY实检已完成；合法show邻段与Seed下一页已实际有限恢复，普通未读附件不伪装外部阻断。
 
-外部隔离：OpenAI当前七页卡片的当窗原版本/公开区间，Meta CyberSOCEval原时区/区间，69 arXiv潜力的精确公告/原发布或重要修订，Hunyuan/ZAI目标历史、Seed论文完整数组、MiMo无日期Blog。重开接受官方原版本/更正、精确发布或完全落窗区间；不是一律请求秒级。日期/版本解决前不进入正式候选/Books，不授正面Coverage/Evidence、零事件、无遗漏、性能或安全保证。取得材料后仅重开对应ID与必要source/core，不重扫整类/月或以全部题摘变全文队列。
+本窗终态保留项：OpenAI当前七页卡片的当窗原版本/公开区间，Meta CyberSOCEval原时区/区间，70 arXiv潜力精确公告/原发布或重要修订（身份见SCREEN最新修正），Hunyuan/ZAI目标历史、Seed论文完整数组、MiMo无日期Blog。缺少这些影响事件采用与来源恢复，不否定具体潜力。重开条件接受官方当窗原版本/更正、指定ID精确发布或完全落窗区间；历史目录接受官方目标条目数组/原发布，MiMo接受具体Blog时间，不一律请求秒级。它们不用于正面证据、Books 或无遗漏断言，不授正面Coverage/Evidence、零事件、性能或安全保证。取得材料后仅重开对应ID与必要core/owner或来源2025-09目标邻段，不重扫整类/月或以题摘库存变全文队列。
 
 PDF当前创建/修改在窗外只是归属反侧，不反向假定首次公开必为16日；不扩张本窗恢复别日。明确关闭项日期未核但不影响贡献处置，不为它们另造日期请求。
 
 ## 6. 复核
 
-复核者：root（首批准入/必要证据与Books），待指派非作者DAY。
+复核者：sept07_10_author（本日报非作者，作者Bacon；独立FIRST/必要风险及DAY）。
 
-结论：未通过。没有本日独立准入/DAY，未把作者core算非作者通过。建议首批11076/11155/11254/11167/11145/10963与10931/11128/11250风险，代表关闭10935/10937/11071/11198/12282，风险关闭11078/11136/13352/11369另核。所有潜力与未读/关闭范围见SCREEN，最终十四有限停点、日期隔离、候选/Books与六部分均需DAY；无须无差别重读全部附件。作者必要core窄补11家族已完成，见NECESSARY_CORE；结构检查先前通过，增补后重新校验，不替代语义验收。
+结论：通过
+
+本日独立加载当前合同/窗口/停点，实际完整复核原82题摘+两含糊标题摘要（最终70潜力/14关闭、12标题范围关闭）；Meta另1完整题摘、当前Codex卡片完整七页及九v1必要方法/限制、Meta必要评价原件实读。11213误关闭已恢复局部潜力，不授日期；安全关闭11078/11136/13352/11369的实际摘要权限/控制/归因边界另核，不采用隐私、production身份、UAV闭环或普遍provenance保证。十四来源有限原响应、show合法修复、Seed真实停止、PDF/RSS分离、全部采用项（正式0）、Books0和六部分已验收，未重读无关附件/核代码/复现。详情与最终V3/限定diff结果见[独立验收](../_sources/daily-20250915/INDEPENDENT_DAY_REVIEW.md)，机器检查不替代语义。
