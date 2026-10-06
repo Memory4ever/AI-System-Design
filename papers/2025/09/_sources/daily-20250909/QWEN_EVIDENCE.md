@@ -4,6 +4,8 @@
 
 ## 身份与公开事件
 
+本轮恢复纠错：本日QWEN_CONFIG原条目明确draft:true。下方旧“完全落本日窗”仅说明配置字段换算，不是公开事件证明，撤回其落窗许可；原date、token正文和原图保留，但缺正式原发布/可信公开区间。本次定点官方域查询未恢复，QWEN_PUBLIC_DATE_RECOVERY.json保留。不得将贡献拟5分、已读图或当前公开可访问反投2025当日发布；该家族终态日期保留，不用于本窗候选/Evidence/Books。
+
 本日原`QWEN_CONFIG.json`中的id `qwen3-asr-flash`，原date `2025-09-08T06:38:04.000Z`，即2025-09-08T14:38:04+08:00，完全落本日窗。对应[官方Blog](https://qwen.ai/blog?id=qwen3-asr-flash)和[token正文](https://docs.qwenlm.ai/research/qwen3-asr-flash/index.json)，本地原响应`QWEN_ASR_CONTENT.json`。不是submitted或搜索收录时间。性能原图版本标识`Qwen3-ASR-Flash-0908`，脚注API tested in August 2025。正文末尾说明服务持续更新；本次不把当前API调用映射为冻结2025权重。
 
 ## 问题、披露与未披露机制

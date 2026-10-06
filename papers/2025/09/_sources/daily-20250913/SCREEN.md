@@ -1,8 +1,12 @@
 # 2025-09-13 筛选与停止
 
+最新非作者DAY完成：有效FIRST34复用，余35完整题摘及13份含糊题名实际局部重开；最终82完整题摘=67日期潜力+15关闭，另41标题范围关闭。两一般综述09810/10345关闭，九机制/评价恢复及四完整题摘后关闭见`INDEPENDENT_DAY_REVIEW.md`。Seed paper已补20/40/60/80至has_more=false仍缺数组，精确终态保留。下文旧60/9、69/54和更早59/10原判断链保留，不代表最新分母。
+
 本日独立原件`transport.json`、`targeted-transport.json`、`meta-correct-route.json`。不以别日报结论授本窗覆盖。
 
 ## arXiv
+
+恢复校准：以下原十项关闭与59潜力描述保留原判链，但当前裁决以`INDEPENDENT_FIRST_CALIBRATION.md`为准。09774已恢复潜力：FFT/matmul/QR分解为共同primitive并逐级frequency/resource控制比较，可能改变计算实现的公平评价边界；不能因HPC题名排除。现为60潜力/9关闭，54标题范围外另计。11安全/保证/因果信号和10439理论的精确v1必要内容已续读，见`NECESSARY_CORE.md`；没有将60潜力变成全文队列。
 
 原`arxiv-api.raw`和同窗`arxiv-api-alt.raw`均实际123/123，API self link保留主题及submitted日期，未发现返回撤回提示（不遍历全史）。123完整标题实际浏览；69完整题摘实际读完，身份与当前version/完整摘要存`scoped-abstracts.json`。54标题清楚指向本项目暂缓/范围外的领域应用（如goat farmer、rosacea、molar staging、One Health、molecular simulation等），不扩大队列。该54只做题义范围关闭，不算完整题摘。
 

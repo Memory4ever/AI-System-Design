@@ -1,5 +1,9 @@
 # 2025-09-15 完整题摘初筛
 
+## 最新非作者裁决（2026-10-06T21:27:59+08:00，优先于下方作者历史建议）
+
+sept07_10_author实际复核原82完整摘要，并仅对22673/11131两个含糊机制信号标题补完整摘要后明确关闭；11213经精确v1 I/III-B必要段恢复自然图编辑语义/identity权重控制潜力，保留TableI局部CLIP反降、Eq6/11推导符号争议，不授效果/正确证明。最终96标题→84完整题摘=70日期潜力+14关闭，12标题范围关闭；Meta另1题摘、Codex卡片另1说明，不计正式当窗家族。合法show250及Seed下一页已真实有限执行，日期仍隔离。旧表/反证保留，具体独立范围与DAY见INDEPENDENT_DAY_REVIEW.md。
+
 Bacon作者，窗口2025-09-14T09:00:00+08:00～2025-09-15T09:00:00+08:00；引用当前研究合同，不另造门槛。
 
 本日独立API查询为12分类×language model/transformer/MoE/agent/diffusion/GPU/vision language/world model同义术语的有限发现，submittedDate 202509131800–202509141800、start0/max200、sortasc。96/96标题实际读完，82相关/含糊完整题摘已读（4批20与补2）；其中69潜力、13关闭建议。原摘要/版本字段在scoped-abstracts.json，不冒充精确v1/全文/复现。另14标题仅范围关闭：1 survival pipeline、11 NetLogo一般model-checking、12临床trialmatching综述、15quantum finance回测、17天气科学forecast、34trajectory-user linking、38mmWave通信应用、44生物cellularautomata、68Carnatic meter、75生命科学prompt guide、82plastic toxicity科学IE、83materials benchmark、86stock prediction、89cytometry应用。11191随机adversarial training及11369生成来源标题另外补完整摘要，不以领域标签替代机制判断。
@@ -98,4 +102,3 @@ GPT-5-Codex官方落地页/当前七页PDF实际读取，RSS00Z与PDFCreationDat
 root首批精确材料/owner对读/必要证据边界见[FIRST_BATCH](FIRST_BATCH.md)。请校准11076/11155/11254/11167/11145/10963和10931/11128/11250风险潜力；代表关闭10935/10937/11071/11198/12282，并对11078/11136/13352/11369的隐私、控制或归因信号作必要非普通排除复核。当前69潜力保留，不因未读实验、Books已有或访问成本缩池；准入后依合同§4–6，只审支持所采用命题的必要内容。
 
 两种Chameleon必须分开：11076当前题名SmartSwap/摘要Chameleon是LLM训练swap；11250 Chameleon是GUI动态网站攻击，不合并家族。后续版本没有默认重要变化的授权。
-

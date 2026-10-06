@@ -1,5 +1,13 @@
 # 2025-09-30 首批准入交接（作者 Archimedes）
 
+## 当前恢复窄核：六拟家族/Books非作者工作待，普通作者已就绪
+
+本日独立重读AGENTS、Prompt、两合同、Sources使用/Daily/arXiv、ROADMAP、本日§5–6及SCREENING/BOOKS_HANDOFF。复用原作者具体13必要v1和其余有效source阅读，不把旧ready当DAY；本次亲自再次读Sora Sept30七页PDF全部主体§1–6、DSA6页全部正文/附录、DeepSeek官贴原created_at、ClaudeCode Checkpoints、Ch72 provenance与Ch14/49实际相邻。
+
+发生实质窄修：Sora Sept card只支持opt-in consent/likeness controls与provenance分账；精确creator scope/revocation/delete drafts仅30core1当前Blog及本次实际打开的Launching responsibly L28–29可见，当前页面用characters且含2026更新，未把它们冻结为Sep事实。README/BOOKS_HANDOFF已收窄最低采用命题，不否定该安全贡献；撤销/存量如果进入长期解释须标工程推断，不称已实现/互联网可删除。BOOKS_HANDOFF另给Ch14/Sora owner可直接整合的自然论证段，root裁定后写共享Books，由非writer POST。
+
+正式来源行纠正：Google/Meta Research/Hunyuan/Zai/Seedpaper/MiMo undatedBlog/MiniMax Agent/arXiv first-public历史缺口均记受阻，实际有限目录/题名发现已处理，不从“请求执行了”授目标历史覆盖。六拟家族仍均6分待FIRST，13necessary风险/保证与44关闭分层、247日期隔离待非作者复核；没有新评分或DAY，自查机器一致性不代替语义验收。未修改Books/月索引/State或操作Git。
+
 默认窗口2025-09-29T09:00:00+08:00至2025-09-30T09:00:00+08:00。作者侧ready，不自授准入/Books采用或DAY。14源本日fresh请求见fetch-log.json；下方过程停点保留，当前处置以本节、正式README、SCREENING与BOOKS_HANDOFF为准。
 
 ## 最新交接：作者ready，root FIRST / Books / DAY待核

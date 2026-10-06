@@ -111,6 +111,8 @@ principal
 
 Gateway 日志与 trace 需要记录解析后的 immutable model/service revision，同时避免记录敏感 prompt 全文。
 
+可信 principal 解决调用者身份，却不让模型推定的用户属性自动变成已验证事实。若响应策略依赖年龄等不确定属性，应把推定值、可信证明与缺失信息分开，由版本化 policy 决定保守路由及纠正路径；收集证明又增加隐私成本，误判也可能限制合规用户，不能把保守默认当作分类器正确性。[公开年龄策略计划](https://openai.com/index/building-towards-age-prediction/)说明这种约束已出现，但没有证明预测系统已部署或其误差可接受。属性依据不足时保留明确受限路径，而不是静默升级为可信授权；这是一条从公开政策约束推导出的系统设计边界，不是厂商内部实现披露。<!-- source-family:SF-2025-OPENAI-AGE-POLICY -->
+
 ## 重试与幂等性
 
 安全 retry 需要同时满足：
@@ -236,6 +238,8 @@ Gateway 从认证与负载均衡入口演进到跨站点、跨 provider 和 Agen
 Gateway 将外部流量转化为带身份、协议、配额和可观测上下文的内部请求。它可以借助 EPP 做 inference-aware endpoint selection，但不进入 token iteration。下一章转向更慢、更稀缺的资源决策：GPU placement。
 
 ## Review notes
+
+- `SF-2025-OPENAI-AGE-POLICY`：[Building towards age prediction](https://openai.com/index/building-towards-age-prediction/) 与 [Teen safety, freedom, and privacy](https://openai.com/index/teen-safety-freedom-and-privacy/)，2025-09-16 官方计划。采用年龄推定与可信身份分离的政策约束及隐私/误判代价；预测算法、阈值、误差与部署成效未披露，不作安全保证。正文 policy 分离是明确的系统推断。
 
 - `SF-2026-OPENAI-WEBSOCKET-API-INCREMENTAL`：[OpenAI工程披露](https://openai.com/index/speeding-up-agentic-workflows-with-websockets/)，原RSS事件04/22T10:00Z；核心When API became bottleneck / Building persistent connection / Keeping API familiar / Setting new bar。只采用connection-local API渲染与增量前处理分支，上线`response.create`+`previous_response_id`不是弃用原型`response.append`。up-to40%为作者alpha/client观察，model/hardware并非matched对照，完整precision/length/batch/concurrency/SLO未披露；未复现。资格检查和显式重建是系统设计推断，不是厂商全validator/恢复保证。apr20_resume已完成source→实际owner及literal独立采用，并实际顺读正文57～78及本证据条目，写后复核通过。
 

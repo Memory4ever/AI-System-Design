@@ -19,3 +19,11 @@
 - 实际末注以精确3.0官方PDF、§1.6/§3–5定位并明示政策证据非有效性/统一阈值，与采用权限一致；未使用2026版反推。
 
 待root只改上述限定后，复核者重新实际读该句、完整相邻论证和末注再裁决。22仍进行中；当前不能把FSF Books记为POST通过。Omni owner裁决另待root，本记录不验收它或14源/DAY。
+
+## 窄修后的第二次实际 POST（2026-10-06T18:51:00+08:00）
+
+结论：通过，仅限 FSF 实际 Books 写入。复核者 James 没有写入或修改 Books；报告作者角色不变，不能据此自授22日DAY。
+
+重新实际顺读Ch72约2138–2221的完整共享状态交接、Residual Risk Loop、新两段、三个mitigation问题及Instruction Hierarchy起段；重读约3337–3380的实际FSF末注与相邻引用。重新核精确3.0 §3.1.2原文“a model reaching a ML R&D CCL”及step3 safety-case material updates，结合此前已实际读过且未变化的§1.6、§3.2、§4–5及Ch71/73边界。
+
+当前第一段已明确“对风险评估确认已达到 ML R&D CCL 的模型”，并把再审对象限定为“safety case 的 material update”。两处均直接补上第一次POST的实际范围缺口；不是以泛指capability或末注替代正文限定。部署与further development仍分开，探索性misalignment仍不被授予显式acceptance rule，工程处置仍标明政策责任而非控制有效性。Meta既有闭环→内部使用范围→探索性标准→mitigation验证的推理衔接保持，未建立政策收纳章、侵占生产Gate或量化未证实风险。Review notes保持精确3.0及§1.6/§3–5定位。第一次未通过记录保留，但本次窄修已解决其两项要求，无剩余FSF写后待办。

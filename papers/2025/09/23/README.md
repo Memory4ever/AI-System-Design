@@ -2,15 +2,15 @@
 
 **规范：** V3
 **窗口：** 2025-09-22T09:00:00+08:00 ～ 2025-09-23T09:00:00+08:00
-**状态：** 进行中
+**状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-06T13:05:00+08:00
+**检查时间：** 2026-10-06T19:42:00+08:00
 
 ## 1. 结论
 
-本日独立首查及具名核心已取得。新恢复官方配置的60对象按本窗精确ISO筛出5项，5份官方核心均实际取得；Qwen3Guard、Qwen3-VL、Image-Edit-2509及LiveTranslate有4家族拟准入/校准，Travel Planner拟贡献前关闭。正式候选暂0、必要证据审阅完成0、Books改动0。等待root首批准入校准，不自授性能或安全保证。
+本日官方配置60对象按本窗精确ISO筛出5项；独立准入校准后保留Qwen3Guard、Qwen3-VL、Image-Edit-2509及LiveTranslate四家族，分数分别6/6/3/5，Travel Planner贡献关闭。四家族作者必要审阅4/4：Guard/VL针对安全与具体owner差额深入、Edit关闭深入采用、LiveTranslate标准完成；Books为已有覆盖/窄整合/仅报告/仅报告。root已实际窄写Ch23时间/provenance两段，非写入者实际正文、完整邻接和自身末注POST通过，不自授日级完成。
 
-arXiv主题API三次实际429；月目录限定ID切片171标题，126相关/含糊项的精确v1完整题摘已读，未把提交时间当公开。Meta日期冲突、Terminus日期和Qwen报告历史版本保留。TimesFM已用2024v1实际机制核对为再阐述；新发现Qwen3-Omni官方原date属于22日，作为窗外恢复线索交root。本日必要安全审阅仍待FIRST，未交全日作者ready。实际原记录及理由见[scan](../_sources/daily-20250923/scan.md)，不继承其他日候选。
+arXiv主题API三次实际429；月目录限定ID切片171标题、126精确v1题摘仅作线索，未把提交时间当公开。六项必要风险/反侧core已由作者定点读6/6，见[实际读域](../_sources/daily-20250923/RISK_CORE_SUBSET.md)，独立必要范围已核，不伪授日期、当窗正面Evidence或Books。Meta日期冲突、Terminus日期及Qwen报告历史缺口隔离；TimesFM原2024v1已承载separator，贡献关闭。Omni原date属22日，不扩本窗。原请求与分层负侧见[scan](../_sources/daily-20250923/scan.md)。
 
 ## 2. 来源覆盖
 
@@ -20,12 +20,12 @@ arXiv主题API三次实际429；月目录限定ID切片171标题，126相关/含
 | SRC-ANTHROPIC | Research本日172publication对象，publishedOn原值，9月05/15→26夹窗 | 已检查 | 不保证未收录事件 |
 | SRC-GOOGLE-AI | 9月Blog首12跨至11日、DeepMind page5；TimesFM原核心及2410.24087v1正文§4.1/4.2 | 已检查 | 原separator机制已公开，Blog再阐述关闭；Publications年日期隔离 |
 | SRC-META-AI | 首查及global_search page5；ARE/MetaEmbed/Preparedness原HTML完整题摘、meta/time字段定点补查 | 受阻 | MetaEmbed日期-only；Preparedness列表09-23/正文09-24冲突；未恢复时区字段 |
-| SRC-QWEN | 首页、官方JS恢复60对象目录，本窗5原ISO事件/5官方核心实际读取；Omni定点原版本恢复 | 未完成 | Guard/VL/Edit/LiveTranslate待root FIRST及必要审阅/Books；Travel拟关闭；Omni原date落22 |
+| SRC-QWEN | 首页、官方JS恢复60对象目录，本窗5原ISO事件/5官方核心实际读取；局部校准通过，四家族必要作者审阅完成，Travel关闭 | 已检查 | 不以后来artifact反推本窗定量/实现；VL Books已落实且独立DAY通过；Omni原date落22 |
 | SRC-DEEPSEEK | 官方updates及Terminus核心，正确性信号保留 | 受阻 | 原09-22无时区，未得完全落窗区间 |
 | SRC-MOONSHOT | Kimi可见Blog09-16/05窗前 | 已检查 | 未收录事件不保证召回 |
 | SRC-TENCENT-HUNYUAN | 本日全部API page1 size100，9/total9当前项 | 受阻 | 无2025历史覆盖 |
 | SRC-ZAI | 本日blogsItems15，page2累计18hasMore=false | 受阻 | 最早12-07，不恢复9月 |
-| SRC-BYTEDANCE-SEED | 2025 type2 API15/49非置顶跨07-15，type1 total94缺列表 | 已检查 | 论文API不完整，不记0 |
+| SRC-BYTEDANCE-SEED | 2025 type2 API15/49非置顶跨07-15，type1 total94缺列表 | 受阻 | Blog有限切片可用；论文API不完整，不记0 |
 | SRC-BAIDU-ERNIE | 本日两页，09-12窗前 | 已检查 | 有限目录不授全网 |
 | SRC-XIAOMI-MIMO | 本日可见09-19窗前 | 已检查 | 不授其first-public或完整历史 |
 | SRC-MINIMAX | 英文两请求同12项，中文13跨Jan15，Agent及llms当前1篇 | 已检查 | 目录有限；英文page2非分页；Agent历史未知 |
@@ -35,49 +35,59 @@ arXiv主题API三次实际429；月目录限定ID切片171标题，126相关/含
 
 ## 3. 候选与判断
 
-Qwen3Guard、Qwen3-VL、Qwen-Image-Edit-2509及Qwen3-LiveTranslate拟准入待独立校准，未先评分；具体准入链及代表性排除见[scan末段FIRST包](../_sources/daily-20250923/scan.md)。日期未定潜在贡献不列确定当窗候选。
+四家族日期及准入按[独立校准](../_sources/daily-20250923/INDEPENDENT_QWEN_CALIBRATION.md)复用，审阅权限与最终Books进度如下；日期未定潜在贡献不列确定当窗候选。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
+| [Qwen3Guard](https://qwenlm.github.io/blog/qwen3guard/) | 2025-09-23T04:00:00+08:00 | 后置整段检查/binary policy不足→末层双头逐token/state与中档policy映射→分开检测/提交；2 + 2 + 2 = 6 | 深入完成 | 已有覆盖：PLATFORM-SECURITY [Ch72](../../../../books/part-06-ai-infrastructure/72-security.md)，Policy-as-Data、Learned Security Sensor、Streaming Guard sentence fence；root独立核通过 |
+| [Qwen3-VL](https://qwen.ai/blog?id=qwen3-vl) | 2025-09-23T06:00:00+08:00 | 分块轴频段/单层视觉注入→interleaved-MRoPE、多层producer/consumer与timestamp/frame接口→位置和物理时间分账；2 + 2 + 2 = 6 | 深入完成 | 整合：MULTIMODAL-REPRESENTATION [Ch23](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)时间/provenance706/708两段及1161自身末注；root实际写入，非写入者POST通过 |
+| [Qwen-Image-Edit-2509](https://qwen.ai/blog?id=qwen-image-edit-2509) | 2025-09-23T00:08:30+08:00 | 单图接口→concatenation训练/多reference结构条件→该revision输入组织变化；1 + 1 + 1 = 3 | 已关闭 | 仅报告：局部版本输入变化，不把挑选图例或旧条件原则变长期新机制 |
+| [Qwen3-LiveTranslate](https://qwen.ai/blog?id=qwen3-livetranslate) | 2025-09-23T07:00:26+08:00 | 重排等待/audio歧义→semantic-unit prediction/视觉辅助→有限等待—质量选择；1 + 2 + 2 = 5 | 标准完成 | 仅报告：机制核心发布可支持，预测/commit实现与matched评价未披露，不编造长期实现 |
 
 ## 4. 证据与知识整合
 
-[Qwen3Guard](https://qwenlm.github.io/blog/qwen3guard/)核心与示例实际读取：Stream的两个分类头逐token检测并传递stream_state，Gen三档安全标签允许Controversial按策略映射。此机制与流式输出交付时序、政策严格度有关，但没有以原报告核实benchmark条件/延迟，也没有执行或复现。当前main报告已下载，不称为精确9月版本。root校准后继续安全相关必要审阅与实际owner比较。
+### [Qwen3Guard](https://qwenlm.github.io/blog/qwen3guard/)
+
+原发布核心/workflow支持Stream末层双分类头逐token接收、Gen三档标签允许Controversial按策略映射，决定allow/halt的是upper framework；结构接口不等安全交付保证。固定初始README仅作后来具名接口补证；当前技术报告2510.14276v1为10月17日，不反投9月。必要§4.4/4.5及限制实际读到sentence-level first-unsafe标注、效率对照每32token重读全部prefix、CARE40token buffer/5次retry/Qwen3-4B。Wait Tokens是token代理、相同Qwen家族judge和有限攻击不是在线延迟/开放安全证明，reasoning-trace检测也非完整覆盖；这些仅作为后来限定，不采用9月性能数字。
+
+实际已有覆盖是Ch72 Policy-as-Data的model verdict/policy/enforcement分层、Learned Security Sensor的prefix晚flag不能追回泄漏、Streaming Guard sentence fence的buffer/segmentation/released-byte责任，以及Always-on共享编码的共同失效点。三档标签是此release的policy映射实例，不新造通用授权机制；没有把成熟原则加进6分或声称所有细节已在书稿。
+
+### [Qwen3-VL](https://qwen.ai/blog?id=qwen3-vl)
+
+原发布Model Updates支持t/h/w交错频段覆盖、多ViT层跨LLM层注入、timestamp/frame交错与秒/HMS输出。Performance文字承认Thinking在跨学科、visual reasoning、video understanding仍落后部分closed模型；多个架构/训练一起变，公开核心没有matched单因素归因，needle/OCR宣传不能转成真实world/action可靠性。硬件、precision、长度人口、训练/测试预算、concurrency、完整SLO和evaluator协议未给，性能配置均为 `Not Disclosed`；未读全部demo像素/实现、未复现。
+
+Ch23 producer/consumer层注入111–113已承载具体访问层/位置/训练与驻留责任，DeepStack不重复写。root已在真实时间metadata后实际新增706/708两段：位置三轴频段分配与可读物理时间不是同一接口；原分块布局合理性、输入长度/格式监督代价、质量未唯一归因、原时钟与回退并存，710音频段自然承接；1161自身末注绑定公开Model Updates。日报作者作为非Books写入者已实际顺读正文686–731、末注1150–1176并回核原核心168–204，[POST通过](../_sources/daily-20250923/VL_BOOKS_POST.md)，不授全日完成。
+
+### [Qwen-Image-Edit-2509](https://qwen.ai/blog?id=qwen-image-edit-2509)
+
+3分关闭深入采用：发布核心与固定模型卡d3968ef930e841f4c73640fb8afa3b306a78167e支持在原架构image-concatenation继续训练、多图list输入、建议1～3图与depth/edge/keypoint条件。QwenImageEditPlusPipeline示例不是执行验收；Native ControlNet名称不证明独立控制分支权重，精选人脸/商品/文字图不证明身份普遍保持。版本输入边界保留，仅报告，不增加Books diff。
+
+### [Qwen3-LiveTranslate](https://qwen.ai/blog?id=qwen3-livetranslate)
+
+标准完成仅采用原features的semantic-unit prediction应对重排与视觉信息补audio歧义的有限说明；预测、采样与commit算法未披露，不能编造。语言表18项只有11项Audio+Text、7项Text-only。3s缺定义/配置，94%是相对离线作者口径，不是绝对准确率；必要评价图像未取得像素，官方service重定向2026文档不反推2025。有限文字/demos不能归因或授无损/鲁棒/SLO。当前没有可支持的长期实现细节，仅报告；未来当时技术说明、原service版本与matched长流评价到达，仅重开对应命题。
 
 MetaEmbed compact多向量/Matryoshka训练保留潜在质量-成本机制，ARE异步评价盲区也保留；必要日期未定。Preparedness正文与列表日期冲突且为安全主张，不用摘要授安全结论。TimesFM不是AI for Science排除：2024精确v1正文§4.1/4.2及Figure3已有共同learnable separator与跨样本因果Attention，未发现本次Blog新增机制/重要修订，按研究合同§3贡献前关闭。
 
-无实际Books写入，尚未作全日No Change或已有覆盖判断。
+六项必要风险/反侧实际作者读域见[RISK_CORE_SUBSET](../_sources/daily-20250923/RISK_CORE_SUBSET.md)。缺首公开日期的潜在项仍隔离。VL实际窄整合与非writer POST已落实，Guard具体已有覆盖及四候选最终处置已独立核；本日有窄Books改动，不作全日No Change。
 
 ## 5. 缺口与下一步
 
-**暂停停点（用户明确要求保存并准备云端恢复）：** 本任务已暂停，不继续扫描、审阅、Books或下一日；状态仍为进行中，不自授完成。以下真实停点覆盖上文尚未同步的进度表述，恢复时先按AGENTS重读当前合同及本日材料，不能沿用旧的“FIRST未做”或候选0当作最新裁决。
+本窗可执行工作已处理完。以下为本窗终态保留项，不用于正面证据、Books或无遗漏断言；保留项不是Coverage/Evidence通过，材料恢复后只定点重开。
 
-root已落[本日局部校准](../_sources/daily-20250923/INDEPENDENT_QWEN_CALIBRATION.md)，作者已实际完整读取：Guard与VL各2+2+2=6，Edit1+1+1=3，LiveTranslate1+2+2=5，Travel贡献前关闭。此文件只授准入和最低审阅投入，不授Evidence、Books或DAY。正式表格、结论和scan仍待按实际审阅结果同步，不在暂停时补授完成。
-
-暂停前实际已读：四项原发布核心的文字；VL Model Updates三项位置/融合/时间接口、Performance文字及明确落后切片；Edit全部发布变化与示例文字，模型卡完整文字及代码示例（没有执行）。Edit固定模型卡 `d3968ef930e841f4c73640fb8afa3b306a78167e` 实际取得，与main字节相同，SHA256=`43794458d2fafed26f7910459eb716589b4ae2020bf1ac37c7f37510d2ca8c0e`，见[原记录](../_sources/daily-20250923/edit-card-pinned-fetch.json)。它明确在原架构上image-concatenation继续训练、以image列表输入、建议1～3图，支持depth/edge/keypoint条件；这些是实际release输入变化，不因3分省略，不把“Native ControlNet”擅写为已核独立分支权重或普遍身份保持。
-
-Guard必要版本核验已执行：当前PDF元数据及封面确认 `2510.14276v1`、2025-10-17；实际读§4.1～4.3开头、§4.4检测延迟/效率、§4.5 CARE应用及pp20～21限制，未读完整论文、未复现。晚版给出的sentence-level hit、token等待代理、40-token buffer及有限攻击/语言限制不能反投为9月同版结果。固定初始README `7b3bfd19f913165f6c7ef8d8d196e867de6a9760` 的Introduction、Gen示例、Stream完整workflow/代码示例及Safety Policy已实际读；其commit晚于本窗截点，仅作具名后来artifact核接口，不替代原Blog日期或证明当时相同实现。未读该仓库模型实现文件。VL固定README `5539422fcf0bf7c0d74f673ea39bffdf77817a15` 已取得，只读开头架构/发布文字，未读完整README或代码；其时间同样晚于本窗，不反推本窗实现。
-
-LiveTranslate实际读发布features/性能文字/两例文字/语言表；18语言中11项Audio+Text、7项Text-only，不能写18项语音输出。3s缺时延定义和配置，94%是相对非实时质量的作者口径，不是绝对准确率或生产保证。三个公开评价图的链接已从原tokens核得，但web读取失败；浏览器直接图请求 `net::ERR_BLOCKED_BY_CLIENT`，Chrome不可用，迁移旧Blog404、当前页只显示壳，**未实际读到图像像素**，不声称已验图内数字/协议。官方service链接实际200后重定向到2026年Qwen3.5/3.8文档，必要接口/旧model表及部分正文已读，未读完整页面；该更新版不能反推2025接口、60语言或2.3s。原响应与重定向见[qwen-necessary-fetch](../_sources/daily-20250923/qwen-necessary-fetch.json)。有限semantic-unit prediction/跨语言重排与视觉消歧贡献保留，不能以算法披露浅直接判无贡献；算法、commit规则与定量性能不编造，可收窄仅报告。
-
-实际owner对读：Ch72 Policy-as-Data、Learned Security Sensor完整相关邻接、sentence commit和shared-encoder guard段已读，原有sensor/policy/enforcement及已释放prefix不可撤回论点明确。Ch23多层producer/consumer注入相关段、Fusion三路与Shared self-attention开头、时间/空间/provenance段及Ch22正文收尾、Ch24开篇已读；未声称通读整章。VL三轴频段分配存在窄的拟长期差额，暂拟在Ch23真实时间元数据之后、timestamp-token段之前自然解释轴分配与可读物理时间是不同接口；尚未形成精确Books建议、未交root裁决、更未写Books。其他三家族的最终Books处置尚未落定。
-
-必要风险/反侧补读已定点取得6份精确v1 HTML：2509.16400、16462、16660、17349、17481、17879，见[risk-core-fetch](../_sources/daily-20250923/risk-core-fetch.json)。**只浏览结构/标题以定位必要段，method/评价/假设及关键反侧均未实际读完**，属于普通待办，不是external hold，不计Evidence完成。恢复只围绕这些安全/公平/毒性/时延评价/幻觉/上下文persuasion信号补必要core，不把126题摘或171宽标题转为全文队列。
-
-普通待办：上述6份必要core；四个已校准家族受影响证据收敛及精确Books决定/建议；本日README§1～4与scan同步；必要独立证据/Books复核及最终DAY。作者尚未ready，不能将下载成功、局部FIRST或owner对读称为整日完成。
-
-日期外部保留：ARE/Terminus date-only与MetaEmbed时区、Preparedness日期冲突，需要官方原公告/原站事件字段或完全落窗区间。当前不用于正面候选、Books、安全或无遗漏。历史目录保留为OpenAI RSS范围、Google Publications年日期、Hunyuan/Z.ai当前目录、Seed论文列表和MiniMax历史完整性；取得具名原事件或历史目录时仅重开受影响来源。arXiv首公开仍须官方公开证据，不以submitted/DataCite登记代替。
-
-Qwen必要报告历史证据：当前main文件与截点前路径/全部commits API空响应已保留；本日repo API实际created_at=2025-09-23T08:13:20Z，晚于本窗截点，可解释GitHub查询空响应，但不证明其他渠道未公开、不推定Blog回填。机制描述可限定据原Blog；性能/训练或具体缓解有效性不采用后版补造。可接受当时官方artifact、原存档或具名commit，必要定量主张未得证据不采用。
-
-窗外恢复线索：Qwen3-Omni官方目录原date=2025-09-21T21:00:00.000Z，即22日05:00北京，落22 Daily。官方核心与历史README取得，multi-codebook/MTP/首frame流式渲染具潜在贡献，已交root只重开22 Qwen家族；不扩本窗、不把截点前commit时间直接当首公开。原字段见[官方原JSON](../_sources/daily-20250923/QWEN_OMNI_CONFIG.raw)，必要原核心见[正文派生文本](../_sources/daily-20250923/QWEN_OMNI_CORE.txt)。
+- arXiv具名潜在项见[本日筛选与身份](../_sources/daily-20250923/scan.md)。主题API三次429、日列表400；月切片可取得题摘，但不足以确定首次正文公开完全落窗。需官方日级公告/首次公开存档，恢复后仅核对应精确版本、准入及必要证据。六个风险core已读到相关主张/反侧，不因正文可访问而造日期，也不把171标题/126题摘全部转为全文队列。
+- ARE、MetaEmbed与Terminus：需要原公告时区/时刻或完全落窗区间；Preparedness列表09-23与正文09-24冲突，需要官方原版本日期依据。当前不作本窗正面或安全结论。
+- Qwen公开机制以原Blog为准。Guard报告/初始repo与VL artifact晚于截点，不证明原发布时实现、训练或同版性能；LiveTranslate原评价图读取失败、旧service已重定向2026。只有恢复当时技术说明、评价配置/原图及具名artifact后，才重开需要这些材料的定量、实现与有效性命题，不阻断已收窄的机制事实或仅报告决定。
+- 机构历史目录限制按§2：Hunyuan、Z.ai、Seed论文列表、MiMo历史Blog及MiniMax历史分页/Agent未恢复完整2025窗口。可读原目录或具名原文恢复后仅重开本窗相关切片，不称0事件。
+- 窗外：Qwen3-Omni原ISO落22日报，已经在22完成具体证据/Books判断，本日不重复评分或扩大窗口。TimesFM原2024机制重述已关闭，不新建窗外任务。
 
 ## 6. 复核
 
-复核者：root已完成五项Qwen局部FIRST；最终独立DAY复核者待root安排（非作者）。
+复核者：root（非报告作者；本次Ch23写入由sept22_25_author作非writer POST）
 
-结论：未通过（仅局部准入通过；作者普通工作、必要证据/Books与最终DAY未完成，现按用户要求暂停）。
+结论：通过
 
-实际角色严格限定：root校准文件读取的是日期对象及五项发布核心文字，未观看全部demo/图片、未核代码或复现；作者也未核模型实现或复现。已读/未读与最后裁决见§5，不自动扩成全验实现。暂停前所有本日下载命令已返回退出0：session 19521、12703、47276、22442均已结束，没有本日在跑命令需要继续等待；不会在暂停后启动研究命令。共享Books、State、月索引未改；未stage、commit或push。
+原五Qwen完整核心及日期的独立校准有效复用；四正式家族逐项复核采用权限、6/6/3/5评分与最终处置。实际核Ch72 policy/sensor/enforcement、晚flag、sentence fence和共享编码具体正文，接受Guard已有覆盖，而非仅主题相似。实际顺读Ch23改段前后；[非writer POST](../_sources/daily-20250923/VL_BOOKS_POST.md)回原Model Updates核三轴频段/可读时间接口、成本与联合变更归因边界。Edit不采用精选示例为身份保证，LiveTranslate只保留有限机制事实，未公开算法/3s/94%均不入长期保证。
 
-首批交接：请核本日Qwen5原ISO字段、4具名增量/Travel排除及必要版本权限；另核代表排除OpenAI合作意向、TimesFM再阐述和arXiv局部反证保留。扫描查询/停止、日期冲突及安全信号保留可在scan和原请求复查。作者不自授DAY；本次无候选进行中V3及限定diff-check已通过，不代替语义复核。
+六风险/反侧的作者必要读域由[原笔记](../_sources/daily-20250923/RISK_CORE_SUBSET.md)保留；独立定点回六份精确v1 core核样本/CoT非因果、KL与性能反侧、SVD解释假说、尾词/对齐代理、ChartHal构造者/judge及TPS有限输出空间，不采用为已落窗或安全认证。其余普通退出分层复用Travel、合作意向、TimesFM旧机制及局部题摘样本；没有第二人无差别重读126附件或独立全量认证。14源实际查询/停止与日期隔离已核，Seed论文缺数组及MiMo/Agent历史缺口明确，格式通过不代表全网无遗漏。
+
+运行V3校验、Markdown引用与限定diff检查；仅验收本日所述实际研究、Books决定与窄写入，不宣称实现已核或实验复现。

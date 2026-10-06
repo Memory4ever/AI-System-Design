@@ -703,7 +703,11 @@ encoder / codec / codebook version
 
 若一段视觉 token 与动作 token 相差 200 ms，模型仍能计算 attention，却可能学习到错误因果关系。若 augmentation 改变左右方向而 action label 未同步，数据表面合法，控制语义已经被破坏。
 
-保存真实时间元数据，也不意味着 backbone 已能读取“第几秒”。序列位置只说明先后与距离，不天然具有物理时间单位；时间定位需求可以增加独立 timestamp-token 接口，在音频特征之间插入时间标记，以预训练数字子词的语义均值初始化并冻结这些新增 embedding，再通过 SFT 学习如何消费它们。模型侧的可读时间表示与采集侧的真实时钟仍是两个 owner：前者产生定位 proposal，后者负责单位、同步误差和 provenance，不能用生成的秒数反写传感器事实。<!-- source-family:SF-2026-ARXIV-2604-13715 -->
+有了这些元数据，还要区分“位置如何进入 attention”与“模型能否读出时间单位”。把视频位置拆成时间、高度、宽度三轴，再分别分配旋转编码维度，是一种清晰的空间—时间接口；但按连续维度块分配时，各轴可能只得到部分频段。一个替代分支在频率维度上交错分配三轴，使每轴都覆盖较完整的频率范围。它改变位置特征的分配，不改变帧采样时刻，也不认证视频时间同步；三轴分块在短图像或原任务表现足够时仍可保留，长视频收益须在具体模型、帧数与训练条件下验证。<!-- source-family:SF-2025-QWEN3-VL -->
+
+旋转角度又不天然等于“第几秒”。另一层接口将可读 timestamp 与视频帧交错送入 decoder，并允许以秒或时分秒表达定位结果：时间既参与内部位置计算，也成为可消费、可输出的语义条件。代价是额外输入长度、时间格式及监督的一致性；舍入、错误标注或不匹配的采样协议仍会制造定位错误。模型给出的时间只是 proposal，真实时钟和 provenance 仍由采集记录授权。[Qwen3-VL 的公开机制说明](https://qwen.ai/blog?id=qwen3-vl)同时改变位置、跨层视觉注入及训练配方，不能把联合性能全部归因于其中一个接口，更不能推出物理行动或任意长度视频的可靠性。需要这些保证时仍须检查原始时间轴与独立定位评价，而不是以可读输出替代同步校准。<!-- source-family:SF-2025-QWEN3-VL -->
+
+在音频中，同样可以增加独立 timestamp-token 接口，在音频特征之间插入时间标记，以预训练数字子词的语义均值初始化并冻结这些新增 embedding，再通过 SFT 学习如何消费它们。模型侧的可读时间表示与采集侧的真实时钟仍是两个 owner：前者产生定位 proposal，后者负责单位、同步误差和 provenance，不能用生成的秒数反写传感器事实。<!-- source-family:SF-2026-ARXIV-2604-13715 -->
 
 [有限音频对照](https://arxiv.org/html/2604.13715v1)在 25 Hz 特征与 0–30 秒、0.04 秒粒度的标记网格中观察到语义初始化的收益，随机初始化反而在部分任务退步。它不是仅加几个符号而无需训练，也不证明更长音频、任意采样率或精确物理定位：词表与输入长度增加、接口 SFT 和后续训练都计入成本。原始 timestamp 必须继续归档；网格范围、时钟或模型变化时重新校准，不适配时保留原位置编码与显式时间监督，而不是让新的表示取代同步合同。
 
@@ -1153,6 +1157,8 @@ token proposal，不能把 hidden-state 差异升级为事实真值；独立 gro
 相邻 token 未必指向同一实体，attention agreement 和 distribution stability 也可能共同稳定在错误解释上。作者的组件消融与 CHAIR/POPE 等任务都有反退，短序列中跨 token 信号较弱，候选层与加权参数依模型调整，不能授每个组件必然互补或普遍降低 hallucination。读取多层、多头及 unembedding 增加执行、HBM 与 latency 压力，training-free 不等零计算成本；原文未给完整端到端开销。Raw top-20 support 只是限制偏离，不提供模型风险校准或事实认证；grounding、语言质量或成本回归时，应保留原始 decode 或已有局部视觉干预，不把 layer contrast 变成无条件默认。
 
 ## Review notes
+
+- `SF-2025-QWEN3-VL` — Daily `2025-09-23`；[官方发布说明](https://qwen.ai/blog?id=qwen3-vl) Model Updates：Interleaved-MRoPE 的三轴频段分配与 timestamp/frame 输入接口。只采用公开表示机制，不由联合模型更新宣称单因素性能、时钟同步或行动可靠性；未核实现或复现实验。跨层视觉读出已有正文承载，不重复展开。
 
 - `SF-2026-ARXIV-2602-22629` — Daily `2026-02-28`；[CRAG exact-v1](https://arxiv.org/html/2602.22629v1) §3–5、Tables1–2，blocks23–49/50–59/65–79；2+1+2=5，具体shared decoded-VAE与双向fragment/shape接口差额深入；codec失真双向传播、matched-image但容量/训练混杂、geometry非语义/物理证据和成本近文。actual owner为MULTIMODAL-REPRESENTATION而非机器人assembly；feb28_vla_last7非原packet作者必要原证/owner复核后窄写，正文/完整邻接/末注已顺读；root非写入者actual POST通过，未核artifact或复现，不授日级完成。
 

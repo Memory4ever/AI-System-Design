@@ -1101,6 +1101,8 @@ signed content metadata
 尤其 negative result 只说明当前 verifier 未检测到已知 signal，不能证明内容不是 AI 生成。OpenAI 的
 C2PA/SynthID layered provenance 是官方工程案例，不构成对所有生成器、编辑链或对抗变换的完整认证。
 
+即使生成来源可验证，也不表示有权使用内容中被描绘者的身份。真实人物的视频与音频生成，需要把“由哪个系统生成”与“谁同意以什么方式使用其 likeness”分别验收；签名、水印和内容分类器都不能代签同意。[Sora 2 初始 system card](https://cdn.openai.com/pdf/50d5973c-c4ff-4c2d-986f-c72b5d0ff069/sora_2_system_card.pdf)§3.3～3.4分别公开provenance与explicit opt-in consent/likeness controls，支持这种对象分账，不证明所有人物授权都能被识别或执行。工程上，许可状态及用途应由可信产品控制面管理，付出身份/同意核验、权限维护和误拒成本；许可无法验证时应限制人物生成路径或请求人工确认，而非把“检测到AI来源”当作放行依据。后续许可变化是否影响未来生成、产品内既有内容和外部副本是三个不同问题，必须由各自合同说明；这项推导不是初始card已披露的撤销实现，也不承诺互联网副本可追回。<!-- source-family:SF-2025-OPENAI-SORA2 -->
+
 watermark移除还要分开三条轴：原检测器失效程度、内容质量保持与独立的移除痕迹检出。痕迹detector阳性最多提出triage，不证明生成来源、权属或恶意；原watermark阴性加痕迹阳性也不能拼成完整provenance证书。检测器、变换、阈值及原图身份需共同冻结。
 
 信息量也不是固定 decoder 的实际工作点：在水印→原图→变换图构成 Markov 链、变换没有额外获取水印信息的条件下，data processing inequality 只给互信息不增加；Fano 给整个消息错误率的下界，不能因此宣称每次变换都严格降低实际 bit accuracy。例如原图携带两个独立 bit，变换只保留第一个，而固定 decoder 始终读取第一个、对第二个猜零，互信息从 2 bit 降到 1 bit，期望 bit accuracy 却同为 .75。需要原 detector/decoder 的实测阈值与质量对照，而非把信息论下界当移除成功证书。有限 no-box proxy/频率去噪评价也不能假定所有水印位于高频：MarkSweep 的一个 PTW 切片仍超过原检测阈值，在线时间不含 500-epoch proxy 训练，质量仍有取舍。这是证据责任边界，不提供普遍移除或来源否认保证。<!-- source-family:SF-2026-ARXIV-2602-15364 -->
@@ -2170,7 +2172,7 @@ threat model
 least privilege 和 incident response 不会被 framework 文档替代。Meta Advanced AI Scaling Framework v2 是
 version-grounded governance evidence，不是外部认证或任意组织的充分 policy。
 
-这个闭环不能只放在公开 API 上线前。内部使用在规模小、权限受限时，可以采用较轻的控制；一旦模型被大规模接入模型研发工作流，“没有对外发布”就不再充分说明风险较低。部署审查应同时绑定使用规模、可调用的工具、监督方式与能力变化，而不是只绑定 checkpoint 名称。Google DeepMind 的 FSF 3.0 在 ML R&D 风险域中，把外部部署和大规模内部部署都纳入 safety-case 审查，并要求重要更新重新提交治理审查；其风险接受条件又明确区分部署与 further development，不能把这项部署要求改写为所有后续研究都必须先获同样批准。内部治理会增加评估、协调和试验成本，控制强度仍应按实际使用范围确定；这里采用的是政策定义的责任边界，不是这些控制已经有效的实验证明。<!-- source-family:SF-2025-DEEPMIND-FSF3 -->
+这个闭环不能只放在公开 API 上线前。内部使用在规模小、权限受限时，可以采用较轻的控制；一旦模型被大规模接入模型研发工作流，“没有对外发布”就不再充分说明风险较低。部署审查应同时绑定使用规模、可调用的工具、监督方式与能力变化，而不是只绑定 checkpoint 名称。Google DeepMind 的 FSF 3.0 对风险评估确认已达到 ML R&D CCL 的模型，把外部部署和大规模内部部署纳入 safety-case 审查，并要求 safety case 的 material update 重新提交治理审查；其风险接受条件又明确区分部署与 further development，不能把这项部署要求改写为所有后续研究都必须先获同样批准。内部治理会增加评估、协调和试验成本，控制强度仍应按实际使用范围确定；这里采用的是政策定义的责任边界，不是这些控制已经有效的实验证明。<!-- source-family:SF-2025-DEEPMIND-FSF3 -->
 
 同样，已提出风险等级不等于已有可执行的放行规则。FSF 3.0 的 misalignment 等级明确是探索性、说明性的，没有关联显式风险接受标准；监测显式推理只是其中一种拟议缓解，无法据此认证不可观察的推理或绕过监督的行为安全。因此治理记录还应区分“已定义并可验证的要求”与“仍待验证的风险假设”：后者不能被一个通过的 classifier 或 CoT 检查自动升级为许可。增加这一区分会留下无法直接量化的未决风险，也可能延缓部署；当监测范围不足时，只能缩小授权范围、加强独立监督或暂缓，而不能用探索性等级替代决策者的证明责任。<!-- source-family:SF-2025-DEEPMIND-FSF3 -->
 
@@ -3174,6 +3176,8 @@ commitment store、secure gateway sanitization/rate limit、challenge 与 policy
 AI security 必须贯穿数据、训练、artifact、serving 与 action。正确设计不依赖模型永远服从，而是让任何不可信输出都经过独立、最小权限、可审计的执行边界；来源、行为 probe、运行隔离与 rollback 分层共存，任何一层都不能单独证明安全。
 
 ## Review notes
+
+- `SF-2025-OPENAI-SORA2` — Daily `2025-09-30`；初始七页system card§3.3～3.4，采用人物许可与生成来源的对象边界。初始opt-in及受限人物路径为厂商披露；许可生命周期与存量/外部副本分责明确为工程推导，不将当前Blog的characters、撤销或草稿功能倒填2025年。未采用安全有效率，未复现。
 
 - `SF-2026-ARXIV-2602-21508`：exact-v1 bottleneck实现/编辑表/β反侧；仅经验接口，不采用MSS必要充分、β-ε双射或普遍purification投影保证；表‰/%分开，未复现。 非原 packet 作者必要原证/actual owner PRE 与窄写完成；root 已实际顺读正文、完整邻接与自身末注，POST 通过。
 

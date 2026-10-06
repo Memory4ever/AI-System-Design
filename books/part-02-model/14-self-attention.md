@@ -125,6 +125,10 @@ Attention(Q,K,V) = softmax(QK^T / sqrt(d_h) + M) V
 设保留集合的原权重和为 `m`，保留/删除部分的加权平均 Value 分别为 `mu_S`、`mu_T`，则原输出是 `m*mu_S+(1-m)*mu_T`。只删除时的输出误差为 `(1-m)*mu_T`；重新归一化后的误差则为 `(1-m)*(mu_T-mu_S)`。小的尾部 mass 只控制系数，Value 尺度和方向仍决定实际误差；下一层非线性和最终任务 loss 还会继续改变影响。用原模型 NLL 的变化定义“retrieval capacity”，测到的是特定干预下保留原行为所需的路由支持，不是模型存储事实的数量。[受限 Attention retrieval 实验](https://arxiv.org/html/2609.37879v1)先计算完整 Attention 再选择位置，因而也不构成稀疏实现的加速证明。真实稀疏执行的质量、选择开销与缓存问题交由第45、49章处理。
 <!-- source-family:SF-2026-ARXIV-2609-37879 -->
 
+要在读取之前少算，还需要比主 Attention 更便宜的选择器，而不是事后从完整分数中挑位置。一条可训练分支用低维、多头的 query/key 内积经 ReLU 聚合为 index score，以 Top-k 决定核心 Attention 的可见支集。选择器先在主模型冻结、仍采用 dense Attention 时，以跨 head 聚合并归一化的 Attention 分布作为 KL 目标；切换到稀疏读取后，再联合继续训练主模型，并在选中集合上对齐 indexer。Indexer 输入与主模型计算图分离、分别接受 KL 与语言建模损失，避免把选支集误解成无需训练的通用剪枝。<!-- source-family:SF-2025-DEEPSEEK-V32-EXP -->
+
+这条路径把核心读取从 `O(L²)` 收窄到 `O(Lk)`，却没有把整个算子变成线性：indexer 仍作二次打分，Top-k、gather、低精度实现和继续训练都付成本。[固定版本 DSA 报告](https://raw.githubusercontent.com/deepseek-ai/DeepSeek-V3.2-Exp/840f3c924a6b1604b1998baebf0c5f167e10375a/DeepSeek_V3_2.pdf)支持这个机制，但新增训练预算和推理长度变化没有隔离全部质量归因，部分任务仍退步，不能称普遍无损。短序列或选择误差抵消收益时，dense 路径仍合理；长上下文也需分别验收选择质量、完整执行成本与缓存读取，第49章负责具体执行计划。支集确定后如何补偿被省略的信息，则是下一条互补读取分支的问题。
+
 若需要真正少算部分路由，可以把保留支集内的归一化 sparse Attention 与另一条互补低秩读取分开计算，再用 learned gate 混合两条已各自归一的输出。Gate 是训练得到的混合系数，不是原 dense Attention 的真实保留 mass，也不保证精确恢复删除部分。[SLA2 的受限分支](https://arxiv.org/html/2602.12675v1)改变了读取与训练接口；实施时须只在允许支集上求 softmax，字面把分数乘二值 mask 会让被删位置仍有非零概率。少量更新和 QAT、支集选择、低秩路径及 kernel 都有成本；作者 kernel 加速与排除 offload 的模型延迟不是包含传输的端到端收益，质量也并非全任务支配。Gate 或低比特路径回归、选择成本抵消收益时，保留原 dense Attention、成熟 sparse 路由或更高精度，不把路由系数解释为每个位置的知识量。 <!-- source-family:SF-2026-ARXIV-2602-12675 -->
 
 ## 三 token 小例子
@@ -572,6 +576,8 @@ Self Attention 把上下文建模转化为可微分路由：Q/K 决定连接权�
 它用短依赖路径和规则矩阵计算换来了二次成对计算与运行时状态。理解公式、shape 和小例子后，后续 MHA、KV Cache 与推理系统才有稳定起点。
 
 ## Review notes
+
+- `SF-2025-DEEPSEEK-V32-EXP` — Daily `2025-09-30`；上述固定六页报告§1～3、Eq1～4及Appendix A。采用cheap selector的训练/梯度分责与核心读取复杂度，保留indexer二次开销、训练预算与质量反侧；官贴确认发布时间，commit仅固定正文身份。未核代码、未复现，不采用成本曲线为生产SLO。
 
 - `SF-2026-ARXIV-2602-17898` — Daily `2026-02-24`；[exact-v1](https://arxiv.org/html/2602.17898v1) §2.1/§2.4 Theorem2.2/Appendix D。2+1+2=5，固定final h/同w/convex scalar readout相对mean PCC的实际边界差额深入；R_s最大半径/Rtilde RMS与非零sigma0条件明示，不授整网或LLM能力上限，改encoder/head即改比较对象。root 必要源/actual owner PRE 通过授一段窄锁；作者实际正文与完整邻接写后顺读，root 非作者实际正文/完整邻接/自身末注 POST 通过，窄锁释放。未运行artifact或复现，非日级 Gate。
 
