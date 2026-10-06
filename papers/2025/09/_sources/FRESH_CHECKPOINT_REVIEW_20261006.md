@@ -52,3 +52,11 @@
 三份 checkpoint 与 canonical screening/admission 内部 Markdown 链接在复核时均存在，三日正式 README 均不存在。本复核两个新增 MD 已检查空白/diff 范围。机器格式/JSON/gzip检查只辅助恢复材料可信，不替代研究语义。
 
 **最终受阻验收记录：checkpoint facts PASS；Daily/Weekly completion NOT PASSED。** 外部日期与必要历史枚举尚未闭合，普通待办如实保留；没有错误完成 Gate、零候选日报、伪造分母或 Books 完成。恢复后只重开相关批次/材料，并复用未变化的有效证据。
+
+## 5. 最后共享状态与展示副本核验
+
+用户最新范围为 **2025 年 9 月 Daily，Weekly 暂停**。实际读取月索引、LEARNING_STATE 顶部新增2025段与09-03 checkpoint修后首段：范围、753/267/2566的字段恢复计数、日期上界跨截止、09-04～09-30未启动、没有日报/候选/Evidence/Books完成声明均与本独立结论一致。此前提及Weekly未完成只描述旧授权工作没有完成；当前不执行Weekly、不自动续跑。用户推送授权由root执行，本复核仍仅验checkpoint事实。
+
+实际检查暂存路径共893，全部为 `papers/2025/09/` 或 `docs/LEARNING_STATE.md`；cached LS diff只新增2025段，未纳入工作树旧2026段或Books修改。月索引与新LS段内部链接均存在。
+
+`presentation-originals/INDEX.json` 实有117条。抽查官方历史 availability Markdown、TopH cutoff前README两份发生空白变化的展示材料，并补查00072v1提取文本：各自gzip解压字节的SHA256均与索引原SHA一致；当前展示字节等于原始内容逐行去行尾空格/tab、去EOF空行、保留末尾换行的结果。没有中间正文、时间字段或行序变化；原始精确字节仍可恢复。这是3条样本验证，不宣称117条全量内容复核或重新授予研究Gate。共享状态与展示修整抽检 PASS。
