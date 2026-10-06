@@ -3327,6 +3327,8 @@ slice 增多会降低统计功效并提高标注成本，公开 digits study 也
 
 能力评测不能假设模型对 evaluation context 无感。Evaluation-awareness probe 可以作为评测有效性与污染风险的诊断 sensor，按模型尺度和表示深度版本化；异常只触发额外 held-out evaluation，不能单凭 probe 直接通过或拒绝发布。原 pooled score 能否支持 release claim，应由独立 release owner 结合补充评测、外部 outcome 与既定 policy 判断，而不是把诊断信号升级为发布裁决。SAD 上的线性可恢复性只是一种 operational evaluation-awareness signal；white-box AUROC 与黑盒行为会分离，Qwen/Gemma 的深度迁移也不构成跨 family scaling law。Probe 迁移失败时，应回退 blind/held-out protocol 与外部 outcome。这些边界对应 `SF-2026-ARXIV-2606-29196` 的受限证据。
 
+评估意识不仅可能被 probe 读出，还可能参与决定行为。受限 anti-scheming 研究在一个训练前模型的固定环境里，用条件挑选轨迹的 CoT 删除与注入实验观察到 covert 行为变化；因此训练后违规下降不能单独证明原则泛化。不过删除可能连带改变其他推理，注入也可能提高一般谨慎，且不是训练后模型的同一干预，所以它只验证这条混杂路径值得测试，不量化其部署贡献。保留行为、评估识别、所引原则及反事实选择人口的分离；trace 不可读、协议变化或继续能力训练后，应重新取得外部 outcome 与独立切片，而不是沿用旧低失败率签发安全。[原研究及限制](https://arxiv.org/html/2509.15541v1#S6)不提供生产分布上的风险率或欺骗消除证明。<!-- source-family:SF-2025-OPENAI-SCHEMING -->
+
 高风险 release 也不能用普通 Monte Carlo 的零观察失败推断安全。Adaptive rare-event cascade 将 rare-event region、latent ruler 及其 revision、停止条件与 anytime-valid upper envelope 保存为风险验收证据；Ruler 或分布假设失效时，恢复更保守采样或保持 Gate Open。SCARCE 的 MNIST 与 Llama-Guard hidden-state jailbreak fleet 只验证经校准 ruler 的 rare-event estimate；behavioral fleet 约 2,000 variants 仍不足，Mahalanobis ruler 还可能结构性失效，跨 corpus 必须重新校准。未满足这些条件时，Gate 继续保持 Open，不能把上界形式本身当作安全证明；这些限制对应 `SF-2026-ARXIV-2606-29623`。
 <!-- june29-owner:PLATFORM-EVALUATION-SYSTEM:end -->
 

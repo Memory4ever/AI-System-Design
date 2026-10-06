@@ -2,15 +2,15 @@
 
 **规范：** V3
 **窗口：** 2025-09-17T09:00:00+08:00 ～ 2025-09-18T09:00:00+08:00
-**状态：** 进行中
+**状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-06T14:20:00+08:00
+**检查时间：** 2026-10-06T19:47:24+08:00
 
 ## 1. 结论
 
-作者侧本日有限研究ready，等待root独立校准/日级复核；确定落窗候选0、相应证据完成0、Books0，不表示零事件或无遗漏。arXiv超时/429后触发辅助19标题和CL月有界新命名补检，53精确v1完整题摘实际读；14256必要安全反侧窄补后撤回其关闭，现48潜力、5明确关闭，另2明确AI for Science标题暂缓。不是本窗公开论文数或全文队列。MiMo More及Seed论文分页本日已真实窄执行到底，必要历史日期/数组仍隔离。
+非作者独立准入校准/DAY通过，本日普通待办无；确定落窗候选0、相应证据完成0、Books0，不表示零事件或无遗漏。arXiv超时/429后触发辅助19标题和CL月有界新命名补检，53精确v1完整题摘实际读；14256必要安全反侧窄补后撤回其关闭，非作者又撤回13353“CNN/非通用FFN”的错误关闭理由，现49潜力、4明确关闭，另2明确AI for Science标题暂缓。不是本窗公开论文数或全文队列。MiMo More及Seed论文分页本日已真实窄执行到底，必要历史日期/数组仍隔离。
 
-潜力包括CoT早停/剪枝全成本、embedding训练目标、稀疏歧义神经元、视觉tokenization的时间保真、shutdown instruction失败和组合隐私。Google SLED旧稿/旧代码不重算，新模型验证及Sensible Agent的what/how与两阶段确认代价可能有局部增量，但缺原公开落窗证明。官方RSS将OpenAI scheming Blog明确排到17日报，不把未审事件冒成18日已审重复。没有复现实验、生产保证或共享Books改动。
+潜力包括CoT早停/剪枝全成本、embedding训练目标、稀疏歧义神经元、视觉tokenization的时间保真、shutdown instruction失败和组合隐私。Google SLED定点核Aug19 v3已包含Gemma-3/GPT-OSS验证，原代码2024已公开，Blog按重述关闭；Sensible Agent的what/how与两阶段确认代价保留局部增量潜力，但缺原公开落窗证明。官方RSS将OpenAI scheming Blog明确排到17日报，不把未审事件冒成18日已审重复。没有复现实验、生产保证或共享Books改动。
 
 ## 2. 来源覆盖
 
@@ -48,24 +48,30 @@
 
 安全与设计反证不因局部证据关闭：14260 shutdown指令位置/未完成任务影响协议；13625 DP长生成必须核adjacency/accountant；14223线性训练时序只来自已知顺序六集1B模型，不能恢复任意真实训练史；13990/14004/14093的减少tokens须计查询答案、跨链相似度及Best-of-N全成本。以上没有取得本日首公开证明，不进入正面采用链。
 
-14256 covert广告关闭撤回：精确v1必要§2.5–2.6、§3.2–3.4/Table1及§4实际窄补，原stealth metric可受未插广告影响；CrossEncoder Table1 F1 0.511与结论测试F1 0.9901的协议关系未说明，不照录高分授检测可靠性，也不直接判失实。保留安全分数/插入人口/检测口径的潜力，日期仍隔离，root定点校准。14142 MARS2完整题摘重新核后只目录/排行增量的关闭保持；不是关闭其未读方法。[精确窄交接](../_sources/daily-20250918/NARROW_SOURCE_SAFETY_HANDOFF.md)保留新证据位置与实际停止。
+14256 covert广告关闭撤回：精确v1必要§2.5–2.6、§3.2–3.4/Table1及§4实际窄补，原stealth metric可受未插广告影响；CrossEncoder Table1 F1 0.511与结论测试F1 0.9901的协议关系未说明，不照录高分授检测可靠性，也不直接判失实。保留安全分数/插入人口/检测口径的潜力，日期仍隔离，非作者必要反侧校准通过，不授正面采用。14142 MARS2完整题摘重新核后只目录/排行增量的关闭保持；不是关闭其未读方法。[精确窄交接](../_sources/daily-20250918/NARROW_SOURCE_SAFETY_HANDOFF.md)保留新证据位置与实际停止。
 
-SLED的2411.02433v1与repo News支持旧稿/代码2024已公开，Blog新Gemma3/GPT-OSS验证不能只凭“now”当新代码，也不能因机制旧而自动排除新局部验证。Sensible Agent核心/官方Pubs完整摘要支持what/how与建议→确认的互动代价潜力；十人局部结果不是排除理由，28.5s与16.4s说明努力下降不等于更快。两者日期仍无TZ，未评分/采用。原材料见18core0/18specific/18sensible/18sensibleidentity.json。
+SLED非作者只为重复关系定点核2411.02433v3原§1及完整题摘：Aug19稿已明确Gemma-3/Qwen-3/GPT-OSS验证，原repo News也明确2024代码公开。本次Blog无新的区别命题，按重述关闭，不是因机制旧而自动关闭新验证；原[SLED v3核对](../_sources/daily-20250918/SLED_V3_CORE.json)。Sensible Agent核心/官方Pubs完整摘要支持what/how与建议→确认的互动代价潜力；十人局部结果不是排除理由，28.5s与16.4s说明努力下降不等于更快。Sensible原日期仍无TZ，未评分/采用；已按重述关闭的SLED不再仅为不影响处置的日期建请求。原材料见18core0/18specific/18sensible/18sensibleidentity.json。
+
+13353非作者定点原v1 II.2–III/IV–V发现资源口径反侧：摘要5–12x更快与正文每epoch慢2.3/1.8/2.1x、Discussion再次更快未对齐；4-qubit default.qubit经典模拟不证明真实量子加速。撤回“CNN/非通用FFN”的不充分理由，保留资源/鲁棒性测量潜力与日期/精确版本/数字协议争议，不直接断言造假或正面采用。原[风险核心](../_sources/daily-20250918/13353_RISK_CORE.json)及[独核](../_sources/daily-20250918/INDEPENDENT_DAY_REVIEW.md)；只重开此项，53题摘改49潜力/4关闭，旧原件与反证保留。
 
 Books正面拟增量0，实际写入0；必要公开归属缺失先隔离，不声称已经读实际owner或已有覆盖。日期取得、准入校准及证据独核后再按研究合同§6比较唯一owner实际论点和邻接，由root落实自然段落，作者不写共享Books。
 
 ## 5. 缺口与下一步
 
-作者本日普通扫描/题摘已停在真实有界位置，root首批校准与最终日级独核仍普通待办。外部保留项不支持候选、Books、无遗漏或性能/安全保证，不以假定日期结束。
+普通待办：无。非作者已独核准入/风险、14来源有限停止和DAY。以下本窗终态保留项不支持正面证据、候选、Books、无遗漏或性能/安全保证，不以假定日期结束。
 
-- arXiv48潜力精确v1逐项在[发现表](../_sources/daily-20250918/DISCOVERY_SCREENING.md)及[具名关闭撤回](../_sources/daily-20250918/NARROW_SOURCE_SAFETY_HANDOFF.md)，原HTML/14254v1-abs.raw为重开位置。缺真实公告/作者原始首发或完全落窗区间；submitted/DOI注册/HF收录不能替代。取得后只重开该家族日期/校准及必要方法反侧；shutdown、隐私、steering、HILL、训练时序和covert检测口径须定点风险复核，不把未读方法称已完成。
-- [Google SLED](https://research.google/blog/making-llms-more-accurate-by-using-all-of-their-layers/)与[Sensible Agent](https://research.google/blog/sensible-agent-a-framework-for-unobtrusive-interaction-with-proactive-ar-agents/)：原Sep17/Sep18日期无TZ，博客事件与旧论文/代码关系不同；需原feed/带TZ元数据或原公开区间支持落窗，随后核新验证/确认成本的具体协议。原URL/www各二十秒超时与RSS失败已实际执行；不要求人为补秒。
+- arXiv49潜力精确v1逐项在[发现表](../_sources/daily-20250918/DISCOVERY_SCREENING.md)及[具名关闭撤回](../_sources/daily-20250918/NARROW_SOURCE_SAFETY_HANDOFF.md)，原HTML/2509.14254v1-abs.raw为重开位置。缺真实公告/作者原始首发或完全落窗区间；submitted/DOI注册/HF收录不能替代。取得后只重开该家族日期/校准及必要方法反侧；shutdown、隐私、steering、HILL、训练时序和covert检测口径须定点风险复核，不把未读方法称已完成。
+- [Sensible Agent](https://research.google/blog/sensible-agent-a-framework-for-unobtrusive-interaction-with-proactive-ar-agents/)：原Sep18日期无TZ，博客事件与论文首次公开关系不同；需原feed/带TZ元数据或原公开区间支持落窗，随后核what/how与确认成本的具体协议。原URL/www各二十秒超时与RSS失败已实际执行；不要求人为补秒。
 - DeepMind/Pubs、FAIR、Hunyuan、ZAI9月Research、Seed-paper、MiMo Blog和arXiv主题公告：缺历史原数组/公开日期，实际停止见§2/FETCH及本次窄交接。Seed已真实80末页、MiMo已展开15，不能继续写未执行分页，但缺历史数组/日期仍不授覆盖。接受目标窗原归档/API正文及公开字段；shell/2026接口/空搜索不作历史阴性，只重开受影响源。MiniMax中文有限切片已跨下界，不保留过宽缺口。
 
-窗外归属：OpenAI scheming Blog由本日RSS原`Wed, 17 Sep 2025 00:00:00 GMT`确认09/17 08:00，归17日报，不能移动到18。17日恢复其未审工作，不在本日报扩大窗口或称已审重复。Apollo companion仅同日无TZ且未见明确新修订，缺独立新事件证明时不重算已有公开机制；新重要变化到达再窄重开对应事件。
+窗外归属：OpenAI scheming Blog由本日RSS原`Wed, 17 Sep 2025 00:00:00 GMT`确认09/17 08:00，归17日报，不能移动到18。只按17日独立记录恢复/复用受影响工作，不在本日报扩大窗口或凭18日材料授其完成。Apollo companion仅同日无TZ且未见明确新修订，缺独立新事件证明时不重算已有公开机制；新重要变化到达再窄重开对应事件。
 
 ## 6. 复核
 
-复核者：待root（非作者）。结论：未通过（首批校准/日级独核尚未实施），作者Tesla不能自授完成。
+复核者：Codex / sept07_10_author（非报告作者Tesla）。
 
-请先核主题边界、真实429/超时及月标题非队列，再核53题摘的48潜力、5关闭及两科学标题分层样本，全部安全/纠错/设计反证和日期隔离，尤其14256具名关闭撤回；SLED/Sensible增量与OpenAI窗外归属单独核。Books无采用不等于已有覆盖。V3/限定diff-check只是结构检查，不能替代语义验收；未改共享Books/月README/LEARNING_STATE，未stage/commit/push。
+结论：通过
+
+实际范围：[本日独立FIRST/DAY](../_sources/daily-20250918/INDEPENDENT_DAY_REVIEW.md)：14来源真实有限请求/停止、53精确v1完整题摘及安全/隐私/设计反侧、49潜力日期隔离、4明确关闭和2科学标题范围样本。14256必要stealth口径/F1反侧已独核；13353不充分关闭撤回，实际原方法/资源/鲁棒性反侧定点核后恢复潜力，未扩其他量子/CNN全文池。SLED新模型验证实际早已在Aug19 v3，按重述关闭；Sensible Agent完整核心/结果与Pubs题摘保留局部互动成本潜力，日期隔离。原OpenAI RSS08:00归17不移动。除具名必要窄读外，没有把53题摘算Evidence完成或无差别全文审阅。
+
+没有确认落窗候选，Books0不是已有覆盖、不虚构owner实际比较。所有必要日期/历史/中心协议争议隔离，不支持正面证据/Books、无遗漏或性能/安全保证，原材料到达定点重开。V3与限定diff-check通过；机器不替代语义验收。未改共享Books/月README/LEARNING_STATE，未stage/commit/push。

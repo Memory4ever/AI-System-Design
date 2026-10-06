@@ -50,7 +50,7 @@
 | [Securing AI Agents: Implementing Role-Based Access Control for Industrial Applications](https://arxiv.org/abs/2509.11431v1) | 发现保留：公开归属未定，未评分、未采用；必要版本/证据到达时定点重开。 |
 | [Cross-Platform Scaling of Vision-Language-Action Models from Edge to Cloud GPUs](https://arxiv.org/abs/2509.11480v2) | 发现保留：公开归属未定，未评分、未采用；必要版本/证据到达时定点重开。 |
 | [VulAgent: Hypothesis-Validation based Multi-Agent Vulnerability Detection](https://arxiv.org/abs/2509.11523v1) | 发现保留：公开归属未定，未评分、未采用；必要版本/证据到达时定点重开。 |
-| [Decoding in Latent Spaces for Efficient Inference in LLM-based Recommendation](https://arxiv.org/abs/2509.11524v1) | 有限候选item替代输出；关闭通用语言解码加速外推，不因是应用自动否定替代设计。 |
+| [Decoding in Latent Spaces for Efficient Inference in LLM-based Recommendation](https://arxiv.org/abs/2509.11524v1) | 非作者重开：测试序列与候选item的隐藏表示匹配，替代推荐语言AR解码；有局部速度/质量潜力。仅禁止通用语言解码外推，撤销贡献关闭；首次公开日期隔离，未评分、未采用。 |
 | [D$^2$HScore: Reasoning-Aware Hallucination Detection via Semantic Breadth and Depth Analysis in LLMs](https://arxiv.org/abs/2509.11569v1) | 发现保留：公开归属未定，未评分、未采用；必要版本/证据到达时定点重开。 |
 | [Inference-stage Adaptation-projection Strategy Adapts Diffusion Policy to Cross-manipulators Scenarios](https://arxiv.org/abs/2509.11621v1) | 发现保留：公开归属未定，未评分、未采用；必要版本/证据到达时定点重开。 |
 | [SpeCa: Accelerating Diffusion Transformers with Speculative Feature Caching](https://arxiv.org/abs/2509.11628v1) | 发现保留：公开归属未定，未评分、未采用；必要版本/证据到达时定点重开。 |

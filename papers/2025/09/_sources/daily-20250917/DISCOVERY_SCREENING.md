@@ -31,6 +31,8 @@ Submitted发现范围`[202509151800 TO 202509161800]`，不是公开时间。首
 
 ## 普通源与反侧
 
+非作者 DAY 定点补漏（2026-10-06T19:27+08）：Google保留目录的 Sep17 SLED已读完整原Blog、2411.02433v3完整题摘及原作者仓库News。SLED NeurIPS2024方法、gpt-oss/Gemma/MoE验证在Aug19稿已出现；原代码News明确2024.11.27已公开，本次Blog没有新的区别命题，按重述关闭，不按机制无贡献关闭。原件 `SLED_CORE.json`、`SLED_OLD_IDENTITY.json`、`SLED_CODE_CORE.json`；Blog日期本身不授完全落窗。未来新实现/新验证及其真实公开归属出现才定点重开，不把旧仓库展开成全文队列。
+
 Anthropic本日原Next JSON真实172 publication，按UTC `[09/16 01:00,09/17 01:00)`过滤0条，只支持该保留目录切片。Seed blog实际15/49/has_more/next20，非置顶从10月23跨到08月21、07月14，按本窗下界停止；paper type1 total94无sub_article_list是缺口。ZAI真实page1/page2累积18且hasMore=false，最早12月07，不支持9月历史；HunyuanPOST9条全部当前、最早2026，不支持历史。当前页面不能证明没有旧材料。
 
 Kimi09/16折扣正文读，关闭仅计费变化且参数重述；Google09/16Learn Your Way核心+2509.13348v1摘要读，只关闭“教育成绩即模型系统机制”推论，非自动关闭潜在完整性验证方法。OpenAI两个09/16年龄策略博客原核心读，同一家族：默认under18/证明成年人/parent escalation是具体发布约束潜力，但building-toward、月底计划不是当日部署证据。Stargate UK原官方核心（17datesfinal）是区域采购/容量意向，关闭本次机制，不以GPU数量当执行数据。

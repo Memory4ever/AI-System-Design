@@ -1,5 +1,13 @@
 # 2025-09-29 作者侧交接
 
+## 当前作者包：ACP拟1家族就绪，FIRST/Books/DAY待非作者
+
+本日独立完整重读AGENTS、Prompt、研究/Report合同、Sources使用/Daily/arXiv、ROADMAP及§5–6与本交接；只加载Sep28 09→Sep29 09北京时间材料。原有效GTO/SafeSearch v1必要阅读与原官方ACP Blog全文/规范限定复用，本次实际再核Blog三个主体、原RSS29Sep00GMT、GTO附录3117起对象与3781–3914 slack/Remarks反侧、SafeSearch2189–2212商业实现/搜索服务/成本反侧、ConsumerTerms原core和Ch78 owner相邻。
+
+ACP有限命题仅Blog用户确认、金额/merchant限定token及merchant-of-record；拟2+2+2=6，仍未FIRST。当前dated spec不冒充历史commit，schema不证明真实PSP一次性/正确执行。Books建议已有覆盖：Ch78 37–55 Tool Contract、88真实principal/金额资源环境时间校验、337–339 payment approval/strong idempotency/narrow scope、642–648 opaque token，Ch77/79相邻责任一致；不提出新书稿或重复支付标准条目，root独核裁定待。若root认定有长期差额再协调owner写入与非writer POST，不自行写共享Books。
+
+本次仅修Meta Research历史壳行受阻（Blog切片已处理）、§5旧“宽月列表未取得”→正确月表已恢复身份线索，不能反把恢复写成未执行。GTO/SafeSearch/DeepSeek日期精度未充分落窗，必要支持/反侧已保留、无正面采用；ConsumerTerms Aug28旧发布与当前Oct8截止不能凭转载称本窗新约束，亦不授历史修订不存在。普通作者研究待办0，非作者需全部拟入选与安全/理论反侧、分层来源/关闭及最终DAY；不自授完成或Coverage/Evidence。未写共享文件/操作Git。
+
 最新机械窄恢复：`narrow-route-recovery.json`记录本日Qwen API60项、MiniMax Agent/llms.txt与正确arXiv月路径实际200。Qwen全部date/lastmod无本窗项；Agent仅2026-05-13文章，保留2025缺口。`/list/cs.CL/2025-09?skip=0&show=2000`恢复1–2000/2214，无逐篇公告日期，只定点查GTO原身份，未转全月题摘队列；SafeSearch未由该切片确认首公开。旧路404仍保留，不能把已恢复月表继续写成未取得；日期保留仍需要公告/原公开区间。正式README已同步，下面旧过程描述以此纠正为准。
 
 作者Archimedes；默认窗Sep28 09+08至Sep29 09+08。作者ready，报告仍进行中，root FIRST/DAY待实际执行；不自授Books或日级完成。窄纠正：ACP Blog原RSS午夜字段在缺少具体placeholder证据时有效，29日08BJT落窗；repo04:09UTC创建属于另一artifact事件，不反证Blog。README现在正式拟入选1家族、2+2+2=6、安全约束受影响深入，三项其他日期潜力不评分。
